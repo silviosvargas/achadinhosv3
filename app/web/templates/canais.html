@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block titulo %}Canais{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Canais</h1>
+  <p class="muted">Conexões pra postar: WhatsApp via agente local ou Telegram via bot.</p>
+</header>
+
+{% if pode_criar %}
+<details class="card-form">
+  <summary class="card-form-summary">+ Criar novo canal</summary>
+  <form method="post" action="/canais/novo" class="form-inline" id="form-canal">
+    <label>
+      Tipo
+      <select name="tipo" required onchange="trocarTipo(this.value)">
+        <option value="whatsapp_agente">WhatsApp (via agente local)</option>
+        <option value="telegram_bot">Telegram (via bot)</option>
+      </select>
+    </label>
+    <label>
+      Nome amigável
+      <input type="text" name="nome" required placeholder="Ex: WhatsApp principal" maxlength="100">
+    </label>
+
+    <div id="campo-agente">
+      <label>
+        Agente que vai operar este canal
+        <select name="agente_id">
+          <option value="">— selecione —</option>
+          {% for a in agentes %}
+            <option value="{{ a.id }}">{{ a.nome }} {% if a.online %}🟢{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div id="campo-bot" style="display:none">
+      <label>
+        Bot Token
+        <input type="text" name="bot_token" placeholder="123456789:ABCdef-ghIJKlmnoPQRStuvWXyz" maxlength="200">
+        <span class="muted small">
+          Obtenha falando com <a href="https://t.me/BotFather" target="_blank">@BotFather</a>
+          no Telegram (comando <code>/newbot</code>). O bot precisa ser <strong>admin do grupo/canal</strong>
+          de destino, com permissão pra postar mensagens.
+        </span>
+      </label>
+      <p class="muted small">
+        💡 O token é validado automaticamente após salvar (em segundo plano). Se for inválido,
+        aparece um erro vermelho na linha do canal aqui — daí você edita.
+      </p>
+    </div>
+
+    <button type="submit" class="btn btn-primario">Criar canal</button>
+  </form>
+</details>
+
+<script>
+function trocarTipo(tipo) {
+  document.getElementById('campo-agente').style.display = (tipo === 'whatsapp_agente') ? '' : 'none';
+  document.getElementById('campo-bot').style.display    = (tipo === 'telegram_bot')    ? '' : 'none';
+}
+</script>
+{% endif %}
+
+{% if canais %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Nome</th>
+      <th>Tipo</th>
+      <th>Configuração</th>
+      <th>Status</th>
+      <th>Última postagem</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in canais %}
+    <tr>
+      <td>
+        <strong>{{ c.nome }}</strong>
+        <div class="muted small">id: {{ c.id }}</div>
+      </td>
+      <td>
+        {% if c.tipo == 'whatsapp_agente' %}
+          <span class="badge badge-verde">WhatsApp</span>
+        {% elif c.tipo == 'telegram_bot' %}
+          <span class="badge badge-azul">Telegram</span>
+        {% else %}
+          <code>{{ c.tipo }}</code>
+        {% endif %}
+      </td>
+      <td>
+        {% if c.tipo == 'whatsapp_agente' and c.config and c.config.agente_id %}
+          <code>agente_id: {{ c.config.agente_id }}</code>
+        {% elif c.tipo == 'telegram_bot' %}
+          {% if c.config and c.config.bot_username %}
+            <strong>@{{ c.config.bot_username }}</strong>
+            {% if c.config.bot_nome %}
+              <div class="muted small">{{ c.config.bot_nome }}</div>
+            {% endif %}
+          {% elif c.config and c.config.bot_token %}
+            <span class="muted">validando...</span>
+          {% else %}
+            —
+          {% endif %}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+      <td>
+        {% if c.ativo %}
+          <span class="badge badge-verde">ativo</span>
+        {% else %}
+          <span class="badge badge-cinza">inativo</span>
+        {% endif %}
+        {% if c.ultima_falha_msg %}
+          <div class="muted small" style="color: var(--vermelho); margin-top: 4px;"
+               title="{{ c.ultima_falha_msg }}">
+            ⚠ {{ c.ultima_falha_msg[:60] }}{% if c.ultima_falha_msg|length > 60 %}…{% endif %}
+          </div>
+        {% endif %}
+      </td>
+      <td>{{ c.ultima_postagem_em.strftime('%d/%m %H:%M') if c.ultima_postagem_em else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Nenhum canal cadastrado ainda.</p>
+  <p class="muted">Crie um canal pra começar a postar.</p>
+</div>
+{% endif %}
+
+{% endblock %}

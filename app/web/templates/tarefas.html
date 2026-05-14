@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block titulo %}Tarefas{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Tarefas</h1>
+  <p class="muted">Histórico de comandos enfileirados (últimas 100).</p>
+</header>
+
+<details class="card-form">
+  <summary class="card-form-summary">+ Postar manualmente</summary>
+  {% if grupos %}
+  <form method="post" action="/tarefas/postar" class="form-inline">
+    <label>
+      Grupo de destino
+      <select name="grupo_id" required>
+        {% for g in grupos %}
+          <option value="{{ g.id }}">{{ g.nome }} ({{ g.identificador }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Texto da postagem
+      <textarea name="texto" required rows="5" maxlength="4096"
+                placeholder="🔥 Mouse Logitech G203&#10;De R$ 159 por R$ 89,90&#10;https://..."></textarea>
+    </label>
+    <label>
+      URL da imagem (opcional)
+      <input type="url" name="imagem_url" placeholder="https://..." maxlength="2000">
+    </label>
+    <button type="submit" class="btn btn-primario">Enfileirar postagem</button>
+  </form>
+  {% else %}
+  <p class="muted" style="padding:12px">
+    Você precisa de pelo menos um <a href="/grupos">grupo</a> ativo pra postar.
+  </p>
+  {% endif %}
+</details>
+
+<div class="filtros-row">
+  <strong>Filtrar:</strong>
+  <a href="/tarefas" class="filtro-link {% if not status_filtro %}filtro-ativo{% endif %}">todas</a>
+  <a href="/tarefas?status_filtro=pendente" class="filtro-link {% if status_filtro == 'pendente' %}filtro-ativo{% endif %}">pendentes</a>
+  <a href="/tarefas?status_filtro=processando" class="filtro-link {% if status_filtro == 'processando' %}filtro-ativo{% endif %}">processando</a>
+  <a href="/tarefas?status_filtro=concluida" class="filtro-link {% if status_filtro == 'concluida' %}filtro-ativo{% endif %}">concluídas</a>
+  <a href="/tarefas?status_filtro=falhou" class="filtro-link {% if status_filtro == 'falhou' %}filtro-ativo{% endif %}">falharam</a>
+</div>
+
+{% if tarefas %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Tipo</th>
+      <th>Status</th>
+      <th>Tentativas</th>
+      <th>Criado</th>
+      <th>Concluído</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tarefas %}
+    <tr>
+      <td><a href="/tarefas/{{ t.id }}">#{{ t.id }}</a></td>
+      <td><code>{{ t.tipo }}</code></td>
+      <td>
+        {% if t.status == 'concluida' %}
+          <span class="badge badge-verde">{{ t.status }}</span>
+        {% elif t.status == 'falhou' %}
+          <span class="badge badge-vermelho">{{ t.status }}</span>
+        {% elif t.status == 'processando' %}
+          <span class="badge badge-azul">{{ t.status }}</span>
+        {% elif t.status == 'cancelada' %}
+          <span class="badge badge-cinza">{{ t.status }}</span>
+        {% else %}
+          <span class="badge badge-amarelo">{{ t.status }}</span>
+        {% endif %}
+      </td>
+      <td>{{ t.tentativas }}/{{ t.max_tentativas }}</td>
+      <td>{{ t.criado_em.strftime('%d/%m %H:%M:%S') }}</td>
+      <td>{{ t.concluido_em.strftime('%d/%m %H:%M:%S') if t.concluido_em else '—' }}</td>
+      <td>
+        <a href="/tarefas/{{ t.id }}" class="btn-link">detalhes</a>
+        {% if t.status in ['pendente', 'processando'] %}
+        <form method="post" action="/tarefas/{{ t.id }}/cancelar" style="display:inline">
+          <button type="submit" class="btn-link btn-link-perigo"
+                  onclick="return confirm('Cancelar essa tarefa?')">cancelar</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Nenhuma tarefa enfileirada ainda{% if status_filtro %} com status "{{ status_filtro }}"{% endif %}.</p>
+</div>
+{% endif %}
+
+{% endblock %}

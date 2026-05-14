@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block titulo %}Dashboard{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Olá, {{ user.nome_exibicao or user.login }}</h1>
+  <p class="muted">
+    Organização: <strong>{{ org.nome if org else 'Achadinhos' }}</strong>
+    {% if org and org.plano %} · plano <code>{{ org.plano.slug }}</code>{% endif %}
+  </p>
+</header>
+
+{% if not user.onboarding_completo %}
+<div class="alerta alerta-info" style="display:flex; justify-content:space-between; align-items:center; gap:16px;">
+  <span>
+    👋 <strong>Bem-vindo!</strong> Termine a configuração inicial pra começar a postar.
+  </span>
+  <a href="/onboarding" class="btn btn-primario">Continuar setup</a>
+</div>
+{% endif %}
+
+<section class="cards">
+  <div class="card">
+    <div class="card-titulo">Agentes</div>
+    <div class="card-numero">{{ counts.agentes }}</div>
+    <div class="card-sub">{{ counts.agentes_online }} online agora</div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Canais</div>
+    <div class="card-numero">{{ counts.canais }}</div>
+    <div class="card-sub">WhatsApp + Telegram</div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Grupos</div>
+    <div class="card-numero">{{ counts.grupos }}</div>
+    <div class="card-sub">destinos configurados</div>
+  </div>
+
+  <div class="card card-destaque">
+    <div class="card-titulo">Tarefas pendentes</div>
+    <div class="card-numero">{{ counts.tarefas_pendentes }}</div>
+    <div class="card-sub">aguardando processamento</div>
+  </div>
+</section>
+
+<section class="proximos-passos">
+  <h2>Próximos passos</h2>
+  <ol>
+    <li>
+      <strong>Crie um agente</strong> em <a href="/agentes">Agentes</a> — você vai receber
+      um token pra colar no PC do afiliado.
+    </li>
+    <li>
+      <strong>Cadastre um canal WhatsApp</strong> ligado a esse agente.
+    </li>
+    <li>
+      <strong>Cadastre os grupos</strong> de WhatsApp em <a href="/grupos">Grupos</a>.
+    </li>
+    <li>
+      <strong>Importe produtos</strong> em <a href="/produtos">Produtos</a> (CSV) e
+      <strong>crie templates</strong> em <a href="/templates">Templates</a>.
+    </li>
+    <li>
+      <strong>Rode um lote</strong> em <a href="/lote">Lote</a> — o sistema escolhe
+      o que postar onde.
+    </li>
+    <li>
+      <strong>Instale o agente</strong> no PC e cole o token. O ícone na barra de tarefas
+      vai ficar verde quando conectar.
+    </li>
+    <li>Pronto. Comandos de postagem disparados aqui chegam no PC do afiliado.</li>
+  </ol>
+</section>
+
+{% endblock %}

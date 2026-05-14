@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block titulo %}Bem-vindo{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Bem-vindo ao Achadinhos, {{ user.nome_exibicao or user.login }}!</h1>
+  <p class="muted">
+    Sua conta da organização <strong>{{ org.nome }}</strong> está pronta.
+    Pra começar a postar, complete os 4 passos abaixo. Pode fazer agora ou depois —
+    nada bloqueia o acesso.
+  </p>
+</header>
+
+{% if completo %}
+<div class="alerta alerta-ok">
+  ✅ <strong>Tudo configurado!</strong> Você pode <a href="/lote">rodar um lote</a>
+  agora ou <a href="/dashboard">ir pro dashboard</a>.
+</div>
+{% endif %}
+
+<ol class="onboarding-lista">
+
+  <li class="onboarding-passo {% if passos.credenciais.ok %}ok{% endif %}">
+    <div class="passo-icone">{% if passos.credenciais.ok %}✅{% else %}1️⃣{% endif %}</div>
+    <div class="passo-conteudo">
+      <h3>Configure suas credenciais do Mercado Livre</h3>
+      <p class="muted">
+        Servidor cifra a senha no banco. O agente local usa pra logar no ML
+        e fazer buscas em seu nome.
+      </p>
+      {% if passos.credenciais.ok %}
+        <span class="muted small">Configurado: <code>{{ user.usuario_ml }}</code></span>
+      {% else %}
+        <a href="/usuarios/{{ user.id }}/credenciais" class="btn btn-primario">Configurar agora</a>
+      {% endif %}
+    </div>
+  </li>
+
+  <li class="onboarding-passo {% if passos.agente.ok %}ok{% endif %}">
+    <div class="passo-icone">{% if passos.agente.ok %}✅{% else %}2️⃣{% endif %}</div>
+    <div class="passo-conteudo">
+      <h3>Instale o agente no seu PC</h3>
+      <p class="muted">
+        O agente roda em background no seu computador. Ele faz as buscas no ML
+        (com Selenium) e posta no WhatsApp Web. Telegram não precisa dele.
+      </p>
+      {% if passos.agente.ok %}
+        <span class="muted small">
+          {{ passos.agente.total }} agente(s) cadastrado(s).
+          <a href="/agentes">Ver agentes</a>
+        </span>
+      {% else %}
+        <a href="/agentes/baixar" class="btn btn-primario">Baixar e instalar agente</a>
+        <span class="muted small">
+          O setup faz login com sua conta e cria o agente automaticamente.
+        </span>
+      {% endif %}
+    </div>
+  </li>
+
+  <li class="onboarding-passo {% if passos.canal.ok %}ok{% endif %}">
+    <div class="passo-icone">{% if passos.canal.ok %}✅{% else %}3️⃣{% endif %}</div>
+    <div class="passo-conteudo">
+      <h3>Cadastre um canal de postagem</h3>
+      <p class="muted">
+        WhatsApp (via agente) ou Telegram (via Bot API). Você pode ter vários.
+      </p>
+      {% if passos.canal.ok %}
+        <span class="muted small">
+          {{ passos.canal.total }} canal(is) ativo(s).
+          <a href="/canais">Ver canais</a>
+        </span>
+      {% else %}
+        <a href="/canais" class="btn btn-primario">Cadastrar canal</a>
+      {% endif %}
+    </div>
+  </li>
+
+  <li class="onboarding-passo {% if passos.grupo.ok %}ok{% endif %}">
+    <div class="passo-icone">{% if passos.grupo.ok %}✅{% else %}4️⃣{% endif %}</div>
+    <div class="passo-conteudo">
+      <h3>Crie seu primeiro grupo</h3>
+      <p class="muted">
+        Grupo é o destino da postagem. Pode atrelar a um ou mais nichos —
+        produtos compatíveis com o nicho vão pra esse grupo.
+      </p>
+      {% if passos.grupo.ok %}
+        <span class="muted small">
+          {{ passos.grupo.total }} grupo(s) cadastrado(s).
+          <a href="/grupos">Ver grupos</a>
+        </span>
+      {% else %}
+        <a href="/grupos" class="btn btn-primario">Criar grupo</a>
+      {% endif %}
+    </div>
+  </li>
+
+</ol>
+
+<div style="margin-top: 32px;">
+  <a href="/dashboard" class="btn-link">Pular pra agora — ir pro dashboard</a>
+</div>
+
+<style>
+  .onboarding-lista { list-style: none; padding: 0; margin: 24px 0; }
+  .onboarding-passo {
+    display: flex;
+    gap: 18px;
+    padding: 20px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin-bottom: 14px;
+    background: #fff;
+    transition: border-color .15s;
+  }
+  .onboarding-passo.ok {
+    background: #f0fdf4;
+    border-color: #86efac;
+  }
+  .passo-icone {
+    font-size: 32px;
+    flex-shrink: 0;
+    width: 48px;
+    text-align: center;
+  }
+  .passo-conteudo h3 { margin: 0 0 6px; font-size: 17px; }
+  .passo-conteudo p { margin: 0 0 10px; }
+</style>
+
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block titulo %}Baixar agente{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Instalar o agente Achadinhos</h1>
+  <p class="muted">
+    O agente roda no seu PC em background. Ele faz as buscas no Mercado Livre
+    (via Selenium) e posta no WhatsApp Web pra você. Sem ele, só Telegram
+    funciona (via cloud).
+  </p>
+</header>
+
+<div class="alerta alerta-info">
+  <strong>Status:</strong> instalador <code>.exe</code> ainda em prep —
+  por enquanto, rode o agente em modo dev (Python). Em poucos dias liberamos
+  o <code>AchadinhosAgent.exe</code> com auto-update.
+</div>
+
+<h2 style="margin-top: 24px;">Setup dev (3 minutos)</h2>
+
+<ol class="onboarding-lista">
+
+  <li class="onboarding-passo">
+    <div class="passo-icone">1️⃣</div>
+    <div class="passo-conteudo">
+      <h3>Instale Python 3.11+ e Chrome</h3>
+      <p class="muted">
+        <a href="https://www.python.org/downloads/" target="_blank">python.org</a> ·
+        <a href="https://www.google.com/chrome/" target="_blank">google.com/chrome</a>
+      </p>
+    </div>
+  </li>
+
+  <li class="onboarding-passo">
+    <div class="passo-icone">2️⃣</div>
+    <div class="passo-conteudo">
+      <h3>Clone o repo do agente e instale dependências</h3>
+      <pre><code>git clone &lt;url-do-repo-achadinhos-agent&gt;
+cd achadinhos-agent
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .</code></pre>
+    </div>
+  </li>
+
+  <li class="onboarding-passo">
+    <div class="passo-icone">3️⃣</div>
+    <div class="passo-conteudo">
+      <h3>Rode o setup (vai pedir email + senha)</h3>
+      <pre><code>python -m agent.setup</code></pre>
+      <p class="muted">
+        O setup vai logar nesta conta, criar um agente automaticamente, e
+        gravar o token em <code>%APPDATA%\Achadinhos\config.json</code>.
+        Você não precisa copiar/colar token nenhum.
+      </p>
+    </div>
+  </li>
+
+  <li class="onboarding-passo">
+    <div class="passo-icone">4️⃣</div>
+    <div class="passo-conteudo">
+      <h3>Faça o login inicial nas plataformas (1× cada)</h3>
+      <pre><code>python -m agent.login_ml         # escaneia ou loga no ML
+python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
+      <p class="muted">
+        Sessões ficam salvas no perfil persistente. Renove só quando expirar
+        (~30 dias).
+      </p>
+    </div>
+  </li>
+
+  <li class="onboarding-passo">
+    <div class="passo-icone">5️⃣</div>
+    <div class="passo-conteudo">
+      <h3>Rode o agente</h3>
+      <pre><code>python -m agent.main --sem-tray</code></pre>
+      <p class="muted">
+        Quando ver <code>ws.conectado</code>, está pronto. Volte aqui no
+        dashboard, clique em <a href="/lote">Lote</a> ou em qualquer
+        <a href="/buscas">busca</a> e clique "▶ Rodar".
+      </p>
+    </div>
+  </li>
+
+</ol>
+
+<h2 style="margin-top: 24px;">Detalhes técnicos</h2>
+<ul class="muted">
+  <li>Roda em Windows / Mac / Linux (testado em Windows 11 / Python 3.13).</li>
+  <li>Comunicação cifrada via WebSocket (em produção, <code>wss://</code>).</li>
+  <li>Token JWT de 1 ano, gravado em arquivo do usuário (não em variável de ambiente).</li>
+  <li>Pode revogar o agente a qualquer momento em <a href="/agentes">Agentes</a>.</li>
+  <li>Múltiplos agentes por usuário (PC casa + PC trabalho) — cada um com seu token.</li>
+</ul>
+
+{% endblock %}

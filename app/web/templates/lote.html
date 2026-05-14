@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block titulo %}Rodar lote{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Rodar lote agora</h1>
+  <p class="muted">
+    Seleciona produtos elegíveis e enfileira postagens nos grupos compatíveis.
+  </p>
+</header>
+
+<section class="cards">
+  <div class="card">
+    <div class="card-titulo">Produtos elegíveis</div>
+    <div class="card-numero">{{ counts.produtos }}</div>
+    <div class="card-sub">não bloqueados</div>
+  </div>
+  <div class="card">
+    <div class="card-titulo">Templates ativos</div>
+    <div class="card-numero">{{ counts.templates }}</div>
+    <div class="card-sub">a renderizar mensagens</div>
+  </div>
+  <div class="card">
+    <div class="card-titulo">Grupos ativos</div>
+    <div class="card-numero">{{ counts.grupos }}</div>
+    <div class="card-sub">destinos disponíveis</div>
+  </div>
+</section>
+
+<details class="card-form" open>
+  <summary class="card-form-summary">⚡ Disparar lote</summary>
+  <form method="post" action="/lote/rodar" class="form-inline">
+    <label>
+      Quantos produtos no lote?
+      <input type="number" name="max_produtos" value="10" min="1" max="50" required>
+      <span class="muted small">Cada produto vai pra UM grupo compatível.</span>
+    </label>
+    <label>
+      Filtrar por canal (opcional)
+      <select name="canal_tipo">
+        <option value="">Todos</option>
+        <option value="whatsapp_agente">Apenas WhatsApp</option>
+        <option value="telegram_bot">Apenas Telegram</option>
+      </select>
+    </label>
+    <button type="submit" class="btn btn-primario">⚡ Rodar agora</button>
+  </form>
+</details>
+
+{% if resultado %}
+<section class="bloco">
+  <h2>Resultado da última execução</h2>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-titulo">Avaliados</div>
+      <div class="card-numero">{{ resultado.produtos_avaliados }}</div>
+    </div>
+    <div class="card card-destaque">
+      <div class="card-titulo">Tarefas criadas</div>
+      <div class="card-numero">{{ resultado.tarefas_criadas }}</div>
+      <div class="card-sub">enviadas pro pipeline</div>
+    </div>
+    <div class="card">
+      <div class="card-titulo">Sem grupo compatível</div>
+      <div class="card-numero">{{ resultado.sem_grupo }}</div>
+    </div>
+    <div class="card">
+      <div class="card-titulo">Sem template</div>
+      <div class="card-numero">{{ resultado.sem_template }}</div>
+      <div class="card-sub">usaram fallback</div>
+    </div>
+    <div class="card">
+      <div class="card-titulo">Já postados</div>
+      <div class="card-numero">{{ resultado.ja_postado or 0 }}</div>
+      <div class="card-sub">nos últimos 7 dias</div>
+    </div>
+  </div>
+
+  {% if resultado.detalhes %}
+  <h3>Detalhes</h3>
+  <ul class="lista-detalhes">
+    {% for d in resultado.detalhes %}
+      <li>{{ d }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if resultado.tarefas_criadas %}
+  <p style="margin-top: 14px;">
+    <a href="/tarefas?status_filtro=pendente" class="btn btn-primario">
+      Ver tarefas criadas →
+    </a>
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="bloco" style="margin-top: 28px;">
+  <h2>Como o sistema decide</h2>
+  <ol>
+    <li><strong>Filtra produtos elegíveis</strong> da sua org: não bloqueados, com preço &gt; 0, com pelo menos 1 nicho.</li>
+    <li><strong>Encontra grupos compatíveis</strong>: grupos cujos nichos batem com o nicho do produto. Grupo sem nicho aceita qualquer produto.</li>
+    <li><strong>Aplica dedup</strong>: se o produto já foi postado nesse grupo nos últimos 7 dias, pula.</li>
+    <li><strong>Renderiza template</strong> do nicho do produto (ou fallback se nicho não tiver template).</li>
+    <li><strong>Enfileira tarefa</strong> via dispatcher: WhatsApp vai pro agente local, Telegram vai pro Celery cloud.</li>
+  </ol>
+</section>
+
+{% endblock %}

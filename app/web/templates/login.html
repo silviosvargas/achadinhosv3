@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block titulo %}Entrar{% endblock %}
+{% block conteudo %}
+<div class="login-card">
+  <h1>Entrar</h1>
+  <p class="login-sub">Acesse sua organização Achadinhos</p>
+
+  {% if erro %}
+  <div class="alerta alerta-erro">{{ erro }}</div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <label>
+      Organização (slug)
+      <input type="text" name="org_slug" value="achadinhos" autofocus required>
+    </label>
+    <label>
+      Login
+      <input type="text" name="login" required autocomplete="username">
+    </label>
+    <label>
+      Senha
+      <input type="password" name="senha" required autocomplete="current-password">
+    </label>
+    <button type="submit" class="btn btn-primario">Entrar</button>
+  </form>
+
+  <p class="login-dica">
+    Não tem conta? <a href="/signup"><strong>Criar conta grátis</strong></a>.
+  </p>
+</div>
+{% endblock %}

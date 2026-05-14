@@ -1,0 +1,66 @@
+# Configuração local — NUNCA commitar
+.env
+.env.*.local
+*.env.local
+TOKEN-API.txt
+*.token
+
+# Config local do Claude Code (per-machine)
+.claude/settings.local.json
+
+# Dados de teste (CSVs, planilhas com dados sensíveis)
+*.csv
+*.xlsx
+!docs/**/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Dados locais
+data/
+logs/
+
+# Docker volumes locais (caso alguém aponte volume pra cá)
+postgres_data/
+redis_data/
+
+# Cobertura de testes
+.coverage
+htmlcov/
+coverage.xml

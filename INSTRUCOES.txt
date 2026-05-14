@@ -1,0 +1,42 @@
+PATCH 3.0.2 — corrige falha de extração de imagem no WSL
+
+PROBLEMA:
+A build instalava ipython + mypy + jedi (pacotes pesados, ~150 MB
+de stubs de Django que nunca usaremos). Quando o disco virtual do
+WSL ficava apertado, o Docker falhava na hora de gravar essas
+camadas com "input/output error".
+
+FIX:
+- Removidos ipython e mypy das deps "dev" do pyproject.toml
+- Mantidos: pytest (testes), ruff (lint), pytest-cov, pytest-asyncio
+- Imagem fica ~200 MB menor → build mais rápido + menos chance de I/O error
+
+COMO APLICAR:
+
+1. PARA TUDO E LIMPA CACHE:
+   docker compose down
+   docker builder prune -af
+   docker system prune -af
+
+   (Isso libera ~5 GB no WSL e elimina o erro de I/O.)
+
+2. EXTRAI ESTE ZIP em D:\ACHADINHOSV3 (substitui o pyproject.toml)
+
+3. REBUILD do zero:
+   docker compose build --no-cache api worker flower
+
+4. SOBE:
+   docker compose up -d
+
+5. AGUARDA ~30s e CONFERE:
+   docker compose ps                   ← todos "(healthy)"
+
+6. CRIA ADMIN:
+   docker compose exec api python -m scripts.criar_admin
+
+7. ABRE NO NAVEGADOR:
+   http://localhost:8000/docs
+
+SE AINDA DER "input/output error":
+- Docker Desktop → Settings → Troubleshoot → Reset to factory defaults
+- Depois: cd D:\ACHADINHOSV3 && docker compose up -d

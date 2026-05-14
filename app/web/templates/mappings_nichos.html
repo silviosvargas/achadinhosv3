@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block titulo %}Mappings categoria → nicho{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Mapping categoria do ML → nicho</h1>
+  <p class="muted">
+    Quando o agente extrai produtos do ML, ele captura a categoria
+    (ex: "Eletrônicos &gt; Áudio &gt; Fones"). O servidor olha aqui pra
+    decidir o nicho do produto automaticamente.
+  </p>
+</header>
+
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
+{% if pode_admin %}
+<details class="card-form" open>
+  <summary class="card-form-summary">+ Novo mapping</summary>
+  <form method="post" action="/mappings-nichos/novo" class="form-inline">
+    <label>
+      Categoria do ML (string exata vinda do scraping)
+      <input type="text" name="categoria_ml" required maxlength="200"
+             placeholder="ex: Eletrônicos > Áudio > Fones de Ouvido"
+             list="categorias_pendentes" style="min-width: 400px;">
+      <datalist id="categorias_pendentes">
+        {% for c in pendentes %}
+        <option value="{{ c }}">
+        {% endfor %}
+      </datalist>
+      <span class="muted small">
+        Sugestões vêm das categorias já vistas em buscas. Match no ingest é
+        case-insensitive e usa prefixo como fallback (ex: cadastrar
+        "Eletrônicos > Áudio" pega tudo abaixo).
+      </span>
+    </label>
+    <label>
+      Nicho
+      <select name="nicho_id" required>
+        <option value="">— escolha —</option>
+        {% for n in nichos %}
+        <option value="{{ n.id }}">{{ n.icone or '' }} {{ n.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="btn btn-primario">Criar mapping</button>
+  </form>
+</details>
+{% endif %}
+
+{% if pendentes %}
+<details class="card-form">
+  <summary class="card-form-summary">
+    {{ pendentes|length }} categoria(s) vistas em buscas e ainda não mapeadas
+  </summary>
+  <ul class="muted" style="margin-top: 10px;">
+    {% for c in pendentes %}
+    <li><code>{{ c }}</code></li>
+    {% endfor %}
+  </ul>
+  <p class="muted small">
+    Cadastre acima as que você quer classificar (digite ou cole a string exata).
+  </p>
+</details>
+{% endif %}
+
+{% if mappings %}
+<h2 style="margin-top: 28px;">Mappings cadastrados ({{ mappings|length }})</h2>
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Categoria do ML</th>
+      <th>Nicho</th>
+      <th>Criado em</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in mappings %}
+    <tr>
+      <td><code>{{ m.categoria_ml }}</code></td>
+      <td>
+        {% set n = nichos_map.get(m.nicho_id) %}
+        {% if n %}
+          <span class="badge badge-azul">{{ n.icone or '' }} {{ n.label }}</span>
+        {% else %}
+          <span class="muted small">nicho #{{ m.nicho_id }} (não achado)</span>
+        {% endif %}
+      </td>
+      <td class="small muted">{{ m.criado_em.strftime('%d/%m/%Y %H:%M') }}</td>
+      <td>
+        {% if pode_admin %}
+        <form method="post" action="/mappings-nichos/{{ m.id }}/excluir"
+              style="display:inline" onsubmit="return confirm('Remover este mapping?');">
+          <button type="submit" class="btn-link">remover</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Nenhum mapping cadastrado ainda.</p>
+  <p class="muted">
+    Sem mappings, produtos novos chegam <strong>sem nicho</strong> — não
+    aparecem no lote até alguém atribuir manualmente em /produtos.
+  </p>
+</div>
+{% endif %}
+
+{% endblock %}

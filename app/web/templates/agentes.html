@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block titulo %}Agentes{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Agentes</h1>
+  <p class="muted">PCs locais que executam postagens no WhatsApp.</p>
+</header>
+
+{% if token_recem %}
+<div class="alerta alerta-info token-banner">
+  <h3 style="margin-top:0">🔑 Token do agente criado</h3>
+  <p style="margin: 4px 0 8px 0;">
+    <strong>Copie agora — esse token só aparece uma vez.</strong> Cole no PC do
+    afiliado quando rodar o agente local.
+  </p>
+  <textarea readonly onclick="this.select()" rows="4"
+            style="width:100%; font-family:monospace; font-size:11px; padding:8px;
+                   background: var(--bg-input); color: var(--texto);
+                   border: 1px solid var(--border); border-radius: 6px;">{{ token_recem }}</textarea>
+  <details style="margin-top:8px">
+    <summary style="cursor:pointer; font-size:13px; color: var(--muted);">Como usar este token</summary>
+    <pre style="background: var(--bg-input); padding: 10px; border-radius: 6px;
+                font-size: 12px; overflow-x:auto; margin-top:6px;">cd D:\achadinhos-agent
+.venv\Scripts\activate
+python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localhost:8000/api/v1/ws/agente"</pre>
+  </details>
+</div>
+{% endif %}
+
+{% if erro %}
+<div class="alerta alerta-erro">{{ erro }}</div>
+{% endif %}
+
+{% if pode_criar %}
+<details class="card-form">
+  <summary class="card-form-summary">+ Criar novo agente</summary>
+  <form method="post" action="/agentes/novo" class="form-inline">
+    <label>
+      Nome amigável
+      <input type="text" name="nome" required placeholder="Ex: PC do João - Escritório" maxlength="100">
+    </label>
+    <label>
+      Vincular a usuário
+      <select name="usuario_id" required>
+        {% for u in usuarios %}
+          <option value="{{ u.id }}">{{ u.nome_exibicao or u.login }} ({{ u.papel }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="btn btn-primario">Criar agente</button>
+  </form>
+</details>
+{% endif %}
+
+{% if agentes %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Nome</th>
+      <th>Status</th>
+      <th>Versão</th>
+      <th>SO</th>
+      <th>Último ping</th>
+      <th>IP</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in agentes %}
+    <tr>
+      <td>
+        <strong>{{ a.nome }}</strong>
+        <div class="muted small">id: {{ a.id }}</div>
+      </td>
+      <td>
+        {% if not a.ativo %}
+          <span class="badge badge-cinza">desativado</span>
+        {% elif a.online %}
+          <span class="badge badge-verde">● online</span>
+        {% else %}
+          <span class="badge badge-cinza">offline</span>
+        {% endif %}
+      </td>
+      <td>{{ a.versao_app or '—' }}</td>
+      <td>{{ a.sistema_op or '—' }}</td>
+      <td>{{ a.ultimo_ping.strftime('%d/%m %H:%M') if a.ultimo_ping else 'nunca' }}</td>
+      <td>{{ a.ultimo_ip or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Você ainda não tem agentes cadastrados.</p>
+  <p class="muted">Use o formulário acima pra criar o primeiro.</p>
+</div>
+{% endif %}
+
+{% endblock %}

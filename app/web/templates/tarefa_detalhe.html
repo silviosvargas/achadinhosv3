@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block titulo %}Tarefa #{{ tarefa.id }}{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Tarefa #{{ tarefa.id }}</h1>
+  <p class="muted">
+    <a href="/tarefas">← voltar pra lista</a>
+  </p>
+</header>
+
+<div class="detalhe-grid">
+  <div class="card">
+    <div class="card-titulo">Status</div>
+    <div>
+      {% if tarefa.status == 'concluida' %}
+        <span class="badge badge-verde">{{ tarefa.status }}</span>
+      {% elif tarefa.status == 'falhou' %}
+        <span class="badge badge-vermelho">{{ tarefa.status }}</span>
+      {% elif tarefa.status == 'processando' %}
+        <span class="badge badge-azul">{{ tarefa.status }}</span>
+      {% elif tarefa.status == 'cancelada' %}
+        <span class="badge badge-cinza">{{ tarefa.status }}</span>
+      {% else %}
+        <span class="badge badge-amarelo">{{ tarefa.status }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Tipo</div>
+    <div><code>{{ tarefa.tipo }}</code></div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Tentativas</div>
+    <div>{{ tarefa.tentativas }} / {{ tarefa.max_tentativas }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Agente</div>
+    <div>{{ tarefa.agente_id or '—' }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Criado em</div>
+    <div>{{ tarefa.criado_em.strftime('%d/%m/%Y %H:%M:%S') }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-titulo">Concluído em</div>
+    <div>{{ tarefa.concluido_em.strftime('%d/%m/%Y %H:%M:%S') if tarefa.concluido_em else '—' }}</div>
+  </div>
+</div>
+
+<section class="bloco">
+  <h2>Payload</h2>
+  <pre class="bloco-codigo">{{ tarefa.payload | tojson(indent=2) }}</pre>
+</section>
+
+{% if tarefa.resultado %}
+<section class="bloco">
+  <h2>Resultado</h2>
+  <pre class="bloco-codigo">{{ tarefa.resultado | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+
+{% if tarefa.erro %}
+<section class="bloco">
+  <h2 style="color: var(--vermelho)">Erro</h2>
+  <pre class="bloco-codigo bloco-codigo-erro">{{ tarefa.erro }}</pre>
+</section>
+{% endif %}
+
+{% if tarefa.status in ['pendente', 'processando'] %}
+<form method="post" action="/tarefas/{{ tarefa.id }}/cancelar" style="margin-top: 24px">
+  <button type="submit" class="btn btn-perigo"
+          onclick="return confirm('Cancelar essa tarefa? Esta ação não pode ser desfeita.')">
+    Cancelar tarefa
+  </button>
+</form>
+{% endif %}
+
+{% endblock %}

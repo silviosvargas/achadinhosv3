@@ -1,0 +1,128 @@
+# ============================================================
+# Achadinhos V3 — Orquestração local (dev)
+# Sobe tudo com: docker compose up -d
+# ============================================================
+
+services:
+
+  # ── Postgres ──────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-achadinhos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-achadinhos_dev_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-achadinhos}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Exposta no host pra debugging com cliente externo (DBeaver, etc)
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-achadinhos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis (filas Celery + pub/sub WebSocket) ──────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── API (FastAPI) ─────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Hot-reload em dev: monta código pra ver mudanças sem rebuild
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # ── Worker (Celery — tasks em background) ─────────────
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    # Healthcheck do Dockerfile assume HTTP — worker não tem. Desativa.
+    healthcheck:
+      disable: true
+
+  # ── Celery beat (agendador de tasks recorrentes) ──────
+  # Lê beat_schedule do celery_app e dispara tasks no horário.
+  # Roda como serviço separado pra que worker possa escalar horizontalmente
+  # sem disparar a mesma task várias vezes.
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    healthcheck:
+      disable: true
+
+  # ── Flower (monitoramento Celery, opcional em dev) ────
+  flower:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - redis
+      - worker
+    ports:
+      - "5555:5555"
+    command: celery -A app.workers.celery_app flower --port=5555
+    # Sobrescreve healthcheck do Dockerfile (que aponta pra :8000)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5555/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  redis_data:

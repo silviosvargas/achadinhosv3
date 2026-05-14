@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block titulo %}Templates{% endblock %}
+{% block conteudo %}
+
+<header class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <div>
+    <h1>Templates de mensagem</h1>
+    <p class="muted">Como o sistema vai escrever cada postagem. Use placeholders como <code>{nome}</code> e <code>{bloco_preco}</code>.</p>
+  </div>
+  {% if pode_criar %}
+  <a href="/templates/novo" class="btn btn-primario">+ Criar template</a>
+  {% endif %}
+</header>
+
+{% if templates_lista %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Nome</th>
+      <th>Nicho</th>
+      <th>Texto</th>
+      <th>Status</th>
+      <th>Usos</th>
+      {% if pode_criar %}<th></th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in templates_lista %}
+    <tr>
+      <td><strong>{{ t.nome }}</strong></td>
+      <td>
+        {% if t.nicho_id and nichos_map[t.nicho_id] %}
+          <span class="badge badge-azul">
+            {{ nichos_map[t.nicho_id].icone or '' }} {{ nichos_map[t.nicho_id].label }}
+          </span>
+        {% else %}
+          <span class="badge badge-cinza">padrão (todos)</span>
+        {% endif %}
+      </td>
+      <td>
+        <pre class="texto-template-preview">{{ t.texto[:300] }}{% if t.texto|length > 300 %}…{% endif %}</pre>
+      </td>
+      <td>
+        {% if t.ativo %}
+          <span class="badge badge-verde">ativo</span>
+        {% else %}
+          <span class="badge badge-cinza">inativo</span>
+        {% endif %}
+      </td>
+      <td>{{ t.vezes_usado }}</td>
+      {% if pode_criar %}
+      <td>
+        <form method="post" action="/templates/{{ t.id }}/excluir" style="display:inline">
+          <button type="submit" class="btn-link btn-link-perigo"
+                  onclick="return confirm('Excluir template &quot;{{ t.nome }}&quot;?')">
+            excluir
+          </button>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Você ainda não tem templates.</p>
+  <p class="muted">
+    Sem templates, o sistema usa um template <strong>fallback</strong> simples
+    (com nome, preço e link). Crie templates personalizados pra cada nicho.
+  </p>
+</div>
+{% endif %}
+
+<section class="bloco" style="margin-top: 28px;">
+  <h2>Placeholders disponíveis</h2>
+  <table class="tabela">
+    <thead><tr><th>Placeholder</th><th>Descrição</th><th>Exemplo</th></tr></thead>
+    <tbody>
+      <tr><td><code>{nome}</code></td><td>Nome do produto</td><td>Smartphone X Pro 256GB</td></tr>
+      <tr><td><code>{preco}</code></td><td>Preço atual</td><td>R$ 1.899,00</td></tr>
+      <tr><td><code>{preco_orig}</code></td><td>Preço original</td><td>R$ 2.499,00</td></tr>
+      <tr><td><code>{desconto}</code></td><td>% de desconto</td><td>24%</td></tr>
+      <tr><td><code>{bloco_preco}</code></td><td>Bloco completo de preço</td><td>De ~R$ 2.499,00~ por R$ 1.899,00 (24% OFF)</td></tr>
+      <tr><td><code>{plataforma}</code></td><td>Nome da plataforma</td><td>Mercado Livre</td></tr>
+      <tr><td><code>{url}</code></td><td>URL afiliada</td><td>https://...</td></tr>
+      <tr><td><code>{chamada}</code></td><td>Frase de chamada (aleatória)</td><td>Corre que vai esgotar!</td></tr>
+      <tr><td><code>{chamada_emoji}</code></td><td>Emoji de chamada (aleatório)</td><td>🔥</td></tr>
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

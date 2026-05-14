@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block titulo %}Produtos{% endblock %}
+{% block conteudo %}
+
+<header class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <div>
+    <h1>Produtos</h1>
+    <p class="muted">Catálogo da sua organização — produtos elegíveis pra postar.</p>
+  </div>
+  {% if pode_criar %}
+  <div style="display:flex; gap:10px;">
+    <a href="/produtos/import-csv" class="btn btn-primario">📥 Importar CSV</a>
+    <a href="/produtos/novo" class="btn btn-primario">+ Adicionar produto</a>
+  </div>
+  {% endif %}
+</header>
+
+<form method="get" action="/produtos" class="filtros-form">
+  <input type="text" name="busca" placeholder="Buscar nome..." value="{{ filtro_busca }}">
+
+  <select name="plataforma">
+    <option value="">Todas plataformas</option>
+    <option value="ml"     {% if filtro_plataforma == 'ml' %}selected{% endif %}>Mercado Livre</option>
+    <option value="shopee" {% if filtro_plataforma == 'shopee' %}selected{% endif %}>Shopee</option>
+    <option value="amazon" {% if filtro_plataforma == 'amazon' %}selected{% endif %}>Amazon</option>
+  </select>
+
+  <select name="nicho_id">
+    <option value="">Todos nichos</option>
+    {% for n in nichos %}
+      <option value="{{ n.id }}" {% if filtro_nicho_id == n.id %}selected{% endif %}>
+        {{ n.icone or '' }} {{ n.label }}
+      </option>
+    {% endfor %}
+  </select>
+
+  <select name="bloqueado">
+    <option value="">Todos</option>
+    <option value="0" {% if filtro_bloqueado == 0 %}selected{% endif %}>Não bloqueados</option>
+    <option value="1" {% if filtro_bloqueado == 1 %}selected{% endif %}>Bloqueados</option>
+  </select>
+
+  <button type="submit" class="btn btn-primario">Filtrar</button>
+  <a href="/produtos" class="btn-link">limpar</a>
+</form>
+
+{% if produtos %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th></th>
+      <th>Nome</th>
+      <th>Plataforma</th>
+      <th>Preço</th>
+      <th>Nichos</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in produtos %}
+    <tr>
+      <td>
+        {% if p.foto_url %}
+          <img src="{{ p.foto_url }}" alt="" style="width:48px; height:48px; object-fit:cover; border-radius:6px;">
+        {% else %}
+          <div class="foto-placeholder">📦</div>
+        {% endif %}
+      </td>
+      <td>
+        <strong>{{ p.nome[:80] }}{% if p.nome|length > 80 %}…{% endif %}</strong>
+        <div class="muted small">{{ p.plataforma }} #{{ p.item_id }}</div>
+      </td>
+      <td><code>{{ p.plataforma }}</code></td>
+      <td>
+        <strong>R$ {{ "%.2f"|format(p.preco)|replace('.', ',') }}</strong>
+        {% if p.preco_orig and p.preco_orig > p.preco %}
+          <div class="muted small">
+            <s>R$ {{ "%.2f"|format(p.preco_orig)|replace('.', ',') }}</s>
+            {% if p.desconto %} -{{ p.desconto|int }}%{% endif %}
+          </div>
+        {% endif %}
+      </td>
+      <td>
+        {% set ns = nichos_por_prod.get(p.id) or [] %}
+        {% if ns %}
+          {% for n in ns[:3] %}
+            <span class="badge badge-azul">{{ n.icone or '' }} {{ n.label }}</span>
+          {% endfor %}
+          {% if ns|length > 3 %}
+            <span class="muted small">+{{ ns|length - 3 }}</span>
+          {% endif %}
+        {% else %}
+          <span class="muted small">— sem nicho</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if p.bloqueado %}
+          <span class="badge badge-vermelho">bloqueado</span>
+        {% else %}
+          <span class="badge badge-verde">ativo</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if pode_criar %}
+        <form method="post" action="/produtos/{{ p.id }}/bloquear" style="display:inline">
+          <button type="submit" class="btn-link">
+            {% if p.bloqueado %}desbloquear{% else %}bloquear{% endif %}
+          </button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted small" style="margin-top:14px;">
+  Mostrando até 100 produtos. Use os filtros pra refinar.
+</p>
+{% else %}
+<div class="vazio">
+  <p>Nenhum produto encontrado.</p>
+  {% if pode_criar %}
+  <p class="muted">
+    Use <a href="/produtos/import-csv">importar CSV</a> pra alimentar o catálogo,
+    ou <a href="/produtos/novo">adicione um produto manualmente</a>.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{% block titulo %}Achadinhos{% endblock %} — Achadinhos</title>
+  <link rel="stylesheet" href="/static/style.css">
+
+  {# ── PWA (Fase 7) ───────────────────────────────────────── #}
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#16a34a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Achadinhos">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
+</head>
+<body>
+  {% if user %}
+  <nav class="topbar">
+    <div class="topbar-brand">🛒 Achadinhos</div>
+
+    {# Checkbox CSS-only que controla menu mobile #}
+    <input type="checkbox" id="menu-toggle" class="topbar-toggle">
+    <label for="menu-toggle" class="topbar-hamburger" aria-label="Abrir menu">☰</label>
+
+    <ul class="topbar-menu">
+      <li><a href="/dashboard">Dashboard</a></li>
+      <li><a href="/produtos">Produtos</a></li>
+      <li><a href="/buscas">🔎 Buscas</a></li>
+      <li><a href="/mappings-nichos">🏷️ Nichos</a></li>
+      <li><a href="/templates">Templates</a></li>
+      <li><a href="/agentes">Agentes</a></li>
+      <li><a href="/canais">Canais</a></li>
+      <li><a href="/grupos">Grupos</a></li>
+      <li><a href="/lote"><strong>⚡ Lote</strong></a></li>
+      <li><a href="/tarefas">Tarefas</a></li>
+      <li><a href="/usuarios">Usuários</a></li>
+    </ul>
+    <div class="topbar-user">
+      <span>{{ user.nome_exibicao or user.login }}</span>
+      <span class="papel papel-{{ user.papel }}">{{ user.papel }}</span>
+      <a href="/logout" class="btn-logout">Sair</a>
+    </div>
+  </nav>
+  {% endif %}
+
+  <main class="container">
+    {% block conteudo %}{% endblock %}
+  </main>
+
+  <footer class="rodape">
+    Achadinhos V3 · {{ '2026' }}
+  </footer>
+
+  {# Registra Service Worker pra PWA — silencioso se browser não suportar #}
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+          .catch(function() { /* ignora — PWA é progressive */ });
+      });
+    }
+  </script>
+</body>
+</html>

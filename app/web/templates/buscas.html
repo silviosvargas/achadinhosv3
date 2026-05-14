@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block titulo %}Buscas ML{% endblock %}
+{% block conteudo %}
+
+<header class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <div>
+    <h1>Buscas Mercado Livre</h1>
+    <p class="muted">Buscas automatizadas que rodam no agente local. Produtos achados entram no catálogo.</p>
+  </div>
+  <div>
+    <a href="/buscas/nova" class="btn btn-primario">+ Nova busca</a>
+  </div>
+</header>
+
+{% if mensagem %}
+<div class="alerta alerta-ok">{{ mensagem }}</div>
+{% endif %}
+{% if erro %}
+<div class="alerta alerta-erro">{{ erro }}</div>
+{% endif %}
+
+{% if buscas %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Nome</th>
+      <th>Entrada</th>
+      <th>Agente</th>
+      <th>Agendamento</th>
+      <th>Última exec.</th>
+      <th>Execuções</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in buscas %}
+    <tr>
+      <td><strong>{{ b.nome }}</strong></td>
+      <td>
+        <code class="small">{{ b.entrada[:80] }}{% if b.entrada|length > 80 %}…{% endif %}</code>
+        <div class="muted small">
+          {% if b.entrada.startswith('http') %}🔗 URL{% else %}🔍 termo{% endif %}
+          · até {{ b.max_paginas }} págs / {{ b.max_produtos }} produtos
+        </div>
+      </td>
+      <td>
+        {% if b.agente_id %}
+          <span class="badge badge-azul">#{{ b.agente_id }}</span>
+        {% else %}
+          <span class="muted small">qualquer</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if b.intervalo_minutos %}
+          a cada {{ b.intervalo_minutos }} min
+        {% else %}
+          <span class="muted small">só manual</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if b.ultima_exec_em %}
+          <span class="small">{{ b.ultima_exec_em.strftime('%d/%m %H:%M') }}</span>
+        {% else %}
+          <span class="muted small">nunca</span>
+        {% endif %}
+      </td>
+      <td>{{ b.execucoes }}</td>
+      <td>
+        {% if b.ativo %}
+          <span class="badge badge-verde">ativa</span>
+        {% else %}
+          <span class="badge badge-vermelho">inativa</span>
+        {% endif %}
+      </td>
+      <td>
+        <form method="post" action="/buscas/{{ b.id }}/rodar" style="display:inline">
+          <button type="submit" class="btn-link">▶ rodar</button>
+        </form>
+        {% if pode_admin %}
+        ·
+        <form method="post" action="/buscas/{{ b.id }}/excluir" style="display:inline"
+              onsubmit="return confirm('Excluir esta busca?');">
+          <button type="submit" class="btn-link">excluir</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Nenhuma busca cadastrada.</p>
+  <p class="muted">
+    Crie uma busca pra que o agente local extraia produtos do ML automaticamente.
+    <a href="/buscas/nova">Criar primeira busca</a>.
+  </p>
+</div>
+{% endif %}
+
+{% endblock %}

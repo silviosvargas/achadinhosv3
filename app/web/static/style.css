@@ -1,0 +1,693 @@
+/* ============================================================
+   Achadinhos V3 — UI minimalista
+   Variáveis CSS pra tema claro/escuro automático.
+   ============================================================ */
+
+:root {
+  --bg:           #f7f8fa;
+  --bg-card:      #ffffff;
+  --bg-input:     #ffffff;
+  --border:       #e1e5eb;
+  --texto:        #1a1d23;
+  --muted:        #6b7280;
+  --primario:     #2563eb;
+  --primario-h:   #1d4ed8;
+  --verde:        #16a34a;
+  --amarelo:      #d97706;
+  --vermelho:     #dc2626;
+  --azul:         #2563eb;
+  --cinza:        #9ca3af;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:         #0f1115;
+    --bg-card:    #161a21;
+    --bg-input:   #1a1f28;
+    --border:     #2a3140;
+    --texto:      #e5e7eb;
+    --muted:      #9ca3af;
+    --primario:   #3b82f6;
+    --primario-h: #60a5fa;
+    --verde:      #22c55e;
+    --amarelo:    #f59e0b;
+    --vermelho:   #ef4444;
+    --azul:       #3b82f6;
+    --cinza:      #6b7280;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--texto);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+a { color: var(--primario); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 0.9em;
+  padding: 2px 5px;
+  background: var(--bg-input);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* ── Topbar ────────────────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-brand {
+  font-weight: 700;
+  font-size: 17px;
+}
+.topbar-menu {
+  display: flex;
+  gap: 18px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+}
+.topbar-menu a {
+  color: var(--texto);
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.topbar-menu a:hover {
+  background: var(--bg);
+  text-decoration: none;
+}
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.papel {
+  font-size: 11px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.papel-admin { background: #fef3c7; color: #92400e; }
+.papel-afiliado { background: #dbeafe; color: #1e40af; }
+@media (prefers-color-scheme: dark) {
+  .papel-admin { background: #422006; color: #fbbf24; }
+  .papel-afiliado { background: #1e3a8a; color: #93c5fd; }
+}
+.btn-logout {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── Container ─────────────────────────────────────── */
+.container {
+  max-width: 1100px;
+  margin: 28px auto;
+  padding: 0 24px;
+}
+
+.page-header {
+  margin-bottom: 28px;
+}
+.page-header h1 {
+  margin: 0 0 4px 0;
+  font-size: 24px;
+}
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+/* ── Cards ─────────────────────────────────────────── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 32px;
+}
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+}
+.card-titulo { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.card-numero { font-size: 28px; font-weight: 700; }
+.card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.card-destaque { border-color: var(--primario); }
+
+/* ── Próximos passos ───────────────────────────────── */
+.proximos-passos {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px 28px;
+}
+.proximos-passos h2 {
+  margin-top: 0;
+  font-size: 16px;
+}
+.proximos-passos ol {
+  margin: 0;
+  padding-left: 22px;
+}
+.proximos-passos li { margin-bottom: 10px; }
+
+/* ── Tabela ────────────────────────────────────────── */
+.tabela {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.tabela thead th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  padding: 10px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.tabela tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.tabela tbody tr:last-child td { border-bottom: 0; }
+
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 12px;
+  letter-spacing: 0.3px;
+}
+.badge-verde   { background: #dcfce7; color: #166534; }
+.badge-amarelo { background: #fef3c7; color: #92400e; }
+.badge-vermelho{ background: #fee2e2; color: #991b1b; }
+.badge-azul    { background: #dbeafe; color: #1e40af; }
+.badge-cinza   { background: #f3f4f6; color: #4b5563; }
+@media (prefers-color-scheme: dark) {
+  .badge-verde   { background: #14532d; color: #86efac; }
+  .badge-amarelo { background: #422006; color: #fbbf24; }
+  .badge-vermelho{ background: #450a0a; color: #fca5a5; }
+  .badge-azul    { background: #1e3a8a; color: #93c5fd; }
+  .badge-cinza   { background: #1f2937; color: #9ca3af; }
+}
+
+/* ── Formulários ───────────────────────────────────── */
+.login-card {
+  max-width: 380px;
+  margin: 80px auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+}
+.login-card h1 {
+  margin: 0 0 4px 0;
+  font-size: 22px;
+}
+.login-sub { color: var(--muted); margin-top: 0; margin-bottom: 22px; }
+.login-dica { color: var(--muted); font-size: 13px; margin-top: 18px; text-align: center; }
+
+label {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  margin-top: 4px;
+  background: var(--bg-input);
+  color: var(--texto);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+input:focus {
+  outline: none;
+  border-color: var(--primario);
+}
+
+.btn {
+  display: inline-block;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn-primario {
+  background: var(--primario);
+  color: white;
+  width: 100%;
+  margin-top: 6px;
+}
+.btn-primario:hover { background: var(--primario-h); }
+
+/* ── Alertas ───────────────────────────────────────── */
+.alerta {
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+.alerta-erro {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+@media (prefers-color-scheme: dark) {
+  .alerta-erro {
+    background: #450a0a;
+    color: #fca5a5;
+    border-color: #7f1d1d;
+  }
+}
+
+/* ── Vazio ─────────────────────────────────────────── */
+.vazio {
+  background: var(--bg-card);
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 40px;
+  text-align: center;
+}
+
+/* ── Rodapé ────────────────────────────────────────── */
+.rodape {
+  text-align: center;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ── Forms compactos (criação inline) ──────────────── */
+.card-form {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 22px;
+}
+.card-form-summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  font-weight: 600;
+  color: var(--primario);
+  list-style: none;
+  user-select: none;
+}
+.card-form-summary::-webkit-details-marker { display: none; }
+.card-form-summary:hover { background: var(--bg); border-radius: 10px 10px 0 0; }
+.card-form[open] .card-form-summary { border-bottom: 1px solid var(--border); }
+
+.form-inline {
+  padding: 18px 22px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-inline label { margin-bottom: 8px; }
+.form-inline textarea {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  margin-top: 4px;
+  background: var(--bg-input);
+  color: var(--texto);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+.form-inline select {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  margin-top: 4px;
+  background: var(--bg-input);
+  color: var(--texto);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.form-inline button { width: auto; align-self: flex-start; margin-top: 8px; }
+
+/* ── Alerta info (token recém-criado etc) ──────────── */
+.alerta-info {
+  background: #dbeafe;
+  color: #1e3a8a;
+  border: 1px solid #93c5fd;
+}
+@media (prefers-color-scheme: dark) {
+  .alerta-info {
+    background: #172554;
+    color: #93c5fd;
+    border-color: #1e3a8a;
+  }
+}
+.token-banner h3 { font-size: 16px; }
+
+/* ── Filtros (links de filtro de tarefa) ───────────── */
+.filtros-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.filtro-link {
+  color: var(--muted);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+.filtro-link:hover {
+  background: var(--bg-card);
+  text-decoration: none;
+}
+.filtro-ativo {
+  background: var(--primario);
+  color: white !important;
+}
+.filtro-ativo:hover { background: var(--primario-h); }
+
+/* ── Botões secundários e link em tabela ───────────── */
+.btn-link {
+  display: inline-block;
+  padding: 0;
+  font-size: 13px;
+  color: var(--primario);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  margin-right: 8px;
+}
+.btn-link:hover { text-decoration: underline; }
+.btn-link-perigo { color: var(--vermelho); }
+
+.btn-perigo {
+  background: var(--vermelho);
+  color: white;
+}
+.btn-perigo:hover { background: #b91c1c; }
+
+/* ── Detalhe (grid de cards informativos) ──────────── */
+.detalhe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+/* ── Bloco com pre formatado ───────────────────────── */
+.bloco { margin-bottom: 22px; }
+.bloco h2 { font-size: 15px; margin-bottom: 8px; }
+.bloco-codigo {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--texto);
+  margin: 0;
+}
+.bloco-codigo-erro {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+@media (prefers-color-scheme: dark) {
+  .bloco-codigo-erro {
+    background: #450a0a;
+    color: #fca5a5;
+    border-color: #7f1d1d;
+  }
+}
+
+/* ── Forms verticais com várias colunas ──────────── */
+.form-vertical {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-vertical > label { margin-bottom: 12px; }
+.form-vertical textarea {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  margin-top: 4px;
+  background: var(--bg-input);
+  color: var(--texto);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+.form-vertical select {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  margin-top: 4px;
+  background: var(--bg-input);
+  color: var(--texto);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.form-vertical button {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+/* ── Form de filtros (linha horizontal) ──────────── */
+.filtros-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+  padding: 14px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.filtros-form input,
+.filtros-form select {
+  padding: 8px 10px;
+  background: var(--bg-input);
+  color: var(--texto);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.filtros-form input[type="text"] { min-width: 220px; }
+
+/* ── Placeholder de foto ─────────────────────────── */
+.foto-placeholder {
+  width: 48px;
+  height: 48px;
+  background: var(--bg-input);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+
+/* ── Preview de texto do template ─────────────────── */
+.texto-template-preview {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  max-width: 380px;
+  max-height: 90px;
+  overflow: auto;
+}
+
+/* ── Lista de detalhes do lote ────────────────────── */
+.lista-detalhes {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 22px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.lista-detalhes li { margin: 4px 0; }
+
+
+/* ============================================================
+   RESPONSIVO (Fase 7) — mobile-first complementar
+   ============================================================ */
+
+/* Menu hamburguer — escondido em desktop, vira botão em mobile.
+   Implementado SEM JavaScript: checkbox + sibling selectors. */
+.topbar-toggle { display: none; }              /* checkbox escondido */
+.topbar-hamburger {
+  display: none;                                /* só aparece em mobile */
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 22px;
+  user-select: none;
+  margin-left: auto;
+}
+
+/* ── Tablet (≤ 960px) ────────────────────────────── */
+@media (max-width: 960px) {
+  .container {
+    padding: 0 16px;
+    margin: 18px auto;
+  }
+
+  /* Hamburguer aparece */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 10px 16px;
+    position: relative;
+  }
+  .topbar-hamburger { display: block; }
+
+  /* Menu vira coluna escondida; checkbox controla */
+  .topbar-menu {
+    flex-direction: column;
+    gap: 0;
+    flex-basis: 100%;
+    order: 3;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+  }
+  .topbar-toggle:checked ~ .topbar-menu {
+    max-height: 600px;
+  }
+  .topbar-menu li {
+    border-top: 1px solid var(--border);
+  }
+  .topbar-menu a {
+    display: block;
+    padding: 12px 6px;          /* maior pra dedo */
+    border-radius: 0;
+  }
+
+  /* Userbox vai pro lado direito acima do menu */
+  .topbar-user {
+    order: 2;
+    font-size: 13px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .cards { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .card-numero { font-size: 22px; }
+
+  /* Tabelas: scroll horizontal em vez de quebrar layout */
+  .tabela { display: block; overflow-x: auto; white-space: nowrap; }
+  .tabela td, .tabela th { white-space: normal; }
+
+  .form-row { grid-template-columns: 1fr; }
+  .filtros-form { flex-direction: column; align-items: stretch; }
+  .filtros-form input[type="text"] { min-width: 0; }
+}
+
+/* ── Mobile (≤ 640px) ────────────────────────────── */
+@media (max-width: 640px) {
+  html, body { font-size: 14px; }
+  .container { padding: 0 12px; }
+  .page-header h1 { font-size: 20px; }
+
+  /* Inputs e botões touch-friendly: altura mínima 44px (recomendação Apple) */
+  input[type="text"], input[type="password"], input[type="email"],
+  input[type="number"], input[type="search"], select, textarea {
+    padding: 12px 12px;
+    font-size: 16px;        /* >=16px evita zoom auto no iOS */
+    min-height: 44px;
+  }
+  .btn { padding: 12px 18px; min-height: 44px; }
+
+  .card { padding: 14px; }
+
+  /* Login card ocupa quase toda tela */
+  .login-card {
+    margin: 24px auto;
+    padding: 22px;
+    max-width: 92vw;
+  }
+
+  /* Form vertical com menos padding */
+  .form-vertical { padding: 16px; }
+
+  /* Onboarding passos verticais */
+  .onboarding-passo { padding: 14px; gap: 12px; }
+  .passo-icone { font-size: 26px; width: 40px; }
+}
+
+/* ── PWA: estado standalone (instalado como app) ──── */
+@media (display-mode: standalone) {
+  /* Esconde o rodapé pra dar look de app nativo */
+  .rodape { display: none; }
+  /* Adiciona safe-area pra iOS notch */
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

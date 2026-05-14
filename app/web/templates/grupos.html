@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block titulo %}Grupos{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Grupos</h1>
+  <p class="muted">Destinos onde as postagens são enviadas.</p>
+</header>
+
+{% if pode_criar %}
+<details class="card-form">
+  <summary class="card-form-summary">+ Criar novo grupo</summary>
+  {% if canais %}
+  <form method="post" action="/grupos/novo" class="form-inline">
+    <label>
+      Canal
+      <select name="canal_id" required>
+        {% for c in canais %}
+          <option value="{{ c.id }}">{{ c.nome }} ({{ c.tipo }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Nome amigável
+      <input type="text" name="nome" required placeholder="Ex: Achadinhos - Ofertas 01" maxlength="200">
+    </label>
+    <label>
+      Identificador
+      <input type="text" name="identificador" required maxlength="200"
+             placeholder="WhatsApp: nome EXATO do grupo. Telegram: chat_id (ex: -1001234)">
+      <span class="muted small">
+        WhatsApp: copie o nome exato do grupo no app (case-sensitive).
+        Telegram: cole o chat_id obtido via @get_id_bot.
+      </span>
+    </label>
+    <button type="submit" class="btn btn-primario">Criar grupo</button>
+  </form>
+  {% else %}
+  <p class="muted" style="padding: 12px;">
+    Você precisa criar um <a href="/canais">canal</a> antes de cadastrar grupos.
+  </p>
+  {% endif %}
+</details>
+{% endif %}
+
+{% if grupos %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Nome</th>
+      <th>Identificador</th>
+      <th>Canal</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for g in grupos %}
+    <tr>
+      <td>
+        <strong>{{ g.nome }}</strong>
+        <div class="muted small">id: {{ g.id }}</div>
+      </td>
+      <td><code>{{ g.identificador }}</code></td>
+      <td>
+        {% if canais_map and canais_map[g.canal_id] %}
+          {{ canais_map[g.canal_id].nome }}
+          <div class="muted small">{{ canais_map[g.canal_id].tipo }}</div>
+        {% else %}
+          <span class="muted">canal {{ g.canal_id }}</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if g.ativo %}
+          <span class="badge badge-verde">ativo</span>
+        {% else %}
+          <span class="badge badge-cinza">inativo</span>
+        {% endif %}
+        {% if g.precisa_atencao_admin %}
+          <span class="badge badge-amarelo">⚠ atenção</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Nenhum grupo cadastrado ainda.</p>
+</div>
+{% endif %}
+
+{% endblock %}

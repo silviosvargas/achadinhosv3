@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block titulo %}Nova busca ML{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Nova busca Mercado Livre</h1>
+  <p class="muted"><a href="/buscas">← voltar</a></p>
+</header>
+
+{% if erro %}
+<div class="alerta alerta-erro">{{ erro }}</div>
+{% endif %}
+
+<form method="post" action="/buscas/nova" class="form-vertical">
+  <label>
+    Nome (descritivo, só pra você)
+    <input type="text" name="nome" required maxlength="150"
+           placeholder="Ofertas de fone bluetooth">
+  </label>
+
+  <label>
+    Entrada — termo ou URL do ML
+    <textarea name="entrada" required rows="2"
+              placeholder="fone bluetooth   OU   https://lista.mercadolivre.com.br/fone-bluetooth_FretGratis_yes"></textarea>
+    <span class="muted small">
+      Termo simples ("fone bluetooth") ou URL completa do ML já com filtros aplicados.
+      Detecção automática pelo prefixo http(s)://.
+    </span>
+  </label>
+
+  <div class="form-row">
+    <label>
+      Máx. páginas (1–20)
+      <input type="number" name="max_paginas" value="3" min="1" max="20">
+    </label>
+    <label>
+      Máx. produtos (1–500)
+      <input type="number" name="max_produtos" value="50" min="1" max="500">
+    </label>
+  </div>
+
+  <label>
+    Agente que executa
+    <select name="agente_id">
+      <option value="">Qualquer agente da org</option>
+      {% for a in agentes %}
+        <option value="{{ a.id }}">
+          #{{ a.id }} · {{ a.nome }}{% if not a.ativo %} (inativo){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    <span class="muted small">Selene um agente específico se quiser fixar onde roda.</span>
+  </label>
+
+  <label>
+    Intervalo de execução (minutos)
+    <input type="number" name="intervalo_minutos" min="15" placeholder="(vazio = só manual)">
+    <span class="muted small">
+      Vazio = roda só quando você clicar "rodar". Mínimo 15 min se preencher.
+    </span>
+  </label>
+
+  <label class="check-inline">
+    <input type="checkbox" name="ativo" checked> Ativa
+  </label>
+
+  <button type="submit" class="btn btn-primario">Criar busca</button>
+</form>
+
+{% endblock %}

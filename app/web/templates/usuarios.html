@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block titulo %}Usuários{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Usuários</h1>
+  <p class="muted">Pessoas que podem entrar nesta organização.</p>
+</header>
+
+{% if pode_criar %}
+<details class="card-form">
+  <summary class="card-form-summary">+ Criar novo usuário</summary>
+  <form method="post" action="/usuarios/novo" class="form-inline">
+    <label>
+      Login (sem espaços)
+      <input type="text" name="login" required pattern="[a-zA-Z0-9_.\-]+" maxlength="80"
+             placeholder="ex: joao.silva">
+    </label>
+    <label>
+      Senha
+      <input type="password" name="senha" required minlength="6" maxlength="255">
+      <span class="muted small">Mínimo 6 caracteres. Avise o usuário pra trocar no primeiro acesso.</span>
+    </label>
+    <label>
+      Papel
+      <select name="papel" required>
+        <option value="afiliado">Afiliado (posta no próprio PC)</option>
+        <option value="usuario">Usuário (só visualiza)</option>
+        <option value="admin">Admin (gerencia tudo da org)</option>
+      </select>
+    </label>
+    <label>
+      Nome de exibição (opcional)
+      <input type="text" name="nome_exibicao" maxlength="150" placeholder="ex: João Silva">
+    </label>
+    <label>
+      Email (opcional)
+      <input type="email" name="email" maxlength="200" placeholder="ex: joao@exemplo.com">
+    </label>
+    <button type="submit" class="btn btn-primario">Criar usuário</button>
+  </form>
+</details>
+{% endif %}
+
+{% if usuarios %}
+<table class="tabela">
+  <thead>
+    <tr>
+      <th>Login</th>
+      <th>Nome</th>
+      <th>Papel</th>
+      <th>Status</th>
+      <th>Cred. ML</th>
+      <th>Email</th>
+      <th>Último login</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in usuarios %}
+    <tr>
+      <td><strong>{{ u.login }}</strong></td>
+      <td>{{ u.nome_exibicao or '—' }}</td>
+      <td><span class="papel papel-{{ u.papel }}">{{ u.papel }}</span></td>
+      <td>
+        {% if u.ativo %}
+          <span class="badge badge-verde">ativo</span>
+        {% else %}
+          <span class="badge badge-cinza">desativado</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if u.usuario_ml and u.senha_ml_cifrada %}
+          <span class="badge badge-verde">configurada</span>
+          <div class="muted small">{{ u.usuario_ml[:30] }}</div>
+        {% elif u.usuario_ml %}
+          <span class="badge badge-cinza">só usuário</span>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
+      <td>{{ u.email or '—' }}</td>
+      <td>{{ u.ultimo_login.strftime('%d/%m %H:%M') if u.ultimo_login else 'nunca' }}</td>
+      <td>
+        {% if user.eh_admin or user.id == u.id %}
+        <a href="/usuarios/{{ u.id }}/credenciais" class="btn-link">credenciais</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  <p>Nenhum usuário cadastrado ainda.</p>
+</div>
+{% endif %}
+
+{% endblock %}

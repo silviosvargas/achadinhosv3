@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block titulo %}Importar produtos (CSV){% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Importar produtos via CSV</h1>
+  <p class="muted"><a href="/produtos">← voltar pra lista</a></p>
+</header>
+
+{% if erro %}
+<div class="alerta alerta-erro">{{ erro }}</div>
+{% endif %}
+
+{% if resultado %}
+<div class="alerta alerta-info">
+  <strong>Importação concluída:</strong>
+  {{ resultado.criados }} criados, {{ resultado.atualizados }} atualizados.
+  {% if resultado.total_erros %}
+    <br><strong>{{ resultado.total_erros }} erros</strong> (mostrando primeiros {{ resultado.erros|length }}):
+    <ul style="margin-top:8px;">
+      {% for e in resultado.erros %}
+        <li><code>{{ e }}</code></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card-form">
+  <div style="padding: 22px;">
+    <h3 style="margin-top:0">Upload do CSV</h3>
+    <form method="post" action="/produtos/import-csv" enctype="multipart/form-data" class="form-vertical">
+      <input type="file" name="arquivo" accept=".csv" required>
+      <button type="submit" class="btn btn-primario" style="margin-top: 14px;">Importar</button>
+    </form>
+  </div>
+</div>
+
+<section class="bloco" style="margin-top: 28px;">
+  <h2>Formato esperado</h2>
+  <p>Cabeçalho obrigatório (primeira linha). Colunas <strong>obrigatórias</strong>:
+  <code>plataforma</code>, <code>item_id</code>, <code>nome</code>, <code>preco</code>.</p>
+
+  <p>Colunas opcionais: <code>categoria</code>, <code>preco_orig</code>, <code>desconto</code>,
+  <code>comissao</code>, <code>frete_gratis</code>, <code>url_canonica</code>,
+  <code>url_afiliado</code>, <code>foto_url</code>, <code>nichos</code>.</p>
+
+  <p>Coluna <code>nichos</code>: slugs separados por <code>|</code> (ex: <code>moda|beleza</code>).</p>
+
+  <h3 style="font-size: 14px;">Exemplo</h3>
+  <pre class="bloco-codigo">plataforma,item_id,nome,preco,preco_orig,desconto,comissao,url_afiliado,foto_url,nichos
+ml,MLB123,Smartphone X 256GB,1899.00,2499.00,24,8,https://...,https://imagem.jpg,tecnologia
+shopee,SHP456,Tênis esportivo,89.90,159.00,44,12,https://...,https://imagem2.jpg,moda|esportes
+amazon,B0XYZ,Livro de receitas,49.90,,,5,https://...,https://imagem3.jpg,casa</pre>
+
+  <p class="muted small">
+    Comportamento: upsert por (plataforma, item_id). Se já existe, atualiza preço/dados;
+    senão, cria novo. Nichos são re-vinculados (substituem os antigos).
+  </p>
+</section>
+
+{% endblock %}

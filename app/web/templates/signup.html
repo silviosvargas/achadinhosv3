@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block titulo %}Criar conta{% endblock %}
+{% block conteudo %}
+<div class="login-card">
+  <h1>Criar conta</h1>
+  <p class="login-sub">Comece grátis no plano Free — 5 grupos, 100 postagens/mês.</p>
+
+  {% if erro %}
+  <div class="alerta alerta-erro">{{ erro }}</div>
+  {% endif %}
+
+  <form method="post" action="/signup">
+    <label>
+      Nome da empresa / projeto
+      <input type="text" name="org_nome" required minlength="2" maxlength="150"
+             autofocus placeholder="Ex: Achadinhos do João">
+      <span class="muted small">Identificador (slug) gerado automaticamente.</span>
+    </label>
+
+    <label>
+      Seu login (admin da conta)
+      <input type="text" name="login" required minlength="3" maxlength="80"
+             pattern="[a-zA-Z0-9_.\-]+" placeholder="Ex: joao.silva"
+             autocomplete="username">
+      <span class="muted small">Letras, números e <code>._-</code>. Sem espaços.</span>
+    </label>
+
+    <label>
+      Senha
+      <input type="password" name="senha" required minlength="6" maxlength="255"
+             autocomplete="new-password">
+      <span class="muted small">Mínimo 6 caracteres. Pode trocar depois.</span>
+    </label>
+
+    <label>
+      Email (opcional)
+      <input type="email" name="email" maxlength="200"
+             placeholder="ex: joao@exemplo.com">
+      <span class="muted small">
+        Não exigimos confirmação por enquanto. Email serve só pra contato/recuperação futura.
+      </span>
+    </label>
+
+    <label>
+      Nome de exibição (opcional)
+      <input type="text" name="nome_exibicao" maxlength="150" placeholder="Ex: João Silva">
+    </label>
+
+    <button type="submit" class="btn btn-primario">Criar conta</button>
+  </form>
+
+  <p class="login-dica">
+    Já tem conta? <a href="/login"><strong>Entrar</strong></a>.
+  </p>
+</div>
+{% endblock %}
