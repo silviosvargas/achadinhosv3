@@ -6,7 +6,7 @@
   },
   "deploy": {
     "preDeployCommand": "python -m scripts.bootstrap_producao",
-    "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips='*'",
+    "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers --forwarded-allow-ips=*",
     "healthcheckPath": "/api/v1/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
