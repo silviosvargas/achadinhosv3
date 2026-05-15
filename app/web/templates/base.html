@@ -64,7 +64,10 @@
               background:#888; display:inline-block;"></span>
         <span id="agente-status-label">…</span>
       </a>
-      <span>{{ user.nome_exibicao or user.login }}</span>
+      <a href="/conta" style="color:inherit; text-decoration:none;"
+         title="Minha conta — trocar senha">
+        {{ user.nome_exibicao or user.login }}
+      </a>
       <span class="papel papel-{{ user.papel }}">{{ user.papel }}</span>
       <a href="/logout" class="btn-logout">Sair</a>
     </div>

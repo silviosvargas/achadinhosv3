@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block titulo %}Minha conta{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Minha conta</h1>
+  <p class="muted">
+    Dados do seu usuário e troca de senha.
+  </p>
+</header>
+
+<section class="card" style="padding:20px; margin-top:16px;">
+  <h2 style="margin-top:0; font-size:18px;">Dados</h2>
+  <dl style="display:grid; grid-template-columns: auto 1fr; gap:8px 16px; margin:0;">
+    <dt class="muted">Nome</dt><dd>{{ user.nome_exibicao or "(não preenchido)" }}</dd>
+    <dt class="muted">Login</dt><dd><code>{{ user.login }}</code></dd>
+    <dt class="muted">Email</dt><dd>{{ user.email or "(não preenchido)" }}</dd>
+    <dt class="muted">Papel</dt><dd><span class="papel papel-{{ user.papel }}">{{ user.papel }}</span></dd>
+    <dt class="muted">Organização</dt>
+    <dd>
+      {{ user.organizacao.nome if user.organizacao else "—" }}
+      {% if user.organizacao and user.organizacao.plano %}
+        · plano <code>{{ user.organizacao.plano.slug }}</code>
+      {% endif %}
+    </dd>
+  </dl>
+</section>
+
+<section class="card" style="padding:20px; margin-top:16px;">
+  <h2 style="margin-top:0; font-size:18px;">Trocar senha</h2>
+
+  {% if mensagem %}
+    <div class="alerta alerta-sucesso" style="padding:10px; margin-bottom:12px;">
+      {{ mensagem }}
+    </div>
+  {% endif %}
+  {% if erro %}
+    <div class="alerta alerta-erro" style="padding:10px; margin-bottom:12px;">
+      {{ erro }}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/conta/senha" autocomplete="off"
+        style="display:flex; flex-direction:column; gap:12px; max-width:420px;">
+    <label>
+      Senha atual
+      <input type="password" name="senha_atual" required minlength="1"
+             autocomplete="current-password" style="width:100%;">
+    </label>
+    <label>
+      Nova senha (mínimo 8 caracteres)
+      <input type="password" name="senha_nova" required minlength="8"
+             autocomplete="new-password" style="width:100%;">
+    </label>
+    <label>
+      Confirmar nova senha
+      <input type="password" name="senha_nova2" required minlength="8"
+             autocomplete="new-password" style="width:100%;">
+    </label>
+    <button type="submit" class="btn btn-primario" style="align-self:flex-start;">
+      Trocar senha
+    </button>
+  </form>
+
+  <p class="muted small" style="margin-top:14px;">
+    Dica: use senha com 12+ caracteres misturando letras, números e símbolos.
+  </p>
+</section>
+
+{% endblock %}

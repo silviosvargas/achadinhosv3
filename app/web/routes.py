@@ -462,6 +462,50 @@ async def pagina_onboarding(
     )
 
 
+@router.get("/conta", response_class=HTMLResponse)
+async def pagina_conta(
+    request: Request,
+    user: Usuario = Depends(exigir_login),
+):
+    """Página 'Minha conta': mostra dados básicos + form trocar senha."""
+    return templates.TemplateResponse(
+        request, "conta.html",
+        {"user": user, "mensagem": None, "erro": None},
+    )
+
+
+@router.post("/conta/senha", response_class=HTMLResponse)
+async def trocar_senha_form(
+    request: Request,
+    senha_atual: str = Form(...),
+    senha_nova: str = Form(...),
+    senha_nova2: str = Form(...),
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Trocar a própria senha via form HTML. Valida: atual correta,
+    nova >= 8 chars, confirmação bate."""
+    def _render(erro: str | None = None, mensagem: str | None = None, status: int = 200):
+        return templates.TemplateResponse(
+            request, "conta.html",
+            {"user": user, "erro": erro, "mensagem": mensagem},
+            status_code=status,
+        )
+
+    if not verificar_senha(senha_atual, user.senha_hash):
+        return _render(erro="Senha atual incorreta.", status=400)
+    if len(senha_nova) < 8:
+        return _render(erro="A nova senha precisa ter pelo menos 8 caracteres.", status=400)
+    if senha_nova != senha_nova2:
+        return _render(erro="As duas senhas novas não batem.", status=400)
+    if senha_nova == senha_atual:
+        return _render(erro="A nova senha precisa ser diferente da atual.", status=400)
+
+    user.senha_hash = hash_senha(senha_nova)
+    await db.commit()
+    return _render(mensagem="Senha trocada com sucesso. Use ela no próximo login.")
+
+
 @router.get("/planos", response_class=HTMLResponse)
 async def pagina_planos(
     request: Request,
