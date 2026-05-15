@@ -182,11 +182,21 @@ async def ingerir_produtos(
     disparador, dono_id = await _resolver_disparador(
         db, org_id=org_id, tarefa_id=tarefa_id, busca_id=busca_id,
     )
-    tag_ml = (disparador.afiliado_ml if disparador else None)
+    # Cascata de fallback pra tag de afiliado ML (Fase 9.9):
+    # 1) tag do disparador (user que rodou a busca)
+    # 2) tag do admin da org dele
+    # 3) tag do admin da org central (settings.admin_org_id) — pra que user
+    #    free de qualquer org SEMPRE caia no afiliado do admin Achadinhos
+    # 4) settings.ml_affiliate_id (env var global, último recurso)
+    from app.core.config import settings as _settings
 
-    # Fallback: se disparador não tem tag, usa a do admin da org
-    if not tag_ml and (disparador is None or not disparador.eh_admin):
+    tag_ml = (disparador.afiliado_ml if disparador else None)
+    if not tag_ml:
         tag_ml = await _tag_do_admin(db, org_id=org_id)
+    if not tag_ml and org_id != _settings.admin_org_id:
+        tag_ml = await _tag_do_admin(db, org_id=_settings.admin_org_id)
+    if not tag_ml and _settings.ml_affiliate_id:
+        tag_ml = _settings.ml_affiliate_id
 
     # 2. Carrega mapping categoria → nicho da org (1 query)
     mapping_rows = (await db.execute(
