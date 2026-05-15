@@ -14,12 +14,14 @@ quando Celery beat agendar (Fase 4d).
 """
 from __future__ import annotations
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.models import Usuario
 from app.services import (
     afiliado_service,
     dispatcher,
     linkbuilder,
+    redirect_service,
     selecao_service,
     templates_service,
 )
@@ -94,7 +96,19 @@ async def rodar_lote(
     cache_tag: dict[str, str | None] = {}
 
     async def _url_pro_produto(p) -> str:
-        """Recalcula `url_afiliado` na hora usando tag do disparador."""
+        """Calcula URL CURTA (encurtador próprio) que redireciona pra URL
+        do marketplace com tag do disparador.
+
+        Pipeline:
+        1. Resolve tag via cascata (user→admin_org→admin_central→env).
+        2. linkbuilder monta URL longa com tag.
+        3. redirect_service cria/atualiza row em `redirects` (1 por produto).
+        4. Retorna URL curta `{PUBLIC_BASE_URL}/r/{slug}` — essa que vai
+           pra postagem.
+
+        Fallback: se PUBLIC_BASE_URL não configurado, devolve URL longa
+        direta (degrada graciosamente).
+        """
         plat = (p.plataforma or "").lower()
         if plat not in cache_tag:
             cache_tag[plat] = await afiliado_service.tag_com_cascata(
@@ -103,12 +117,24 @@ async def rodar_lote(
                 usuario_id=criado_por_usuario_id,
                 org_id=org_id,
             )
-        url_com_tag = linkbuilder.gerar_url_afiliado(
+        url_longa = linkbuilder.gerar_url_afiliado(
             plataforma=plat,
             url_canonica=p.url_canonica,
             tag=cache_tag[plat],
+        ) or p.url_canonica or ""
+
+        if not url_longa:
+            return ""
+
+        base = (settings.public_base_url or "").rstrip("/")
+        if not base:
+            # Sem domínio público configurado — usa URL longa mesmo.
+            return url_longa
+
+        red = await redirect_service.criar_ou_atualizar_pro_produto(
+            db, produto_id=p.id, url_destino=url_longa,
         )
-        return url_com_tag or p.url_canonica or ""
+        return f"{base}/r/{red.slug}"
 
     for comb in combinacoes:
         template = await templates_service.selecionar_template(

@@ -227,6 +227,31 @@ async def raiz_web(
     return RedirectResponse(url="/dashboard", status_code=302)
 
 
+@router.get("/r/{slug}")
+async def redirect_curto(
+    slug: str,
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Encurtador próprio (Fase 14): GET /r/{slug} → 302 pro destino real.
+
+    Rota PÚBLICA (sem auth). Cliques vão acontecer fora do app
+    (WhatsApp/Telegram), então não dá pra exigir login. Slug não revela
+    info sensível.
+
+    Conta o click pra métricas, mas não bloqueia o redirect se a contagem
+    falhar (resiliência).
+    """
+    from app.services import redirect_service
+
+    red = await redirect_service.resolver(db, slug=slug)
+    if red is None:
+        raise HTTPException(status_code=404, detail="Link não encontrado")
+
+    # Conta click (fire-and-forget — se falhar, ainda redireciona)
+    await redirect_service.registrar_click(db, redirect_id=red.id)
+    return RedirectResponse(url=red.url_destino, status_code=302)
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def pagina_login(request: Request):
     return templates.TemplateResponse(
