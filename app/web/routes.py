@@ -48,6 +48,7 @@ from app.models import (
     Nicho,
     NichoCategoriaML,
     Organizacao,
+    Plano,
     Produto,
     ProdutoNicho,
     Tarefa,
@@ -403,6 +404,31 @@ async def pagina_onboarding(
     return templates.TemplateResponse(
         request, "onboarding.html",
         {"user": user, "org": org, "passos": passos, "completo": completo},
+    )
+
+
+@router.get("/planos", response_class=HTMLResponse)
+async def pagina_planos(
+    request: Request,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """
+    Tabela comparativa dos planos (Fase 11 parcial).
+
+    Mostra free / pro / business lado a lado, com limites e flags. O plano
+    atual do user vem destacado. Botão "Fazer upgrade" é placeholder
+    (billing real fica pra fase futura).
+    """
+    org = await db.get(Organizacao, user.org_id)
+    result = await db.execute(
+        select(Plano).where(Plano.ativo.is_(True)).order_by(Plano.preco_mensal_brl)
+    )
+    planos = result.scalars().all()
+    return templates.TemplateResponse(
+        request, "planos.html",
+        {"user": user, "org": org, "planos": planos,
+         "plano_atual_id": org.plano_id if org else None},
     )
 
 

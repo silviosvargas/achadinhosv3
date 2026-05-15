@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block titulo %}Planos{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Planos</h1>
+  <p class="muted">
+    Você está no plano <strong>{{ org.plano.nome if org and org.plano else "—" }}</strong>.
+    {% if org and org.plano and org.plano.slug != "business" %}
+    Faça upgrade pra desbloquear cadastrar afiliado próprio, criar buscas no Mercado
+    Livre, criar produtos no seu catálogo, e limites maiores.
+    {% endif %}
+  </p>
+</header>
+
+<div class="planos-grid">
+  {% for p in planos %}
+  <div class="plano-card {% if p.id == plano_atual_id %}plano-atual{% endif %}">
+    {% if p.id == plano_atual_id %}
+    <div class="plano-badge">Seu plano</div>
+    {% endif %}
+
+    <h2 class="plano-nome">{{ p.nome }}</h2>
+    <div class="plano-preco">
+      {% if p.preco_mensal_brl == 0 %}
+        <strong>Grátis</strong>
+      {% else %}
+        <strong>R$ {{ "%.2f"|format(p.preco_mensal_brl / 100) | replace(".", ",") }}</strong>
+        <span class="muted small">/ mês</span>
+      {% endif %}
+    </div>
+
+    <ul class="plano-features">
+      <li><strong>{{ p.limite_postagens_mes }}</strong> postagens/mês</li>
+      <li><strong>{{ p.limite_grupos }}</strong> grupos</li>
+      <li><strong>{{ p.limite_afiliados }}</strong> afiliado(s) por usuário</li>
+      <li>{{ "✓" if p.permite_telegram else "✗" }} Telegram (cloud)</li>
+      <li>{{ "✓" if p.permite_agendamento else "✗" }} Agendamento de buscas</li>
+      <li>{{ "✓" if p.pode_cadastrar_afiliado else "✗" }} Cadastrar credenciais de afiliado próprias</li>
+      <li>{{ "✓" if p.pode_criar_buscas else "✗" }} Criar buscas no Mercado Livre</li>
+      <li>{{ "✓" if p.pode_criar_produto_proprio else "✗" }} Criar produtos no seu catálogo</li>
+    </ul>
+
+    {% if p.id == plano_atual_id %}
+      <button class="btn btn-secundario" disabled style="width:100%;">Seu plano atual</button>
+    {% elif p.preco_mensal_brl == 0 %}
+      <button class="btn btn-secundario" disabled style="width:100%;" title="Downgrade não disponível">
+        Plano grátis
+      </button>
+    {% else %}
+      <a href="mailto:silviosvargas@metaservers.com.br?subject=Upgrade pro plano {{ p.nome }}"
+         class="btn btn-primario" style="width:100%; text-align:center; display:block;">
+        Fazer upgrade
+      </a>
+      <p class="muted small" style="text-align:center; margin-top:8px;">
+        Billing automático em breve. Por enquanto, envie um email e ativamos manualmente.
+      </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="muted small" style="margin-top:24px;">
+  <p>
+    <strong>Sobre o plano grátis:</strong> Você posta os produtos já cadastrados pela
+    equipe Achadinhos no WhatsApp e Telegram dos seus grupos. As compras geradas pelos
+    seus links usam o afiliado da plataforma — você ajuda a divulgar achadinhos sem
+    precisar configurar nada. Quem quiser monetizar diretamente (afiliado próprio,
+    buscas customizadas, catálogo próprio) deve fazer upgrade.
+  </p>
+</div>
+
+<style>
+  .planos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .plano-card {
+    position: relative;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 24px 20px;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+  }
+  .plano-card.plano-atual {
+    border-color: #16a34a;
+    border-width: 2px;
+    background: #f0fdf4;
+  }
+  .plano-badge {
+    position: absolute;
+    top: -10px;
+    right: 14px;
+    background: #16a34a;
+    color: #fff;
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+  }
+  .plano-nome { margin: 0 0 8px; font-size: 22px; }
+  .plano-preco { margin: 0 0 16px; font-size: 26px; line-height: 1; }
+  .plano-features {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+    flex-grow: 1;
+  }
+  .plano-features li {
+    padding: 6px 0;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 14px;
+  }
+  .plano-features li:last-child { border-bottom: none; }
+</style>
+
+{% endblock %}

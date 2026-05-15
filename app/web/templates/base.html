@@ -29,6 +29,7 @@
     {% set _plano = user.organizacao.plano if user.organizacao else None %}
     {% set _pode_buscas    = _plano.pode_criar_buscas          if _plano else False %}
     {% set _pode_produtos  = _plano.pode_criar_produto_proprio if _plano else False %}
+    {% set _eh_free        = (_plano.slug == "free") if _plano else False %}
 
     <ul class="topbar-menu">
       <li><a href="/dashboard">Dashboard</a></li>
@@ -46,6 +47,11 @@
       <li><a href="/lote"><strong>⚡ Lote</strong></a></li>
       <li><a href="/tarefas">Tarefas</a></li>
       <li><a href="/usuarios">Usuários</a></li>
+      {% if _eh_free %}
+      <li><a href="/planos" style="color:#16a34a; font-weight:600;">⭐ Upgrade</a></li>
+      {% else %}
+      <li><a href="/planos">Planos</a></li>
+      {% endif %}
     </ul>
     <div class="topbar-user">
       {# Badge status dos agentes (Fase 9.8) — atualizado por JS a cada 20s #}

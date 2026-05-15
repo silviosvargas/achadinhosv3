@@ -104,6 +104,16 @@
   <a href="/dashboard" class="btn-link">Pular pra agora — ir pro dashboard</a>
 </div>
 
+{# Fase 11 parcial: CTA upgrade pro plano free #}
+{% if org and org.plano and org.plano.slug == "free" %}
+<div class="alerta alerta-info" style="margin-top:24px;">
+  <strong>Você está no plano grátis.</strong>
+  Posta no WhatsApp e Telegram usando o catálogo Achadinhos.
+  Quer cadastrar afiliado próprio, criar buscas e produtos seus?
+  <a href="/planos">Ver planos</a> →
+</div>
+{% endif %}
+
 <style>
   .onboarding-lista { list-style: none; padding: 0; margin: 24px 0; }
   .onboarding-passo {
