@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(railway *)",
+      "PowerShell(railway *)",
+      "PowerShell($env:Path = \"$env:LOCALAPPDATA\\\\Programs\\\\railway;\" + $env:Path; *)",
+
+      "Bash(pyinstaller *)",
+      "Bash(python -m PyInstaller *)",
+      "Bash(python -m venv *)",
+      "Bash(python -m json.tool)",
+      "Bash(python -m agent.*)",
+      "Bash(./.venv/Scripts/python.exe -m PyInstaller *)",
+      "Bash(./.venv/Scripts/python.exe -m pip *)",
+      "Bash(./.venv/Scripts/python.exe -m venv *)",
+      "Bash(./.venv/Scripts/python.exe -m agent.*)",
+      "Bash(./.venv/Scripts/python.exe --version)",
+      "Bash(./.venv/Scripts/pip.exe *)",
+      "Bash(./dist/AchadinhosAgent.exe *)",
+
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git checkout *)",
+      "Bash(git restore *)",
+      "Bash(git rm *)",
+      "Bash(git mv *)",
+
+      "Bash(curl * https://achadinhos.maisseguidores.ia.br*)",
+      "Bash(curl * https://achadinhosv3-production.up.railway.app*)",
+      "Bash(curl * http://127.0.0.1:5577*)",
+      "Bash(curl * http://127.0.0.1:5578*)",
+      "Bash(curl * http://127.0.0.1:5579*)",
+      "Bash(curl * http://localhost:8000*)",
+      "Bash(curl * https://backboard.railway.com*)",
+      "Bash(curl * https://api.github.com*)",
+      "Bash(curl * https://github.com*)",
+
+      "Bash(docker run --rm postgres:* *)",
+      "Bash(docker logs *)",
+      "Bash(docker ps *)",
+      "Bash(docker exec *)",
+
+      "Bash(mkdir -p *)",
+      "Bash(cp -r *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(rm -fv *)",
+      "Bash(rm -f *)",
+
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:docs.railway.com)"
+    ]
+  }
+}
