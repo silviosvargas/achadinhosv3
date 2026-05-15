@@ -121,6 +121,7 @@ python -m agent.main --sem-tray   # roda
 - **3.10.2** — Agente local apontando pra prod via WSS, signup público + onboarding validados em prod, ADR-009 (Fase 9 expandida em 9.1-9.8)
 - **3.11.0** — Fase 9.1: build PyInstaller validado (`dist/AchadinhosAgent.exe` ~30 MB, conecta no WSS prod em 1.2s). Agente movido pra monorepo (`agente/`).
 - **3.11.1** — Fase 9.2: `agente/agent/local_server.py` (aiohttp em `127.0.0.1:5577`, fallback 5578/5579). Endpoints `/ping`, `/status` ativos; `/pair`, `/abrir-tudo` stub 501. CORS pronto pra origem prod + localhost dev. Roda em paralelo ao WS no `main.py`. Validado via Python e via `.exe` rebuilt.
+- **3.11.2** — Fase 9.3: pareamento via JWT no `/pair` real. `main.py` agora roda **sem token** (sobe local_server, aguarda `POST /pair`, daí sobe WS dinamicamente). Re-pareamento durante runtime salva config mas pede restart (token novo só ativa no próximo boot). Fluxo end-to-end **zero-CLI** validado em prod: agente sem cfg → dashboard envia JWT → agente chama `registrar-self` no servidor → token salvo → WS conectado em ~1s.
 
 ---
 

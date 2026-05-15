@@ -57,21 +57,35 @@
 ✅ **Fase 9.2 — HTTP local server no agente** (2026-05-15)
 - `agente/agent/local_server.py` — aiohttp em `127.0.0.1:5577` (fallback 5578, 5579).
 - Roda em paralelo ao WS via `asyncio.gather` no `main.py`.
-- Endpoints:
-  - `GET /ping` — detecção: `{ok, versao, agente_id, porta}`
-  - `GET /status` — estado: `{configurado, servidor_ws, ws_conectado, ultimo_erro, ...}`
-  - `POST /pair` — stub 501 (vem na 9.3)
-  - `POST /abrir-tudo` — stub 501 (vem em fase futura)
-- **CORS** habilitado pra `https://achadinhos.maisseguidores.ia.br`,
-  `http://localhost:8000`, `http://127.0.0.1:8000`. Preflight OPTIONS testado
-  e retorna 204 com todos os Access-Control-* headers.
-- **Smoke tests OK**: tanto rodando via `python -m agent.main` quanto via
-  `.exe` reconstruído (`dist/AchadinhosAgent.exe` ~30 MB, +~1MB por aiohttp).
-- Deps adicionadas em `agente/pyproject.toml`: `aiohttp>=3.10`,
-  `undetected-chromedriver>=3.5` (esta última estava faltando — só vivia no
-  venv velho).
-- **TODO menor pra 9.3+**: hookar WSClient ↔ LocalServer pra `ws_conectado`
-  refletir status real do WS no `/status` (hoje retorna `false` sempre).
+- Endpoints `/ping`, `/status` ativos. CORS pra prod + localhost.
+- Deps: `aiohttp>=3.10`, `undetected-chromedriver>=3.5` (esta faltava no pyproject).
+- TODO menor: hookar WSClient ↔ LocalServer pra `ws_conectado` refletir real.
+
+✅ **Fase 9.3 — Pareamento via JWT (zero-CLI)** (2026-05-15)
+- `POST /pair` agora **real**: recebe `{jwt, servidor_api}`, chama
+  `POST /api/v1/agentes/registrar-self` no servidor, salva token + ws_url
+  em `%APPDATA%\Achadinhos\config.json`, retorna `{ok, agente_id, agente_nome, servidor_ws}`.
+- **`main.py` refatorado pra rodar SEM token**:
+  - `montar_config()` retorna `None` quando não tem cfg (antes era `sys.exit(1)`).
+  - `main_async()` aceita `cfg: Config | None`. Se `None`, sobe só `LocalServer` e aguarda
+    evento `cfg_disponivel` setado pelo callback `on_paired` quando `/pair` chega.
+  - Após /pair, cria WSClient com cfg novo e roda normal.
+- **Re-pareamento durante runtime** (cfg já existia): config nova é salva,
+  mas WS atual fica com token velho — log warning pede restart. Reconnect
+  dinâmico fica pra fase futura (complicado).
+- **Erros tratados**: 400 (body inválido), 401 (JWT rejeitado pelo server),
+  502 (server offline / payload inesperado).
+- **Validação end-to-end em prod**:
+  1. Apagado `config.json` → agente subiu em modo `aguardando_pareamento_via_dashboard`
+  2. `/ping` retornou `agente_id: null`, `/status` retornou `configurado: false`
+  3. Login admin via API → JWT
+  4. `POST /pair` → 200 `{agente_id: 2, agente_nome: "DESKTOP-326KJ6C"}`
+  5. Agente logou `pair.ok → agent.pareado_inicial → ws.conectando → ws.conectado` (~1s total)
+  6. Config restaurada + agentes de teste (id=2, 3) deletados do DB
+- **Limitação encontrada (problema do servidor, anotar)**: `registrar-self` SEMPRE
+  cria entrada nova em vez de UPDATE. Re-pareamento gera lixo — N entradas pro
+  mesmo `(usuario_id, nome_PC)`. Fix futuro: índice único partial em agentes
+  por `(org_id, usuario_id, nome)` OU endpoint dedicado `registrar-ou-atualizar`.
 
 ✅ **Agente movido pra monorepo** (2026-05-15)
 - Source ficava em `D:\achadinhos-agent\` (pasta solta, sem git).
@@ -108,41 +122,68 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.3 — Pareamento via JWT (Recommended)
+### 1️⃣ Começar Fase 9.4 — Botão "Conectar" no dashboard (Recommended)
 
-**ADR-009 detalha** a arquitetura. 9.1 e 9.2 estão feitas. Próxima é 9.3:
+**ADR-009 detalha** a arquitetura. 9.1, 9.2, 9.3 estão feitas (agente +
+HTTP local + pareamento via JWT funcionam end-to-end). Próxima é 9.4 — fechar
+o loop com a UX no dashboard.
 
-Implementar o `POST /pair` no `agente/agent/local_server.py` (hoje stub 501).
+Criar o botão "Conectar meu WhatsApp" no dashboard, com JS que orquestra:
 
-Comportamento esperado:
-1. Dashboard (user logado) faz `fetch http://127.0.0.1:5577/pair` com
-   body `{"jwt": "<JWT_DA_SESSAO>"}` e header `Content-Type: application/json`.
-2. Agente recebe o JWT e tenta:
-   - Decodificar pra validar formato (sem checar assinatura — confia que
-     veio do dashboard real, e o uso vai validar contra o servidor).
-   - Chamar `POST {servidor_api}/api/v1/agentes/registrar-self` com
-     `Authorization: Bearer <JWT>` e body `{"nome": <hostname>, "sistema_op": ...}`.
-   - Receber token de agente do servidor, salvar em `%APPDATA%\Achadinhos\config.json`.
-   - Retornar JSON com `{ok: true, agente_id, agente_nome}`.
-3. Se já tem config (`Config.carregar()` retorna não-None), opções:
-   - **Idempotente**: re-registrar e atualizar config (mais simples)
-   - **Confirmação**: retornar 409 com `{ja_pareado, agente_id_atual, agente_nome}`,
-     dashboard mostra modal "Re-parear vai criar novo agente. Quer mesmo?"
-4. Erros: 400 se body inválido, 401 se servidor rejeita JWT, 502 se servidor offline.
+1. **Detecção** — `fetch http://127.0.0.1:5577/ping`:
+   - **HTTP 200 com `agente_id != null`** → agente instalado E pareado E ativo.
+     Botão mostra "✓ Agente conectado (ID N)". Próximo passo: 9.x (abrir tabs).
+   - **HTTP 200 com `agente_id == null`** → agente instalado mas SEM token.
+     Botão dispara fluxo de pareamento (passo 2).
+   - **Fetch falha** (CORS / connection refused) → agente não tá rodando.
+     Tenta URL protocol `achadinhos://abrir` (Fase 9.6 cobre o handler).
+     Se URL protocol também falha (timeout ~3s), mostra "Baixar agente"
+     com link pra download do `.exe`.
 
-Detalhes técnicos:
-- `cfg.servidor_api` já existe no `Config` — deriva HTTPS de WSS.
-- Pra chamar HTTP do agente, usar `httpx` (já é dep) ou aiohttp client.
-- Pra atualizar `cfg` em runtime: criar novo `Config.from_args(...)` + `.salvar()`,
-  e idealmente notificar `WSClient` pra reconectar com novo token.
-- Pra mexer no setup atual (`agent/setup.py`), pode refatorar pra ele virar
-  um caller do mesmo handler `/pair` localmente (DRY). Ou deixar setup.py
-  como caminho CLI alternativo.
+2. **Pareamento** — `POST http://127.0.0.1:5577/pair`:
+   ```js
+   fetch('http://127.0.0.1:5577/pair', {
+     method: 'POST',
+     headers: {'Content-Type': 'application/json'},
+     credentials: 'include',  // pra mandar cookie de sessão se houver
+     body: JSON.stringify({
+       jwt: <jwt_da_sessao_atual>,
+       servidor_api: window.location.origin,
+     }),
+   })
+   ```
+   - Pegar o JWT da sessão: depende de como o dashboard guarda hoje (cookie,
+     localStorage, meta tag injetada pelo Jinja). Olhar `app/api/v1/endpoints/auth.py`
+     e os templates do dashboard pra ver. Se for HttpOnly cookie, expor via
+     endpoint server-side `GET /api/v1/auth/me/jwt` que devolve o JWT
+     atual baseado na sessão.
+   - Trata response:
+     - 200 → toast "Pareado! Agente {agente_nome} pronto." + atualizar UI.
+     - 400 → mensagem clara (provavelmente body inválido, bug no JS).
+     - 401 → "Sua sessão expirou — faça login de novo."
+     - 502 → "Servidor não respondeu. Tente em alguns segundos."
 
-Saída esperada: dashboard pode chamar `/pair` e cadastrar agente sem CLI.
+3. **Local do botão** — onde colocar?
+   - **Banner persistente** no topo do dashboard até agente pareado (preferível).
+   - **Card no /onboarding** wizard (card 2 hoje aponta pra /agentes/baixar).
+   - **Página /agentes/baixar** já existe, então o botão pode entrar ali primeiro
+     (menor escopo) e depois replicar.
 
-Depois da 9.3, próximo natural é **9.4** (botão no dashboard ligando os
-3 endpoints) — aí fecha o loop end-to-end pra um user comum.
+4. **Endpoint do servidor pra link de download** — Fase 9.5 vai gerar o
+   installer real. Por enquanto pode ser placeholder `/api/v1/agentes/instalador`
+   que retorna 404 com mensagem "Em construção — vem na Fase 9.5".
+
+Considerações técnicas:
+- CORS já configurado no agente pra `https://achadinhos.maisseguidores.ia.br`
+  e `http://localhost:8000` (dev). Validar que cookies/credentials viajam.
+- Pra detectar URL protocol não-instalado, padrão JS é tentar `window.location.href =
+  'achadinhos://abrir'` e setar um timer; se a página não perde foco em ~2s,
+  assume não instalado.
+- Endpoint `/api/v1/auth/me/jwt` (se precisar criar): rota autenticada que
+  devolve `{jwt: <token_da_sessao>}`. Usado SÓ pelo dashboard pra pareamento.
+
+Saída esperada: user logado clica botão → agente local (já rodando) recebe
+JWT → pareia → toast de sucesso. Fluxo zero-CLI completo end-to-end.
 
 ### 2️⃣ Telegram smoke test (paralelo, quando tiver bot)
 
@@ -174,7 +215,8 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | Sub-fase | Descrição | Tempo |
 |----------|-----------|-------|
 | ✅ **9.1** | Build PyInstaller funcionando (`.exe` standalone) — **feita 2026-05-15** | — |
-| ✅ **9.2** | HTTP local server no agente (`/ping`, `/status` ativos; `/pair`, `/abrir-tudo` stub 501) — **feita 2026-05-15** | — |
+| ✅ **9.2** | HTTP local server no agente (`/ping`, `/status` ativos) — **feita 2026-05-15** | — |
+| ✅ **9.3** | Pareamento via JWT (`/pair` real + main.py roda sem token) — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
@@ -201,8 +243,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 
    > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
    > e docs/decisoes.md (ADR-009 sobre Fase 9). O estado completo está lá.
-   > Próximo passo é Fase 9.3 — implementar POST /pair (pareamento via JWT)
-   > em agente/agent/local_server.py."*
+   > Próximo passo é Fase 9.4 — botão 'Conectar' no dashboard."*
 
 3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
    re-explicar arquitetura, decisões ou estado.

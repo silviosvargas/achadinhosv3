@@ -69,26 +69,16 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def montar_config(args: argparse.Namespace) -> Config:
-    """Combina args e config salva."""
+def montar_config(args: argparse.Namespace) -> Config | None:
+    """Combina args e config salva. Retorna None se ainda não há token —
+    nesse caso o agente sobe local_server e aguarda `POST /pair` (Fase 9.3).
+    """
     salvo = Config.carregar()
     token = args.token or (salvo.token if salvo else None)
     servidor = args.servidor or (salvo.servidor_ws if salvo else None)
 
     if not token or not servidor:
-        print()
-        print("=" * 70)
-        print("Config nao encontrada — rode primeiro o setup:")
-        print()
-        print("    python -m agent.setup")
-        print()
-        print("(O setup vai pedir email/senha da sua conta no dashboard,")
-        print(" registrar este PC como agente, e gravar a config localmente.)")
-        print("=" * 70)
-        print()
-        log.error("config.faltando",
-                  detalhe="Forneça --token e --servidor (ou rode python -m agent.setup)")
-        sys.exit(1)
+        return None
 
     cfg = Config.from_args(
         token=token,
@@ -100,8 +90,28 @@ def montar_config(args: argparse.Namespace) -> Config:
 
 
 # ── Main async ──────────────────────────────────────
-async def main_async(cfg: Config, *, com_tray: bool = True) -> None:
+async def main_async(cfg: Config | None, *, com_tray: bool = True) -> None:
     parar_evento = asyncio.Event()
+    cfg_disponivel = asyncio.Event()
+    if cfg is not None:
+        cfg_disponivel.set()
+
+    # Holder mutável pra cfg (callback do /pair atualiza)
+    estado_cfg: dict[str, Config | None] = {"cfg": cfg}
+
+    def on_paired(novo_cfg: Config) -> None:
+        if estado_cfg["cfg"] is None:
+            # Primeiro pareamento — destrava o boot do WS
+            estado_cfg["cfg"] = novo_cfg
+            cfg_disponivel.set()
+            log.info("agent.pareado_inicial", servidor=novo_cfg.servidor_ws)
+        else:
+            # Re-pareamento durante runtime — não dá pra trocar token do WS
+            # vivo sem refazer o handshake. Por enquanto: salva e pede restart.
+            log.warning(
+                "agent.repareado_restart_necessario",
+                msg="Token novo salvo no config. Reinicie o agente pra usar.",
+            )
 
     # Tray (opcional)
     tray: Tray | None = None
@@ -113,16 +123,44 @@ async def main_async(cfg: Config, *, com_tray: bool = True) -> None:
             log.warning("tray.indisponivel", erro=str(e))
             tray = None
 
-    # Configura o postador (porta + perfil do Chrome)
-    whatsapp.configurar(porta=cfg.chrome_porta, perfil=cfg.chrome_perfil)
-
-    # Servidor HTTP local — ponte browser ↔ agente (Fase 9.2)
-    local_srv = LocalServer(cfg=cfg)
+    # Local server SEMPRE sobe (mesmo sem cfg — pra aceitar /pair)
+    local_srv = LocalServer(cfg=cfg, on_paired=on_paired)
     try:
         await local_srv.iniciar()
     except Exception as e:
-        log.warning("local_server.indisponivel", erro=str(e))
+        log.error("local_server.indisponivel", erro=str(e))
         local_srv = None
+
+    # Se ainda não há cfg, aguarda /pair (ou Ctrl+C)
+    if cfg is None:
+        log.info(
+            "agent.aguardando_pareamento",
+            porta_http=(local_srv.porta if local_srv else None),
+            dica="Abra o dashboard e clique em 'Conectar meu WhatsApp'",
+        )
+        if tray:
+            try:
+                tray.atualizar_status("offline")
+            except Exception:
+                pass
+        pair_task = asyncio.create_task(cfg_disponivel.wait())
+        parar_pair_task = asyncio.create_task(parar_evento.wait())
+        done, pending = await asyncio.wait(
+            [pair_task, parar_pair_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+        if parar_pair_task in done:
+            # User parou antes de parear
+            if local_srv is not None:
+                await local_srv.parar()
+            return
+        cfg = estado_cfg["cfg"]
+        assert cfg is not None  # post-pair, garantido
+
+    # Daqui em diante, cfg é válido — boot normal do agente
+    whatsapp.configurar(porta=cfg.chrome_porta, perfil=cfg.chrome_perfil)
 
     # Cliente WS
     cliente = WSClient(cfg)
@@ -189,7 +227,11 @@ def main() -> None:
     args = parse_args()
     configurar_logging(args.log_level)
     cfg = montar_config(args)
-    log.info("agent.iniciando", servidor=cfg.servidor_ws)
+    if cfg is None:
+        log.info("agent.iniciando", servidor=None,
+                 modo="aguardando_pareamento_via_dashboard")
+    else:
+        log.info("agent.iniciando", servidor=cfg.servidor_ws)
 
     try:
         asyncio.run(main_async(cfg, com_tray=not args.sem_tray))
