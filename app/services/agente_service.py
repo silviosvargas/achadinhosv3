@@ -30,15 +30,19 @@ async def criar_agente(
     nome: str,
 ) -> tuple[Agente, str]:
     """
-    Cria um agente vinculado ao usuário e devolve (agente, token_em_texto).
+    Cria ou recupera um agente vinculado ao usuário e devolve
+    (agente, token_em_texto).
 
-    O token é JWT de 1 ano. Guardamos só o hash (SHA-256) no banco,
-    seguindo o mesmo princípio das senhas: se o banco vazar, ninguém
-    consegue se passar pelo agente sem o segredo do JWT.
+    UPSERT por `(org_id, usuario_id, nome)` ativo (Fase 9.9):
+    - Se já existe um agente ativo com essa tripla → REUTILIZA (gera
+      novo token, atualiza hash, mantém o agente_id). Pra que: usar o
+      botão "Conectar" repetidas vezes do mesmo PC não cria duplicata.
+    - Se não existe → INSERT novo (comportamento original).
 
-    Note: a verificação real do token na conexão WS é feita pela
-    assinatura HMAC do JWT (security.decodificar_token), não pelo hash.
-    O hash serve só pra revogação ("token X ainda é válido?").
+    O token é JWT de 1 ano. Guardamos só o hash (SHA-256) no banco —
+    se o banco vazar, ninguém consegue se passar pelo agente sem o
+    segredo do JWT. Verificação real do token na conexão WS é feita
+    pela assinatura HMAC do JWT (security.decodificar_token).
     """
     # 1. Valida que o usuário existe e pertence à org
     user = await db.get(Usuario, usuario_id)
@@ -47,19 +51,31 @@ async def criar_agente(
     if user.org_id != org_id:
         raise AgenteServiceError("Usuário pertence a outra organização")
 
-    # 2. Cria registro vazio pra obter ID (token precisa do agente_id)
-    agente = Agente(
-        org_id=org_id,
-        usuario_id=usuario_id,
-        nome=nome,
-        token_hash="",   # preenchido logo abaixo
-        ativo=True,
-        online=False,
+    # 2. UPSERT: procura agente ativo com mesma tripla (org, user, nome)
+    existing = await db.execute(
+        select(Agente).where(
+            Agente.org_id == org_id,
+            Agente.usuario_id == usuario_id,
+            Agente.nome == nome,
+            Agente.ativo.is_(True),
+        )
     )
-    db.add(agente)
-    await db.flush()    # gera agente.id sem commit
+    agente = existing.scalar_one_or_none()
 
-    # 3. Gera token JWT com agente_id, hash e atualiza
+    if agente is None:
+        # 2a. Não existe — cria registro vazio pra obter ID (token precisa)
+        agente = Agente(
+            org_id=org_id,
+            usuario_id=usuario_id,
+            nome=nome,
+            token_hash="",   # preenchido logo abaixo
+            ativo=True,
+            online=False,
+        )
+        db.add(agente)
+        await db.flush()
+
+    # 3. Gera token JWT com agente_id (existente OU novo) + atualiza hash
     token = criar_token_agente(
         usuario_id=usuario_id,
         org_id=org_id,
