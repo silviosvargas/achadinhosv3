@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block titulo %}Installer em breve{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Installer em breve</h1>
+  <p class="muted">
+    O instalador <code>AchadinhosAgent-Setup.exe</code> ainda não tem uma
+    release pública no GitHub.
+  </p>
+</header>
+
+<div class="alerta alerta-info" style="margin-top: 16px;">
+  <p>
+    <strong>O que aconteceu:</strong> o pipeline de build automático
+    (GitHub Actions) ainda não rodou pra esta versão. Em poucos
+    dias liberamos a primeira release com auto-update.
+  </p>
+  <p style="margin-top: 12px;">
+    <strong>O que fazer enquanto isso:</strong>
+  </p>
+  <ul>
+    <li>
+      Se você é <strong>usuário comum</strong>: aguarde a primeira release.
+      Vou avisar por email assim que ficar pronto.
+    </li>
+    <li>
+      Se você é <strong>desenvolvedor</strong> ou tem familiaridade com Python:
+      pode rodar o agente direto do código-fonte —
+      <a href="/agentes/baixar">veja as instruções dev na página de instalação</a>.
+    </li>
+  </ul>
+</div>
+
+<p style="margin-top: 24px;">
+  <a href="/agentes/baixar" class="btn btn-secundario">← Voltar</a>
+  <a href="/dashboard" class="btn-link" style="margin-left: 12px;">Ir pro dashboard</a>
+</p>
+
+{% endblock %}

@@ -5,7 +5,7 @@ Padrão FastAPI: funções que extraem dados da request (usuário logado, org,
 permissões) e podem ser plugadas em qualquer endpoint via `Depends(...)`.
 """
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,16 +16,35 @@ from app.models import Agente, Usuario
 # Esquema Bearer pra Authorization: Bearer <token>
 _bearer = HTTPBearer(auto_error=False)
 
+# Nome do cookie de sessão do dashboard — bate com app/web/routes.py COOKIE_NAME.
+# Mantido como constante local pra não criar import circular web→api.
+_COOKIE_SESSAO = "achadinhos_session"
+
 
 async def usuario_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    achadinhos_session: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db_async),
 ) -> Usuario:
     """
-    Extrai o usuário do JWT enviado no header.
+    Extrai o usuário do JWT.
+
+    Aceita o token em **2 lugares**:
+    1. Header `Authorization: Bearer <jwt>` — usado pelo agente, pelo
+       SDK/CLI, e por chamadas API direta.
+    2. Cookie HttpOnly `achadinhos_session` — usado pelo JS do dashboard
+       (não acessa cookie HttpOnly diretamente, então não dá pra pôr no
+       header; o browser anexa o cookie automaticamente no fetch).
+
     Retorna 401 se token ausente, inválido, expirado ou usuário inativo.
     """
-    if cred is None:
+    token: str | None = None
+    if cred is not None:
+        token = cred.credentials
+    elif achadinhos_session:
+        token = achadinhos_session
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Não autenticado",
@@ -33,7 +52,7 @@ async def usuario_atual(
         )
 
     try:
-        payload = decodificar_token(cred.credentials)
+        payload = decodificar_token(token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

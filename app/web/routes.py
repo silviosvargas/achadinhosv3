@@ -355,6 +355,61 @@ async def pagina_baixar_agente(
     )
 
 
+# Cache de 5 min pra URL do installer (evita bater no GitHub a cada click).
+_INSTALADOR_CACHE: dict[str, str | float] = {"url": "", "ate": 0.0}
+_INSTALADOR_TTL_S = 300
+
+
+@router.get("/agentes/instalador")
+async def baixar_instalador(
+    request: Request,
+    user: Usuario = Depends(exigir_login),
+):
+    """
+    Redireciona pra última release do agente no GitHub.
+
+    Procura em `silviosvargas/achadinhosv3/releases/latest` pelo asset
+    `AchadinhosAgent-Setup-*.exe` produzido pelo workflow
+    `.github/workflows/release-agente.yml`. Se acha → 302 pra ele
+    (download começa direto no browser). Se não acha → renderiza
+    `agente_instalador_em_breve.html` com mensagem amigável.
+    """
+    import time
+
+    import httpx
+    from fastapi.responses import RedirectResponse
+
+    agora = time.time()
+    cached_url = _INSTALADOR_CACHE["url"]
+    cached_ate = _INSTALADOR_CACHE["ate"]
+    if isinstance(cached_url, str) and cached_url and isinstance(cached_ate, float) and agora < cached_ate:
+        return RedirectResponse(url=cached_url, status_code=302)
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as cli:
+            r = await cli.get(
+                "https://api.github.com/repos/silviosvargas/achadinhosv3/releases/latest",
+                headers={"Accept": "application/vnd.github+json"},
+            )
+        if r.status_code == 200:
+            data = r.json()
+            for asset in data.get("assets", []) or []:
+                nome = asset.get("name", "")
+                if nome.lower().endswith(".exe") and "achadinhosagent" in nome.lower():
+                    url = asset.get("browser_download_url")
+                    if url:
+                        _INSTALADOR_CACHE["url"] = url
+                        _INSTALADOR_CACHE["ate"] = agora + _INSTALADOR_TTL_S
+                        return RedirectResponse(url=url, status_code=302)
+    except (httpx.HTTPError, ValueError, KeyError):
+        pass
+
+    # Fallback: nenhuma release publicada ainda → página de espera.
+    return templates.TemplateResponse(
+        request, "agente_instalador_em_breve.html", {"user": user},
+    )
+
+
 @router.get("/onboarding", response_class=HTMLResponse)
 async def pagina_onboarding(
     request: Request,

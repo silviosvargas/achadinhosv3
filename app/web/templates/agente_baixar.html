@@ -14,30 +14,49 @@
 {# ============================================================
    Card principal: Conectar (fluxo automático)
    ============================================================ #}
-<section id="card-conectar" class="card" style="padding: 20px; margin: 16px 0; border: 1px solid var(--cor-borda, #ddd); border-radius: 8px;">
-  <div id="conectar-status" style="margin-bottom: 12px;">
+<section id="card-conectar" class="card" style="padding: 24px; margin: 16px 0; border: 1px solid var(--cor-borda, #ddd); border-radius: 8px;">
+  <div id="conectar-status" style="margin-bottom: 16px; font-size: 16px;">
     <span class="muted">Verificando se o agente está rodando…</span>
   </div>
 
-  <button id="btn-conectar" type="button" class="btn btn-primario" style="display: none;">
-    Conectar meu agente
-  </button>
+  {# Dois botões lado a lado: download (primário) e tentar de novo (secundário).
+     JS controla qual aparece/some baseado no estado detectado. #}
+  <div id="acoes-agente" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+    <a id="btn-baixar"
+       href="/agentes/instalador"
+       class="btn btn-primario"
+       style="display: none; padding: 12px 20px; font-weight: 600;">
+      ⬇ Baixar agente
+    </a>
+    <button id="btn-conectar" type="button" class="btn btn-primario"
+            style="display: none; padding: 12px 20px; font-weight: 600;">
+      Conectar meu agente
+    </button>
+    <button id="btn-verificar" type="button" class="btn btn-secundario"
+            style="display: none;">
+      Já instalei — verificar de novo
+    </button>
+    <button id="btn-abrir-plataformas" type="button" class="btn btn-primario"
+            style="display: none; padding: 12px 20px; font-weight: 600;">
+      Abrir minhas plataformas
+    </button>
+  </div>
 
-  <div id="conectar-mensagem" style="margin-top: 12px;"></div>
+  <div id="conectar-mensagem" style="margin-top: 14px;"></div>
 </section>
 
 {# ============================================================
    Instruções de instalação (fallback / power user)
    ============================================================ #}
 <details style="margin-top: 24px;">
-  <summary style="cursor: pointer; font-weight: 600; padding: 8px 0;">
-    Ainda não tenho o agente instalado — me mostra como instalar
+  <summary style="cursor: pointer; font-weight: 500; padding: 8px 0; color: #6b7280;">
+    Sou desenvolvedor — quero rodar do código-fonte (Python)
   </summary>
 
   <div class="alerta alerta-info" style="margin-top: 12px;">
-    <strong>Installer `.exe`</strong> ainda em prep (Fase 9.5). Por enquanto,
-    rode em modo dev (Python) seguindo os passos abaixo. Em poucos dias liberamos
-    o <code>AchadinhosAgent.exe</code> com auto-update.
+    Não precisa disso pro uso normal. O botão <strong>"Baixar agente"</strong>
+    acima entrega um installer Windows que faz tudo num clique. Este caminho
+    é só pra quem quer mexer no código do agente.
   </div>
 
   <h3 style="margin-top: 16px;">Setup dev (3 minutos)</h3>
@@ -112,8 +131,11 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
   const TIMEOUT_MS = 2500;
 
   const elStatus = document.getElementById('conectar-status');
-  const elBtn = document.getElementById('btn-conectar');
   const elMsg = document.getElementById('conectar-mensagem');
+  const elBtnBaixar = document.getElementById('btn-baixar');
+  const elBtnConectar = document.getElementById('btn-conectar');
+  const elBtnVerificar = document.getElementById('btn-verificar');
+  const elBtnAbrir = document.getElementById('btn-abrir-plataformas');
 
   function setStatus(html) { elStatus.innerHTML = html; }
   function setMsg(html, kind) {
@@ -123,11 +145,16 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
       ? `<div class="${classe}" style="padding:10px; border-radius:4px; margin-top:8px;">${html}</div>`
       : '';
   }
-  function setBtn(label, handler) {
-    elBtn.textContent = label;
-    elBtn.style.display = label ? 'inline-block' : 'none';
-    elBtn.onclick = handler || null;
-    elBtn.disabled = false;
+  function esconderTodosOsBotoes() {
+    elBtnBaixar.style.display = 'none';
+    elBtnConectar.style.display = 'none';
+    elBtnVerificar.style.display = 'none';
+    elBtnAbrir.style.display = 'none';
+  }
+  function mostrarBotao(el, handler) {
+    el.style.display = 'inline-block';
+    el.disabled = false;
+    if (handler) el.onclick = handler;
   }
 
   async function fetchComTimeout(url, opts) {
@@ -197,17 +224,17 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
   }
 
   async function fluxoConectar() {
-    elBtn.disabled = true;
+    elBtnConectar.disabled = true;
     setMsg('Pareando…', 'info');
     try {
       const jwt = await pegarPairToken();
       const agente = await detectarAgente();
       if (!agente) {
         setMsg(
-          'Agente não está mais rodando. Inicie ele novamente (passos abaixo) e tente de novo.',
+          'Agente não está mais rodando. Inicie ele de novo e tente outra vez.',
           'erro',
         );
-        elBtn.disabled = false;
+        elBtnConectar.disabled = false;
         return;
       }
       const resultado = await parearAgente(agente.porta, jwt);
@@ -217,17 +244,33 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
       );
       setMsg('Pareado! Abrindo WhatsApp Web e marketplaces…', 'info');
       const abertura = await abrirPlataformas(agente.porta);
-      const qtdAbriu = (abertura && abertura.abriu) ? abertura.abriu.length : 0;
-      setBtn('Abrir minhas plataformas de novo', () => abrirPlataformas(agente.porta));
+      const qtd = (abertura && abertura.abriu) ? abertura.abriu.length : 0;
+
+      esconderTodosOsBotoes();
+      mostrarBotao(elBtnAbrir, () => abrirPlataformas(agente.porta));
       setMsg(
-        `Pronto. ${qtdAbriu} tab(s) abertas. Volte pro <a href="/dashboard">dashboard</a> ` +
+        `Pronto. ${qtd} tab(s) abertas. Volte pro <a href="/dashboard">dashboard</a> ` +
         `ou inicie um lote em <a href="/lote">Lote</a>.`,
         'sucesso',
       );
     } catch (e) {
       setMsg(`Erro no pareamento: ${e.message}`, 'erro');
-      elBtn.disabled = false;
+      elBtnConectar.disabled = false;
     }
+  }
+
+  async function fluxoAbrirPlataformas(porta) {
+    elBtnAbrir.disabled = true;
+    setMsg('Abrindo WhatsApp Web e marketplaces…', 'info');
+    const abertura = await abrirPlataformas(porta);
+    const qtd = (abertura && abertura.abriu) ? abertura.abriu.length : 0;
+    elBtnAbrir.disabled = false;
+    setMsg(
+      qtd > 0
+        ? `${qtd} tab(s) abertas no seu browser. Bom trabalho.`
+        : `Não consegui abrir as tabs. Veja o log do agente.`,
+      qtd > 0 ? 'sucesso' : 'erro',
+    );
   }
 
   // Boot: detectar estado inicial
@@ -235,14 +278,19 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
     const agente = await detectarAgente();
 
     if (!agente) {
-      // Não conseguiu falar com o agente local
-      setStatus('<strong>Agente não está rodando</strong> no seu PC.');
+      // Não detectou o agente. Mostra botão DOWNLOAD como ação primária
+      // + verificar como fallback ("já instalei").
+      setStatus(
+        '<strong>Agente ainda não conectado</strong> no seu PC. ' +
+        'Baixe e instale uma vez — depois fica rodando em background.',
+      );
+      esconderTodosOsBotoes();
+      mostrarBotao(elBtnBaixar);          // <a href="/api/v1/agentes/download">
+      mostrarBotao(elBtnVerificar, () => location.reload());
       setMsg(
-        'Instale e inicie o agente seguindo os passos abaixo. Depois volte aqui ' +
-        'e clique em "Verificar de novo".',
+        'Já tem o agente instalado? Clique em "Já instalei — verificar de novo".',
         'info',
       );
-      setBtn('Verificar de novo', () => location.reload());
       return;
     }
 
@@ -252,19 +300,8 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
         `<strong>✓ Agente já conectado</strong> · ID ${agente.agente_id} · ` +
         `<span class="muted">versão ${agente.versao}, porta ${agente.porta}</span>`,
       );
-      setBtn('Abrir minhas plataformas', async () => {
-        elBtn.disabled = true;
-        setMsg('Abrindo WhatsApp Web e marketplaces…', 'info');
-        const abertura = await abrirPlataformas(agente.porta);
-        const qtd = (abertura && abertura.abriu) ? abertura.abriu.length : 0;
-        elBtn.disabled = false;
-        setMsg(
-          qtd > 0
-            ? `${qtd} tab(s) abertas no seu browser. Bom trabalho.`
-            : `Não consegui abrir as tabs. Veja o log do agente.`,
-          qtd > 0 ? 'sucesso' : 'erro',
-        );
-      });
+      esconderTodosOsBotoes();
+      mostrarBotao(elBtnAbrir, () => fluxoAbrirPlataformas(agente.porta));
       setMsg(
         `Tudo pronto. Use o botão acima pra abrir WhatsApp Web + marketplaces, ` +
         `ou vá direto pro <a href="/dashboard">dashboard</a> / <a href="/lote">Lote</a>.`,
@@ -279,7 +316,8 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
       `<span class="muted">(versão ${agente.versao}, porta ${agente.porta})</span>`,
     );
     setMsg('Clique em "Conectar meu agente" pra fazer o pareamento agora.', 'info');
-    setBtn('Conectar meu agente', fluxoConectar);
+    esconderTodosOsBotoes();
+    mostrarBotao(elBtnConectar, fluxoConectar);
   })();
 })();
 </script>
