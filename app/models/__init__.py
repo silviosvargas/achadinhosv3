@@ -17,7 +17,7 @@ from app.models.produto import (
     TemplateMensagem,
 )
 from app.models.tarefa import StatusTarefa, Tarefa, TipoTarefa
-from app.models.usuario import Usuario
+from app.models.usuario import Usuario, UsuarioAfiliado
 
 __all__ = [
     "Base",
@@ -25,6 +25,7 @@ __all__ = [
     "Organizacao",
     "Plano",
     "Usuario",
+    "UsuarioAfiliado",
     # Agentes / canais
     "Agente",
     "Canal",

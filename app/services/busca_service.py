@@ -182,21 +182,16 @@ async def ingerir_produtos(
     disparador, dono_id = await _resolver_disparador(
         db, org_id=org_id, tarefa_id=tarefa_id, busca_id=busca_id,
     )
-    # Cascata de fallback pra tag de afiliado ML (Fase 9.9):
-    # 1) tag do disparador (user que rodou a busca)
-    # 2) tag do admin da org dele
-    # 3) tag do admin da org central (settings.admin_org_id) — pra que user
-    #    free de qualquer org SEMPRE caia no afiliado do admin Achadinhos
-    # 4) settings.ml_affiliate_id (env var global, último recurso)
-    from app.core.config import settings as _settings
+    # Cascata de fallback pra tag de afiliado ML (Fase 13 — multi-marketplace).
+    # Toda lógica de cascata mora em afiliado_service. Aqui só consultamos.
+    from app.services import afiliado_service
 
-    tag_ml = (disparador.afiliado_ml if disparador else None)
-    if not tag_ml:
-        tag_ml = await _tag_do_admin(db, org_id=org_id)
-    if not tag_ml and org_id != _settings.admin_org_id:
-        tag_ml = await _tag_do_admin(db, org_id=_settings.admin_org_id)
-    if not tag_ml and _settings.ml_affiliate_id:
-        tag_ml = _settings.ml_affiliate_id
+    tag_ml = await afiliado_service.tag_com_cascata(
+        db,
+        plataforma="ml",
+        usuario_id=disparador.id if disparador else None,
+        org_id=org_id,
+    )
 
     # 2. Carrega mapping categoria → nicho da org (1 query)
     mapping_rows = (await db.execute(
@@ -278,22 +273,6 @@ async def _resolver_disparador(
 
     dono_id = user.id if user.eh_afiliado else None
     return user, dono_id
-
-
-async def _tag_do_admin(db: AsyncSession, *, org_id: int) -> str | None:
-    """Pega `afiliado_ml` do primeiro admin ativo da org."""
-    result = await db.execute(
-        select(Usuario.afiliado_ml)
-        .where(
-            Usuario.org_id == org_id,
-            Usuario.ativo.is_(True),
-            Usuario.papel.in_(("admin", "super")),
-        )
-        .order_by(Usuario.id)
-        .limit(1)
-    )
-    row = result.first()
-    return row[0] if row else None
 
 
 async def _upsert_produto(

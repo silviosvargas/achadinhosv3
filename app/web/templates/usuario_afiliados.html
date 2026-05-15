@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block titulo %}Afiliados{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Tags de afiliado</h1>
+  <p class="muted">
+    Para o usuário <strong>{{ target.nome_exibicao or target.login }}</strong>
+    (<code>{{ target.login }}</code>) ·
+    <a href="/usuarios" class="btn-link">← voltar</a>
+  </p>
+</header>
+
+{% if not pode_cadastrar %}
+<div class="alerta alerta-info" style="margin:16px 0;">
+  <strong>Plano free.</strong> Suas postagens usam o afiliado do administrador
+  automaticamente — você não precisa cadastrar tag própria.
+  Pra controlar seus próprios afiliados, <a href="/planos">faça upgrade</a>.
+</div>
+{% endif %}
+
+{% if mensagem %}
+  <div class="alerta alerta-sucesso" style="padding:10px; margin-bottom:12px;">{{ mensagem }}</div>
+{% endif %}
+{% if erro %}
+  <div class="alerta alerta-erro" style="padding:10px; margin-bottom:12px;">{{ erro }}</div>
+{% endif %}
+
+{# ── Tabela: afiliados já cadastrados ──────────────────────── #}
+<section class="card" style="padding:20px; margin-top:16px;">
+  <h2 style="margin-top:0; font-size:18px;">Marketplaces cadastrados</h2>
+
+  {% if not cadastrados %}
+    <p class="muted">
+      Nenhum afiliado cadastrado ainda.
+      {% if pode_cadastrar %}Use o botão abaixo pra adicionar.{% endif %}
+    </p>
+  {% else %}
+    <table class="tabela" style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr style="text-align:left; border-bottom:1px solid #e5e7eb;">
+          <th style="padding:8px 4px; width:60px;"></th>
+          <th style="padding:8px 4px;">Marketplace</th>
+          <th style="padding:8px 4px;">Tag</th>
+          {% if pode_cadastrar %}
+          <th style="padding:8px 4px; width:120px;">Ações</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in cadastrados %}
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 4px; font-size:22px;">{{ c.icone }}</td>
+          <td style="padding:10px 4px;"><strong>{{ c.nome }}</strong></td>
+          <td style="padding:10px 4px;"><code>{{ c.tag }}</code></td>
+          {% if pode_cadastrar %}
+          <td style="padding:10px 4px;">
+            {# Form inline pra "editar" = upsert (apaga não, só atualiza) #}
+            <details>
+              <summary style="cursor:pointer; color:#2563eb; user-select:none;">editar</summary>
+              <form method="post" action="/usuarios/{{ target.id }}/afiliados/adicionar"
+                    style="display:inline-flex; gap:6px; margin-top:6px;">
+                <input type="hidden" name="plataforma" value="{{ c.plataforma }}">
+                <input type="text" name="tag" value="{{ c.tag }}" required
+                       maxlength="200" style="padding:4px 6px;">
+                <button type="submit" class="btn btn-secundario" style="padding:4px 10px;">salvar</button>
+              </form>
+            </details>
+            <form method="post" action="/usuarios/{{ target.id }}/afiliados/{{ c.plataforma }}/remover"
+                  style="display:inline; margin-left:8px;"
+                  onsubmit="return confirm('Remover {{ c.nome }}?');">
+              <button type="submit" class="btn-link" style="color:#dc2626;">remover</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+
+{# ── Adicionar marketplace ──────────────────────────────────── #}
+{% if pode_cadastrar and disponiveis %}
+<section class="card" style="padding:20px; margin-top:16px;">
+  <h2 style="margin-top:0; font-size:18px;">＋ Adicionar marketplace</h2>
+
+  <form method="post" action="/usuarios/{{ target.id }}/afiliados/adicionar"
+        style="display:flex; flex-direction:column; gap:12px; max-width:560px;">
+
+    <label>
+      Marketplace
+      <select name="plataforma" required onchange="document.getElementById('tag').placeholder = this.options[this.selectedIndex].dataset.placeholder || '';" style="width:100%;">
+        <option value="" disabled selected>— escolha um —</option>
+        {% for m in disponiveis %}
+        <option value="{{ m.slug }}" data-placeholder="{{ m.placeholder_tag }}">
+          {{ m.icone }}  {{ m.nome }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      Tag de afiliado
+      <input type="text" name="tag" id="tag" required maxlength="200"
+             placeholder="ex: silvio-20" style="width:100%;">
+      <span class="muted small">
+        Código que identifica suas vendas no painel do marketplace.
+        Pega no painel oficial de afiliados de cada plataforma.
+      </span>
+    </label>
+
+    <button type="submit" class="btn btn-primario" style="align-self:flex-start;">
+      Salvar
+    </button>
+  </form>
+</section>
+{% elif pode_cadastrar and not disponiveis %}
+<p class="muted" style="margin-top:16px;">
+  Todos os marketplaces suportados já estão cadastrados. Use "editar" nos
+  cards acima pra mudar uma tag, ou "remover" pra apagar.
+</p>
+{% endif %}
+
+{# ── Explicação ─────────────────────────────────────────────── #}
+<details style="margin-top:24px;">
+  <summary style="cursor:pointer; color:#6b7280;">Como funciona a tag de afiliado?</summary>
+  <div class="muted small" style="margin-top:8px; max-width:680px;">
+    <p>Cada marketplace tem um sistema próprio de afiliação:</p>
+    <ul>
+      <li><strong>Mercado Livre:</strong> tag aparece como <code>?matt_word=&lt;sua_tag&gt;</code> na URL.</li>
+      <li><strong>Shopee:</strong> URL encurtada via <code>s.shopee.com.br/&lt;id&gt;</code>.</li>
+      <li><strong>Amazon:</strong> <code>?tag=&lt;sua_tag&gt;</code> (formato <code>nome-20</code>).</li>
+      <li><strong>Magalu / AliExpress / TikTok:</strong> também por query param ou shortlink.</li>
+    </ul>
+    <p>
+      O sistema aplica sua tag automaticamente em toda postagem de produto
+      dessa plataforma. Se você não cadastrar uma tag,
+      <strong>a tag do admin Achadinhos é usada</strong> (fallback).
+    </p>
+  </div>
+</details>
+
+{% endblock %}

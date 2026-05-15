@@ -30,7 +30,7 @@ class TrocarSenhaRequest(BaseModel):
 
 
 class UsuarioPublico(BaseModel):
-    """Visão pública (sem senha_hash nem credenciais cifradas)."""
+    """Visão pública (sem senha_hash)."""
     id:                  int
     org_id:              int
     login:               str
@@ -41,32 +41,5 @@ class UsuarioPublico(BaseModel):
     onboarding_completo: bool
     criado_em:           datetime
     ultimo_login:        datetime | None
-    # Credenciais (Fase 4b.1) — só o usuário (plain) e flag de senha
-    usuario_ml:          str | None = None
-    tem_senha_ml:        bool = False
 
     model_config = {"from_attributes": True}
-
-
-# ============================================================
-# Credenciais de plataformas (Fase 4b.1)
-# ============================================================
-
-class CredenciaisMLRequest(BaseModel):
-    """Admin/afiliado define usuário+senha do ML.
-    Passar `senha_ml=None` mantém a anterior; `senha_ml=""` apaga.
-    """
-    usuario_ml: str | None = Field(default=None, max_length=150)
-    senha_ml:   str | None = Field(default=None, max_length=255,
-        description="None = não mexe; '' = apaga; string = nova senha (será cifrada)")
-
-
-class CredenciaisAgenteResponse(BaseModel):
-    """Resposta do GET /agentes/me/credenciais — payload PLAIN pro agente.
-
-    Servidor decifra na hora e envia via TLS (em prod). Em dev pelo localhost
-    sem TLS — aceitável por ser dev.
-    """
-    ml: dict[str, str | None] = Field(
-        default_factory=lambda: {"usuario": None, "senha": None}
-    )

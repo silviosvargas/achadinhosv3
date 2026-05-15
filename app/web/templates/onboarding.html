@@ -20,20 +20,24 @@
 
 <ol class="onboarding-lista">
 
-  {# Fase 9.9: card de credenciais só pra planos que permitem cadastrar afiliado. #}
-  {% if "credenciais" in passos %}
-  <li class="onboarding-passo {% if passos.credenciais.ok %}ok{% endif %}">
-    <div class="passo-icone">{% if passos.credenciais.ok %}✅{% else %}1️⃣{% endif %}</div>
+  {# Fase 13: card de afiliados só pra planos que permitem cadastrar afiliado próprio. #}
+  {% if "afiliados" in passos %}
+  <li class="onboarding-passo {% if passos.afiliados.ok %}ok{% endif %}">
+    <div class="passo-icone">{% if passos.afiliados.ok %}✅{% else %}1️⃣{% endif %}</div>
     <div class="passo-conteudo">
-      <h3>Configure suas credenciais do Mercado Livre</h3>
+      <h3>Cadastre suas tags de afiliado</h3>
       <p class="muted">
-        Servidor cifra a senha no banco. O agente local usa pra logar no ML
-        e fazer buscas em seu nome.
+        Cada marketplace tem uma tag de afiliado própria (Mercado Livre,
+        Shopee, Amazon, etc.). As postagens usam essas tags pra creditar
+        suas vendas.
       </p>
-      {% if passos.credenciais.ok %}
-        <span class="muted small">Configurado: <code>{{ user.usuario_ml }}</code></span>
+      {% if passos.afiliados.ok %}
+        <span class="muted small">
+          Tags cadastradas.
+          <a href="/usuarios/{{ user.id }}/afiliados">Gerenciar</a>
+        </span>
       {% else %}
-        <a href="/usuarios/{{ user.id }}/credenciais" class="btn btn-primario">Configurar agora</a>
+        <a href="/usuarios/{{ user.id }}/afiliados" class="btn btn-primario">Cadastrar agora</a>
       {% endif %}
     </div>
   </li>

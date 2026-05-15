@@ -50,7 +50,6 @@
       <th>Nome</th>
       <th>Papel</th>
       <th>Status</th>
-      <th>Cred. ML</th>
       <th>Email</th>
       <th>Último login</th>
       <th></th>
@@ -69,21 +68,11 @@
           <span class="badge badge-cinza">desativado</span>
         {% endif %}
       </td>
-      <td>
-        {% if u.usuario_ml and u.senha_ml_cifrada %}
-          <span class="badge badge-verde">configurada</span>
-          <div class="muted small">{{ u.usuario_ml[:30] }}</div>
-        {% elif u.usuario_ml %}
-          <span class="badge badge-cinza">só usuário</span>
-        {% else %}
-          <span class="muted small">—</span>
-        {% endif %}
-      </td>
       <td>{{ u.email or '—' }}</td>
       <td>{{ u.ultimo_login.strftime('%d/%m %H:%M') if u.ultimo_login else 'nunca' }}</td>
       <td>
         {% if user.eh_admin or user.id == u.id %}
-        <a href="/usuarios/{{ u.id }}/credenciais" class="btn-link">credenciais</a>
+        <a href="/usuarios/{{ u.id }}/afiliados" class="btn-link">afiliados</a>
         {% endif %}
       </td>
     </tr>

@@ -22,7 +22,6 @@ from app.schemas.agente import (
     CriarAgenteRequest,
 )
 from app.schemas.comum import Mensagem
-from app.schemas.usuario import CredenciaisAgenteResponse
 from app.services import agente_service
 
 router = APIRouter(prefix="/agentes", tags=["agentes"])
@@ -203,35 +202,11 @@ async def auto_registrar(
     )
 
 
-@router.get("/me/credenciais", response_model=CredenciaisAgenteResponse)
-async def minhas_credenciais(
-    agente: Agente = Depends(agente_atual),
-    db: AsyncSession = Depends(get_db_async),
-) -> CredenciaisAgenteResponse:
-    """
-    Devolve credenciais (plain) do USUÁRIO dono do agente.
-
-    Autenticação: token JWT tipo `agente` (long-lived). Servidor decifra na
-    hora e devolve. O agente usa pra fazer login automatizado nas plataformas
-    (Selenium preenche o form).
-
-    ⚠️ Endpoint sensível — em produção exigir TLS (wss/https).
-    """
-    dono = await db.get(Usuario, agente.usuario_id)
-    if dono is None:
-        raise HTTPException(
-            status_code=404, detail="Dono do agente não encontrado",
-        )
-
-    try:
-        senha_ml_plain = dono.get_senha_ml()
-    except Exception:
-        # Chave de cifragem trocada / dado corrompido — não estoura, devolve None
-        senha_ml_plain = None
-
-    return CredenciaisAgenteResponse(
-        ml={"usuario": dono.usuario_ml, "senha": senha_ml_plain},
-    )
+# Endpoint legacy GET /me/credenciais (Fase 4b.1) foi removido na Fase 13.
+# Devolvia login/senha plain do ML pro agente fazer auto-login (Selenium).
+# Feature abandonada porque ML tem 2FA real e tentar automatizar viola TOS.
+# User passou a usar `agent.login_ml` manual (1x, sessão persiste no perfil
+# Chrome). Tags de afiliado vivem em `usuarios_afiliados`.
 
 
 @router.delete("/{agente_id}", response_model=Mensagem)

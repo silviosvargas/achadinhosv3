@@ -417,13 +417,17 @@ async def pagina_onboarding(
     db: AsyncSession = Depends(get_db_async),
 ):
     """
-    Checklist de 4 passos: credenciais ML, agente, canal, grupo.
+    Checklist de 4 passos: afiliados, agente, canal, grupo.
     Marca onboarding_completo=True quando todos OK (idempotente).
     """
+    from app.models import UsuarioAfiliado
     org = await db.get(Organizacao, user.org_id)
 
     # Avalia cada passo
-    tem_cred = bool(user.usuario_ml and user.senha_ml_cifrada)
+    tem_afiliado = (await db.scalar(
+        select(func.count()).select_from(UsuarioAfiliado)
+        .where(UsuarioAfiliado.usuario_id == user.id)
+    ) or 0) > 0
     total_agentes = await db.scalar(
         select(func.count()).select_from(Agente).where(Agente.org_id == user.org_id)
     ) or 0
@@ -438,7 +442,7 @@ async def pagina_onboarding(
         )
     ) or 0
 
-    # Fase 9.9: passo de credenciais só aparece pra plano que permite.
+    # Fase 9.9: passo de afiliados só aparece pra plano que permite.
     # No plano free, esse passo é skipado (postagem usa afiliado do admin).
     pode_credenciais = bool(org and org.plano and org.plano.pode_cadastrar_afiliado)
 
@@ -448,7 +452,7 @@ async def pagina_onboarding(
         "grupo":       {"ok": total_grupos > 0,  "total": total_grupos},
     }
     if pode_credenciais:
-        passos = {"credenciais": {"ok": tem_cred}, **passos}
+        passos = {"afiliados": {"ok": tem_afiliado}, **passos}
     completo = all(p["ok"] for p in passos.values())
 
     # Persiste flag (idempotente)
@@ -914,8 +918,15 @@ async def lista_usuarios(
     )
 
 
-@router.get("/usuarios/{usuario_id}/credenciais", response_class=HTMLResponse)
-async def form_credenciais(
+@router.get("/usuarios/{usuario_id}/credenciais")
+async def credenciais_legacy_redirect(usuario_id: int):
+    """Redireciona URL antiga pra nova de afiliados (Fase 13).
+    Mantemos 302 pra não quebrar bookmarks/links antigos."""
+    return RedirectResponse(url=f"/usuarios/{usuario_id}/afiliados", status_code=302)
+
+
+@router.get("/usuarios/{usuario_id}/afiliados", response_class=HTMLResponse)
+async def form_afiliados(
     usuario_id: int,
     request: Request,
     user: Usuario = Depends(exigir_login),
@@ -923,50 +934,127 @@ async def form_credenciais(
     mensagem: str | None = None,
     erro: str | None = None,
 ):
-    """Form pra cadastrar credenciais de plataforma (Fase 4b.1)."""
+    """Página pra gerenciar tags de afiliado por marketplace (Fase 13).
+
+    Mostra os afiliados cadastrados + dropdown "+ Adicionar" com os
+    marketplaces ainda não usados pelo user.
+    """
+    from app.core import marketplaces
+    from app.models import UsuarioAfiliado
+    from app.services import afiliado_service
+
     target = await db.get(Usuario, usuario_id)
     if target is None or target.org_id != user.org_id:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    # Só admin ou o próprio dono
     if not user.eh_admin and target.id != user.id:
-        raise HTTPException(status_code=403,
-            detail="Só admin ou o próprio dono pode editar essas credenciais")
+        raise HTTPException(
+            status_code=403,
+            detail="Só admin ou o próprio dono pode editar estes afiliados",
+        )
+
+    plano = user.organizacao.plano if user.organizacao else None
+    pode_cadastrar = bool(plano and plano.pode_cadastrar_afiliado)
+
+    cadastrados = await afiliado_service.listar_por_usuario(db, usuario_id=target.id)
+    slugs_ja_usados = {c.plataforma for c in cadastrados}
+    disponiveis = [m for m in marketplaces.MARKETPLACES if m.slug not in slugs_ja_usados]
+
+    # Enriquece cadastrados com display name + ícone do marketplace
+    cadastrados_view = [
+        {
+            "plataforma": c.plataforma,
+            "tag": c.tag,
+            "nome": (marketplaces.por_slug(c.plataforma).nome
+                     if marketplaces.por_slug(c.plataforma) else c.plataforma),
+            "icone": (marketplaces.por_slug(c.plataforma).icone
+                      if marketplaces.por_slug(c.plataforma) else "🏷️"),
+            "placeholder": (marketplaces.por_slug(c.plataforma).placeholder_tag
+                            if marketplaces.por_slug(c.plataforma) else ""),
+        }
+        for c in cadastrados
+    ]
+
     return templates.TemplateResponse(
-        request, "usuario_credenciais.html",
-        {"user": user, "target": target, "mensagem": mensagem, "erro": erro},
+        request, "usuario_afiliados.html",
+        {
+            "user": user, "target": target,
+            "cadastrados": cadastrados_view,
+            "disponiveis": disponiveis,
+            "pode_cadastrar": pode_cadastrar,
+            "mensagem": mensagem, "erro": erro,
+        },
     )
 
 
-@router.post("/usuarios/{usuario_id}/credenciais", response_class=HTMLResponse)
-async def salvar_credenciais(
+@router.post("/usuarios/{usuario_id}/afiliados/adicionar")
+async def adicionar_afiliado_form(
     usuario_id: int,
-    request: Request,
-    usuario_ml: str = Form(default=""),
-    senha_ml: str = Form(default=""),
-    apagar_senha_ml: str = Form(default=""),
+    plataforma: str = Form(...),
+    tag: str = Form(...),
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Adiciona ou atualiza tag de afiliado via form HTML."""
+    from app.core import marketplaces
+    from app.services import afiliado_service
+
     target = await db.get(Usuario, usuario_id)
     if target is None or target.org_id != user.org_id:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     if not user.eh_admin and target.id != user.id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    target.usuario_ml = usuario_ml.strip() or None
+    plano = user.organizacao.plano if user.organizacao else None
+    if not (plano and plano.pode_cadastrar_afiliado):
+        return RedirectResponse(
+            url=f"/usuarios/{usuario_id}/afiliados?erro=Seu+plano+nao+permite",
+            status_code=302,
+        )
 
-    # Senha: 3 caminhos
-    # 1. Checkbox "apagar" marcado → limpa
-    # 2. Campo senha preenchido → cifra e substitui
-    # 3. Senha vazia e sem apagar → mantém atual (não mexe)
-    if apagar_senha_ml:
-        target.set_senha_ml(None)
-    elif senha_ml.strip():
-        target.set_senha_ml(senha_ml)
+    mkt = marketplaces.por_slug(plataforma)
+    if mkt is None:
+        return RedirectResponse(
+            url=f"/usuarios/{usuario_id}/afiliados?erro=Marketplace+invalido",
+            status_code=302,
+        )
 
-    await db.commit()
+    tag = (tag or "").strip()
+    if not tag:
+        return RedirectResponse(
+            url=f"/usuarios/{usuario_id}/afiliados?erro=Tag+vazia",
+            status_code=302,
+        )
+
+    await afiliado_service.upsert(
+        db, usuario_id=target.id, plataforma=mkt.slug, tag=tag,
+    )
     return RedirectResponse(
-        url=f"/usuarios/{usuario_id}/credenciais?mensagem=Credenciais+salvas",
+        url=f"/usuarios/{usuario_id}/afiliados?mensagem={mkt.nome}+salvo",
+        status_code=302,
+    )
+
+
+@router.post("/usuarios/{usuario_id}/afiliados/{plataforma}/remover")
+async def remover_afiliado_form(
+    usuario_id: int,
+    plataforma: str,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Remove tag de afiliado via form HTML (botão 🗑)."""
+    from app.services import afiliado_service
+
+    target = await db.get(Usuario, usuario_id)
+    if target is None or target.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if not user.eh_admin and target.id != user.id:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    await afiliado_service.remover(
+        db, usuario_id=target.id, plataforma=plataforma.lower().strip(),
+    )
+    return RedirectResponse(
+        url=f"/usuarios/{usuario_id}/afiliados?mensagem=Removido",
         status_code=302,
     )
 
