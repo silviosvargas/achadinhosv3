@@ -11,14 +11,16 @@ Pré-condição: o DB já não pode ter duplicatas ativas pré-existentes.
 Pra evitar falha na criação do índice em prod, faz "merge" antes:
 deixa só o mais recente como ativo, marca anteriores como inativos.
 
-Revision ID: 0006_agentes_unique_org_user_nome
+Revision ID: 0006_agentes_unique
 Revises:    0005_planos_flags_restricao
 Create Date: 2026-05-15
+
+Nota: nome curto pra caber em alembic_version.version_num (varchar(32)).
 """
 from alembic import op
 
 
-revision = "0006_agentes_unique_org_user_nome"
+revision = "0006_agentes_unique"
 down_revision = "0005_planos_flags_restricao"
 branch_labels = None
 depends_on = None
