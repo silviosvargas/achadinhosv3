@@ -70,7 +70,11 @@ class Usuario(Base, TimestampMixin):
     ultimo_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # ── Relacionamentos ──────────────────────────────
-    organizacao: Mapped["Organizacao"] = relationship(back_populates="usuarios")
+    # lazy="joined" pra funcionar em contexto async (sem MissingGreenlet).
+    # Organizacao.plano já vem joined → cadeia user→org→plano carrega em 1 query.
+    organizacao: Mapped["Organizacao"] = relationship(
+        back_populates="usuarios", lazy="joined",
+    )
 
     def __repr__(self) -> str:
         return f"<Usuario id={self.id} login={self.login!r} org={self.org_id}>"
