@@ -5,7 +5,7 @@
     "dockerfilePath": "docker/Dockerfile"
   },
   "deploy": {
-    "startCommand": "celery -A app.workers.celery_app worker --beat --loglevel=info",
+    "startCommand": "celery -A app.workers.celery_app worker --beat --pool=solo --loglevel=info",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }
