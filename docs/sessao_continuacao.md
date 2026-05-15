@@ -122,36 +122,34 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.8 — Status do agente no dashboard (Recommended)
+### 1️⃣ Acionar o GitHub Actions release-agente uma vez (passo manual)
 
-**Toda a Fase 9 (9.1–9.6 + ação `abrir-tudo`) está pronta.** O ciclo
-zero-CLI ponta-a-ponta funciona: user instala via Inno Setup → dashboard
-detecta via `/ping` → pareia via `/pair` → abre WhatsApp+ML via `/abrir-tudo`.
+**Toda a Fase 9 (9.1–9.8) está pronta** — código + UX + status. O que
+falta pra um user comum baixar de verdade é o `.exe` instalável publicado:
 
-A 9.8 cobre o **cenário "controle remoto"** do roadmap: user no celular,
-PC em casa, e ele precisa **saber** se o PC tá online antes de mandar
-buscas/postagens. Sem isso, ele clica "rodar lote" no celular e nada
-acontece sem feedback.
+1. Abre https://github.com/silviosvargas/achadinhosv3/actions
+2. Workflow `release-agente` → "Run workflow" → branch `main` → Run
+3. Acompanha o build (~3-5 min)
+4. Ao terminar, baixa o artifact `AchadinhosAgent-Setup-3.0.0.exe`
+5. Testa no PC: double-click no installer → wizard Next-Next-Install →
+   o agente vira atalho no Menu Iniciar e (opt-in) inicia com Windows
 
-Implementar:
+Pra liberar release oficial pra terceiros, criar tag `agente-v3.0.0`
+(mesmo workflow dispara, mas dessa vez cria GitHub Release com o `.exe`
+anexado).
 
-1. **Indicador persistente** no `app/web/templates/base.html` (header ou
-   nav): bolinha verde "Agentes online: 1" / vermelha "Nenhum agente
-   online" / amarela "Conectando…".
-2. **Endpoint** `GET /api/v1/agentes/status` que devolve:
-   ```json
-   { "total_online": 1, "agentes": [{"id":1,"nome":"HP_SILVIO","ultimo_ping":"..."}] }
-   ```
-   Lê do estado dos WebSockets ativos no servidor (já há um mapping
-   `agente_id → conexão` em algum lugar — provavelmente
-   `app/services/ws_router.py` ou similar; investigar).
-3. **JS polling** a cada 15-30s no client do dashboard (ou via SSE, se
-   quiser ser elegante). Atualiza o indicador.
-4. **Quando o user clicar "Rodar lote" e total_online == 0**: bloqueia
-   ou avisa "Nenhum PC seu está online — ligue ele e tente de novo."
+### 2️⃣ Próximas melhorias menores (sem pressa)
 
-Saída esperada: olhando o dashboard, dá pra saber em tempo real se o PC
-da casa tá vivo. Crítico pra UX "controle remoto via celular".
+- **Fix do "registrar-self cria duplicata"**: hoje cada chamada cria nova
+  entrada em `agentes`. Adicionar índice único partial em
+  `(org_id, usuario_id, nome)` (onde `ativo=true`), OU criar endpoint
+  `registrar-ou-atualizar` que faz UPSERT.
+- **Bug menor REDIS_URL_OVERRIDE**: `app/core/config.py` só lê
+  `REDIS_URL_OVERRIDE`, não `REDIS_URL` direto. Workaround setado no
+  worker; api funciona por acaso (lazy use). Ajustar pra aceitar ambas
+  as env vars (chip de task já flageado).
+- **Fase 9.7 — auto-update do `.exe`**: agente checa GitHub releases ao
+  subir, baixa nova versão se houver. Importante a médio prazo.
 
 ### O QUE FALTA EXTERNO PRA FAZER (sem código)
 
@@ -195,6 +193,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | ✅ **9.5** | Inno Setup installer (registry handler + auto-start) + GitHub Actions CI — **feita 2026-05-15** | — |
 | ✅ **9.6** | URL protocol handler (`--uri` parse + single-instance handoff + `processar_uri()`) — **feita 2026-05-15** | — |
 | ✅ **9.x** | Ação real do `/abrir-tudo` (`webbrowser.open()` no browser default) + JS no dashboard que chama após pair — **feita 2026-05-15** | — |
+| ✅ **9.8** | Badge "Agentes online" no header (GET `/api/v1/agentes/status` + polling 20s) — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
@@ -220,9 +219,10 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 2. Primeira mensagem ao Claude:
 
    > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
-   > e docs/decisoes.md (ADR-009 sobre Fase 9). Toda infra da Fase 9 está pronta;
-   > falta implementar a ação real do `/abrir-tudo` (subprocess Chrome com
-   > WhatsApp Web + marketplaces). Esse é o próximo passo."*
+   > e docs/decisoes.md (ADR-009 sobre Fase 9). A Fase 9 toda está fechada;
+   > falta acionar o GitHub Actions release-agente manualmente, e atacar
+   > melhorias pendentes (fix duplicata em registrar-self, fix REDIS_URL no
+   > config.py). Próximo grande passo: Fase 10 (email) ou outra."*
 
 3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
    re-explicar arquitetura, decisões ou estado.
