@@ -68,12 +68,24 @@ async def produtos_elegiveis(
     - Admin/usuário comum / sem usuário: vê só produtos públicos (dono=NULL).
     - Afiliado: vê públicos da org + os seus privados.
 
+    Fase 11: se o user é de plano free (não pode_criar_produto_proprio),
+    também inclui produtos da org admin (`settings.admin_org_id`) — assim
+    o user free posta o catálogo Achadinhos com afiliado do admin.
+
     Retorna tuplas (produto, lista_de_nicho_ids).
     """
+    from app.core.config import settings as _settings
+
+    org_ids: list[int] = [org_id]
+    if usuario is not None and usuario.organizacao and usuario.organizacao.plano:
+        plano = usuario.organizacao.plano
+        if not plano.pode_criar_produto_proprio and _settings.admin_org_id != org_id:
+            org_ids.append(_settings.admin_org_id)
+
     base = (
         select(Produto)
         .where(
-            Produto.org_id == org_id,
+            Produto.org_id.in_(org_ids),
             Produto.bloqueado.is_(False),
             Produto.preco > 0,
         )

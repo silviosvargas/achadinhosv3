@@ -17,8 +17,26 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import agente_atual, usuario_admin, usuario_atual
+from app.core.config import settings
 from app.db import get_db_async
 from app.models import Agente, Produto, ProdutoNicho, Usuario
+
+
+def _org_ids_visiveis(user: Usuario) -> list[int]:
+    """IDs de orgs cujos produtos esse user pode VER (não editar).
+
+    Fase 11/9.9: plano free também enxerga o catálogo da org admin
+    (settings.admin_org_id). Postagens nesses produtos saem com o link
+    de afiliado já gravado em `produto.url_afiliado` (= afiliado do admin).
+
+    Pra escrita (POST/PATCH/DELETE), continua valendo user.org_id apenas.
+    """
+    ids = [user.org_id]
+    plano = user.organizacao.plano if user.organizacao else None
+    if plano is not None and not plano.pode_criar_produto_proprio:
+        if settings.admin_org_id != user.org_id:
+            ids.append(settings.admin_org_id)
+    return ids
 from app.schemas.comum import Mensagem, Pagina
 from app.schemas.produto import (
     AtualizarProdutoRequest,
@@ -43,9 +61,13 @@ async def listar(
     user: Usuario = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db_async),
 ) -> Pagina[ProdutoPublico]:
-    base = select(Produto).where(Produto.org_id == user.org_id)
+    # Fase 11: plano free vê catálogo do admin além do próprio. Outros planos
+    # só veem da própria org.
+    org_ids = _org_ids_visiveis(user)
+    base = select(Produto).where(Produto.org_id.in_(org_ids))
 
-    # Visibilidade (ADR-008)
+    # Visibilidade (ADR-008). Produtos privados de afiliado (`usuario_dono_id`
+    # NOT NULL) só aparecem pro dono ou pro admin da org. Mesmo regra que antes.
     if user.eh_afiliado:
         base = base.where(or_(
             Produto.usuario_dono_id.is_(None),
@@ -106,7 +128,12 @@ async def detalhe(
     user: Usuario = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db_async),
 ) -> ProdutoPublico:
-    p = await _get_da_org(db, org_id=user.org_id, produto_id=produto_id, user=user)
+    # Fase 11: plano free também pode ver detalhes de produto do admin
+    org_ids = _org_ids_visiveis(user)
+    p = await _get_da_org(
+        db, org_id=user.org_id, produto_id=produto_id, user=user,
+        org_ids_extras=[oid for oid in org_ids if oid != user.org_id],
+    )
     pub = ProdutoPublico.model_validate(p)
     pub.nichos_ids = await _nichos_de(db, produto_id=p.id)
     return pub
@@ -393,15 +420,26 @@ async def ingest_de_agente(
 async def _get_da_org(
     db: AsyncSession, *, org_id: int, produto_id: int,
     user: Usuario | None = None,
+    org_ids_extras: list[int] | None = None,
 ) -> Produto:
+    """Busca produto restringindo por org.
+
+    Fase 11: `org_ids_extras` permite incluir orgs adicionais como
+    visíveis (ex: org admin pra plano free). Default mantém comportamento
+    estrito (escrita só na própria org).
+    """
     p = await db.get(Produto, produto_id)
-    if p is None or p.org_id != org_id:
+    if p is None:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
-    # Visibilidade ADR-008: privados são vistos pelo dono e por admins da org.
-    # Usuário comum ou afiliado de outra pessoa: 404.
+    orgs_permitidas = {org_id, *(org_ids_extras or [])}
+    if p.org_id not in orgs_permitidas:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    # Visibilidade ADR-008: privados são vistos pelo dono e por admins da
+    # MESMA ORG do produto. Cross-org sempre 404 pra privados.
     if p.usuario_dono_id is not None and user is not None:
-        if not user.eh_admin and p.usuario_dono_id != user.id:
+        if not (user.eh_admin and p.org_id == user.org_id) and p.usuario_dono_id != user.id:
             raise HTTPException(status_code=404, detail="Produto não encontrado")
     return p
 

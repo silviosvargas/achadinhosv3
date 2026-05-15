@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     # ── Anthropic ────────────────────────────────────
     anthropic_api_key: str = ""
 
+    # ── Catálogo compartilhado (Fase 11) ─────────────
+    # ID da org "admin/principal" cujo catálogo de produtos é visível pra
+    # qualquer plano free. As compras nos links postados pelo user free
+    # usam o afiliado configurado nessa org/no admin (settings.*_affiliate_*).
+    # Default = 1 (org `achadinhos` na instalação atual de prod).
+    admin_org_id: int = 1
+
     # ── Limites globais ──────────────────────────────
     max_agentes_por_org:        int = 20
     max_postagens_dia_default:  int = 500
