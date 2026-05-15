@@ -98,6 +98,7 @@ na Fase 6 (já tem `agent/setup.py` interativo, falta empacotar PyInstaller).
 - **3.9.0** — Fase 7: CSS responsivo (mobile-first, hamburguer) + PWA (manifest, service worker, ícones 192/512)
 - **3.10.0** — Deploy produção: Railway api online, Cloudflare DNS, subdomínio HTTPS
 - **3.10.1** — Worker no Railway (Celery worker + beat embedded num único service, criado via Railway CLI + GraphQL API)
+- **3.10.2** — Agente local apontando pra prod via WSS, signup público + onboarding validados em prod, ADR-009 (Fase 9 expandida em 9.1-9.8)
 
 ---
 
@@ -109,6 +110,7 @@ na Fase 6 (já tem `agent/setup.py` interativo, falta empacotar PyInstaller).
 - ADR-006: JWT stateless
 - ADR-007: Jinja2 + API REST
 - ADR-008: produtos privados de afiliado (partial unique indexes)
+- ADR-009: Fase 9 — botão "Conectar meu WhatsApp" (agente como `.exe` instalável + ponte browser↔agente via HTTP local + URL protocol)
 
 ---
 
@@ -157,6 +159,8 @@ Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
 Resumo curto:
 1. ✅ Worker no Railway (combinado com beat embedded) — feito 2026-05-15
-2. Validar fluxo signup público real em https://achadinhos.maisseguidores.ia.br
-3. Reconfigurar agente local pra apontar pra prod (`python -m agent.setup`)
-4. Eventualmente: empacotar agente como `.exe` (PyInstaller)
+2. ✅ Agente local reapontado pra prod (HP_SILVIO conectado via WSS) — feito 2026-05-15
+3. ✅ Signup público + onboarding validados em prod — feito 2026-05-15 (parcial; Telegram ficou)
+4. **Próximo: Fase 9.1 — build PyInstaller** do agente (ADR-009 detalha plano completo
+   da Fase 9 expandida em 9.1-9.8: zero-CLI install via Inno Setup, ponte
+   browser↔agente, botão "Conectar meu WhatsApp" no dashboard)

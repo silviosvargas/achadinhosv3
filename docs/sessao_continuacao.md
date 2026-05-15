@@ -7,7 +7,7 @@
 
 ---
 
-## Estado em 2026-05-15 (segunda sessão — worker no ar)
+## Estado em 2026-05-15 (terceira sessão — worker + agente conectado + plano Fase 9)
 
 ### O que está NO AR
 
@@ -36,51 +36,63 @@
   (variableCollectionUpsert + serviceConnect + serviceInstanceUpdate com
   `railwayConfigFile`)
 
-### O que NÃO está no ar (próxima sessão)
+✅ **Agente local conectado em prod via WSS**
+- PC do dev (`HP_SILVIO`) tem `agent/main` apontando pra
+  `wss://achadinhos.maisseguidores.ia.br/api/v1/ws/agente`.
+- Config em `%APPDATA%\Achadinhos\config.json` (já reapontado pra prod).
+- Org_id=1 (Achadinhos), user `SILVIOVARGAS`, agente_id=1.
+- Servidor confirma `agente.conectado total_online=1` nos logs.
 
-⚠️ **Agente local** ainda apontando pra dev — precisa rodar `python -m agent.setup` de novo passando URL de produção.
+✅ **Signup público + wizard onboarding** validados em prod
+- Smoke test parcial executado em 2026-05-15: criada conta `Teste Prod` em
+  janela anônima, /onboarding renderizou os 4 cards (config ML, baixar
+  agente, cadastrar canal, criar grupo). Conta de teste deletada do DB no
+  fim (cascade limpo todas as FKs).
 
-⚠️ **Cloudflare proxy** está em DNS only (cinza). Pode ligar laranja pra ter cache + DDoS.
+### O que NÃO está no ar / pendente
 
-⚠️ **Beat como service separado** — só se fizer upgrade pro plano Hobby ($5/mês real).
-Por enquanto fica embedded no worker.
+⚠️ **Telegram não testado end-to-end** — falta criar bot via @BotFather e
+testar fluxo template → canal → grupo → lote → postagem. Pulado por escolha
+do user na sessão de 2026-05-15.
+
+⚠️ **Cloudflare proxy** está em DNS only (cinza). Pode ligar laranja pra ter
+cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando ligar.
+
+⚠️ **Fluxo de instalação do agente pro user final ainda é CLI** (Python + venv
++ 3 comandos). Inviável pra user comum. Resolvido pela Fase 9 (ver roadmap).
 
 ---
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Reconfigurar agente local pra produção
+### 1️⃣ Começar Fase 9.1 — build PyInstaller (Recommended)
 
-```powershell
-cd D:\achadinhos-agent
-.venv\Scripts\activate
+**ADR-009 detalha** a arquitetura completa da Fase 9 (botão "Conectar meu
+WhatsApp" no dashboard, agente como `.exe` instalável, ponte browser↔agente).
+Próximo concreto:
 
-# Apaga config antiga (que aponta pra localhost)
-del "$env:APPDATA\Achadinhos\config.json"
+1. Validar `D:\achadinhos-agent\build.spec` atual — possivelmente desatualizado.
+2. Rodar `pyinstaller build.spec` no venv do agente, ver se gera `.exe` funcional.
+3. Smoke test do `.exe`: rodar fora do venv, verificar que conecta no
+   WebSocket de prod igual ao `python -m agent.main --sem-tray`.
+4. Se faltar alguma dep (Selenium driver, chromedriver, etc.), ajustar `.spec`.
+5. Commit do `.spec` ajustado + nota em `docs/decisoes.md` sobre artefatos
+   gerados (tamanho, deps).
 
-# Setup novo passando URL de prod
-python -m agent.setup
-# Quando perguntar "URL do servidor": https://achadinhos.maisseguidores.ia.br
-# Login: admin
-# Senha: <a do gerenciador>
-# Nome PC: o que quiser
+Saída esperada: 1 `.exe` standalone que vira a base das próximas mini-fases.
 
-# Roda
-python -m agent.main --sem-tray
-# Deve mostrar "ws.conectado" — agora conectado em wss://achadinhos.maisseguidores.ia.br
-```
+### 2️⃣ Telegram smoke test (paralelo, quando tiver bot)
 
-### 2️⃣ Smoke test e2e em produção
+Quando tiver bot @BotFather + grupo de teste:
+- Cria canal Telegram no dashboard (com token do bot)
+- Cria grupo apontando pro canal
+- Cria template simples
+- Cria produto manual via /produtos/novo
+- Roda lote → confere postagem no grupo
 
-- [ ] Abre `https://achadinhos.maisseguidores.ia.br/signup` em janela anônima
-- [ ] Cria conta nova (org `Teste Prod`, login `teste`, senha forte)
-- [ ] Vai pra `/onboarding` automaticamente
-- [ ] Vai pra `/agentes/baixar` e segue instruções
-- [ ] Loga de volta como admin
-- [ ] Cria template, canal Telegram com bot real, grupo
-- [ ] Roda lote → vê postagem chegar no grupo Telegram
+Valida que worker Celery processa `postar_telegram` em prod.
 
-### 3️⃣ Cloudflare proxy ON (opcional)
+### 3️⃣ Cloudflare proxy ON (independente)
 
 Quando tudo estiver estável:
 1. Cloudflare → DNS → CNAME `achadinhos`
@@ -90,12 +102,28 @@ Quando tudo estiver estável:
 
 ---
 
-## Roadmap futuro (depois do worker+beat)
+## Roadmap futuro
+
+### Fase 9 — Botão "Conectar meu WhatsApp" (ADR-009)
+
+Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
+
+| Sub-fase | Descrição | Tempo |
+|----------|-----------|-------|
+| **9.1** | Build PyInstaller funcionando (`.exe` standalone) | 1 sessão |
+| **9.2** | HTTP local server no agente (127.0.0.1:5577 — `/ping`, `/pair`, `/abrir-tudo`, `/status`) | 1 sessão |
+| **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
+| **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
+| **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
+| **9.6** | URL protocol handler no agente (`achadinhos://` → HTTP local) | 0.5 sessão |
+| **9.7** | (opcional) Auto-update do `.exe` via GitHub releases | 1 sessão |
+| **9.8** | Status do agente no dashboard + UX de offline (crítico pro cenário "controle remoto via celular") | 0.5 sessão |
+
+### Outras fases
 
 | Fase | Descrição | Tempo estimado |
 |------|-----------|---------------|
 | **8** | Shopee + Amazon (estender padrão do ML) | 2 sessões |
-| **9** | Build `.exe` real do agente (PyInstaller) | 1 sessão |
 | **10** | Email transacional (welcome, recuperar senha — SMTP) | 1 sessão |
 | **11** | Página de upgrade de plano (free→pro→business, sem billing real) | 1 sessão |
 | **12** | Métricas/analytics no dashboard (postagens/dia, top produtos) | 1 sessão |
@@ -108,9 +136,10 @@ Quando tudo estiver estável:
 1. Abre nova conversa Claude Code no diretório `D:\ACHADINHOSV3`
 2. Primeira mensagem ao Claude:
 
-   > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md e
-   > docs/sessao_continuacao.md, o estado completo está lá. Próximo passo
-   > é criar os services worker e beat no Railway."*
+   > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
+   > e docs/decisoes.md (ADR-009 sobre Fase 9). O estado completo está lá.
+   > Próximo passo é começar a Fase 9.1 — validar/ajustar build PyInstaller
+   > do agente."*
 
 3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
    re-explicar arquitetura, decisões ou estado.
