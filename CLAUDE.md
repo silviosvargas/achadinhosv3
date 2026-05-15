@@ -66,8 +66,10 @@ Celery 5 + JWT (bcrypt direto) + Jinja2. Cifragem reversível: Fernet
 - `acadinhosv3` (api) — **ATIVO**
 - `Postgres` add-on
 - `Redis` add-on
-- `worker` ⚠️ **PENDENTE — criar na próxima sessão**
-- `beat` ⚠️ **PENDENTE — criar na próxima sessão**
+- `worker` — **ATIVO** · roda Celery worker **+ beat embedded** (`celery worker --beat`),
+  porque o plano Free do Railway não dá pra ter beat como service separado.
+  Schedule de `agendar_buscas_devidas` (crontab a cada minuto) roda dentro do worker.
+  Trade-off: restart do worker reseta o estado do beat (perde no máximo 1 execução).
 
 **Projeto agente (separado):** `D:\achadinhos-agent\` — Python + Selenium +
 undetected-chromedriver. Hoje roda via `python -m agent.main`; vira `.exe`
@@ -85,6 +87,7 @@ na Fase 6 (já tem `agent/setup.py` interativo, falta empacotar PyInstaller).
 - **3.8.0** — Fase 6: `POST /api/v1/agentes/registrar-self` + `agent/setup.py` (CLI interativa)
 - **3.9.0** — Fase 7: CSS responsivo (mobile-first, hamburguer) + PWA (manifest, service worker, ícones 192/512)
 - **3.10.0** — Deploy produção: Railway api online, Cloudflare DNS, subdomínio HTTPS
+- **3.10.1** — Worker no Railway (Celery worker + beat embedded num único service, criado via Railway CLI + GraphQL API)
 
 ---
 
@@ -143,7 +146,7 @@ Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 **Ver `docs/sessao_continuacao.md` pra checklist completo.**
 
 Resumo curto:
-1. Criar services `worker` e `beat` no Railway (~10 min)
+1. ✅ Worker no Railway (combinado com beat embedded) — feito 2026-05-15
 2. Validar fluxo signup público real em https://achadinhos.maisseguidores.ia.br
 3. Reconfigurar agente local pra apontar pra prod (`python -m agent.setup`)
 4. Eventualmente: empacotar agente como `.exe` (PyInstaller)

@@ -7,64 +7,42 @@
 
 ---
 
-## Estado em 2026-05-15 (fim da sessão de deploy)
+## Estado em 2026-05-15 (segunda sessão — worker no ar)
 
 ### O que está NO AR
 
-✅ **https://achadinhos.maisseguidores.ia.br** — site de produção
+✅ **https://achadinhos.maisseguidores.ia.br** — API + dashboard de produção
 - HTTPS válido, signup funciona, login do admin funciona, dashboard responsivo
-- Plano: Railway `Hobby` ($5 grátis/mês)
+- Plano: Railway **Free** ($5 grátis/mês trial — atingiu limite de services,
+  por isso worker+beat foram combinados num único service)
 - Postgres + Redis como add-ons no projeto Railway `balanced-ambition`
 - Cloudflare na frente (proxy DESLIGADO/cinza pra Railway validar — pode reativar laranja depois)
 
-### O que NÃO está no ar (próxima sessão)
+✅ **`worker` service no Railway** — Celery worker **+ beat embedded**
+- StartCommand: `sh -c 'celery -A app.workers.celery_app worker --beat --loglevel=info'`
+- Variables: 25 vars copiadas do service `acadinhosv3` (incluindo JWT_SECRET,
+  CREDENCIAIS_SECRET_KEY, DATABASE_URL, REDIS_URL, ADMIN_*)
+- Sem healthcheck (worker não tem HTTP), sem preDeploy (api faz migrations)
+- Por que combinado: Free plan permite poucos services. Beat embedded é OK pra essa
+  escala — restart do worker reseta schedule, mas crontab "todo minuto" se recupera
+  em ≤60s.
+- Criado via: Railway CLI (`railway add --service worker`) + GraphQL API
+  (variableCollectionUpsert + serviceConnect + serviceInstanceUpdate)
 
-⚠️ **Worker e Beat services no Railway** — sem eles:
-- Telegram não posta (worker consome `postar_telegram`)
-- Buscas agendadas não disparam (beat agenda `agendar_buscas_devidas`)
+### O que NÃO está no ar (próxima sessão)
 
 ⚠️ **Agente local** ainda apontando pra dev — precisa rodar `python -m agent.setup` de novo passando URL de produção.
 
 ⚠️ **Cloudflare proxy** está em DNS only (cinza). Pode ligar laranja pra ter cache + DDoS.
 
+⚠️ **Beat como service separado** — só se fizer upgrade pro plano Hobby ($5/mês real).
+Por enquanto fica embedded no worker.
+
 ---
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Worker no Railway (~5 min)
-
-1. https://railway.app → projeto `balanced-ambition`
-2. Canvas → **"+ Create"** → **GitHub Repo** → escolhe `silviosvargas/achadinhosv3`
-3. Service novo aparece (vai falhar build — sem env vars)
-4. Clica nele → Settings → **Service Name** → muda pra `worker`
-5. Settings → Deploy:
-   - **Custom Start Command:** `sh -c 'celery -A app.workers.celery_app worker --loglevel=info'`
-   - **Pre-Deploy Command:** vazio
-   - **Healthcheck Path:** APAGA (worker não tem HTTP)
-6. Settings → Networking: **NÃO** gera domínio público
-7. **Variables** → cola as mesmas 12 variáveis essenciais do service `acadinhosv3`:
-   - `APP_ENV=production`
-   - `APP_DEBUG=false`
-   - `APP_LOG_LEVEL=INFO`
-   - `JWT_SECRET=<mesmo>` (do gerenciador de senhas)
-   - `CREDENCIAIS_SECRET_KEY=<mesmo>` (do gerenciador)
-   - `DATABASE_URL=${{Postgres.DATABASE_URL}}`
-   - `REDIS_URL=${{Redis.REDIS_URL}}`
-   - `ADMIN_LOGIN=admin`
-   - `ADMIN_PASSWORD=<mesmo>` (do gerenciador)
-   - `ADMIN_EMAIL=silviosvargas@metaservers.com.br`
-   - `ADMIN_ORG_NOME=Achadinhos`
-   - `PUBLIC_BASE_URL=https://achadinhos.maisseguidores.ia.br`
-8. Deploy automático → fica Active sem healthcheck
-
-### 2️⃣ Beat no Railway (~3 min)
-
-Idêntico ao worker, mas:
-- **Service Name:** `beat`
-- **Custom Start Command:** `sh -c 'celery -A app.workers.celery_app beat --loglevel=info'`
-- Mesmas variáveis
-
-### 3️⃣ Reconfigurar agente local pra produção
+### 1️⃣ Reconfigurar agente local pra produção
 
 ```powershell
 cd D:\achadinhos-agent
@@ -85,7 +63,7 @@ python -m agent.main --sem-tray
 # Deve mostrar "ws.conectado" — agora conectado em wss://achadinhos.maisseguidores.ia.br
 ```
 
-### 4️⃣ Smoke test e2e em produção
+### 2️⃣ Smoke test e2e em produção
 
 - [ ] Abre `https://achadinhos.maisseguidores.ia.br/signup` em janela anônima
 - [ ] Cria conta nova (org `Teste Prod`, login `teste`, senha forte)
@@ -95,7 +73,7 @@ python -m agent.main --sem-tray
 - [ ] Cria template, canal Telegram com bot real, grupo
 - [ ] Roda lote → vê postagem chegar no grupo Telegram
 
-### 5️⃣ Cloudflare proxy ON (opcional)
+### 3️⃣ Cloudflare proxy ON (opcional)
 
 Quando tudo estiver estável:
 1. Cloudflare → DNS → CNAME `achadinhos`
