@@ -38,6 +38,16 @@
       <li><a href="/usuarios">Usuários</a></li>
     </ul>
     <div class="topbar-user">
+      {# Badge status dos agentes (Fase 9.8) — atualizado por JS a cada 20s #}
+      <a id="agente-status-badge" href="/agentes/baixar"
+         title="Clique pra ver agentes / instalar"
+         style="display:inline-flex; align-items:center; gap:6px;
+                padding:4px 10px; border-radius:12px; background:#444;
+                color:#fff; font-size:0.85em; text-decoration:none;">
+        <span id="agente-status-dot" style="width:8px; height:8px; border-radius:50%;
+              background:#888; display:inline-block;"></span>
+        <span id="agente-status-label">…</span>
+      </a>
       <span>{{ user.nome_exibicao or user.login }}</span>
       <span class="papel papel-{{ user.papel }}">{{ user.papel }}</span>
       <a href="/logout" class="btn-logout">Sair</a>
@@ -62,5 +72,52 @@
       });
     }
   </script>
+
+  {% if user %}
+  {# Polling do badge "Agentes online" (Fase 9.8). Atualiza a cada 20s. #}
+  <script>
+  (function () {
+    const elDot   = document.getElementById('agente-status-dot');
+    const elLabel = document.getElementById('agente-status-label');
+    const elLink  = document.getElementById('agente-status-badge');
+    if (!elDot || !elLabel || !elLink) return;
+
+    async function atualizar() {
+      try {
+        const r = await fetch('/api/v1/agentes/status', { credentials: 'include' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        const online = data.total_online || 0;
+        const total = data.total || 0;
+
+        if (total === 0) {
+          elDot.style.background = '#888';   // cinza
+          elLabel.textContent = 'sem agente';
+          elLink.title = 'Instale um agente pra postar no WhatsApp';
+        } else if (online === 0) {
+          elDot.style.background = '#dc2626'; // vermelho
+          elLabel.textContent = `${total} offline`;
+          elLink.title = 'Nenhum agente seu está online — ligue o PC e tente de novo';
+        } else if (online === total) {
+          elDot.style.background = '#16a34a'; // verde
+          elLabel.textContent = `${online} online`;
+          elLink.title = `Todos os ${total} agentes online`;
+        } else {
+          elDot.style.background = '#ca8a04'; // amarelo
+          elLabel.textContent = `${online}/${total} online`;
+          elLink.title = `${online} de ${total} agentes online`;
+        }
+      } catch (e) {
+        elDot.style.background = '#888';
+        elLabel.textContent = 'status?';
+        elLink.title = 'Não consegui consultar o servidor';
+      }
+    }
+
+    atualizar();
+    setInterval(atualizar, 20000);
+  })();
+  </script>
+  {% endif %}
 </body>
 </html>

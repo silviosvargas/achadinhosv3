@@ -72,6 +72,44 @@ async def download_instalador(_: Usuario = Depends(usuario_atual)) -> dict:
     )
 
 
+@router.get("/status")
+async def status_agentes(
+    user: Usuario = Depends(usuario_atual),
+    db: AsyncSession = Depends(get_db_async),
+) -> dict:
+    """
+    Status de online/offline dos agentes da org do user (Fase 9.8).
+
+    Crítico pro cenário "controle remoto via celular": dashboard mostra
+    indicador 'N agentes online' e bloqueia ações se nenhum PC do user
+    está vivo.
+
+    Cruza a lista de agentes da org (DB) com o registry de WebSockets
+    ativos no processo (memória). Retorna por agente: id, nome, ativo,
+    online (bool).
+
+    Polling client-side OK (15-30s) — o endpoint é leve, sem fan-out.
+    """
+    from app.services.agente_registry import registry as _registry
+
+    agentes = await agente_service.listar_agentes_da_org(db, org_id=user.org_id)
+    items = [
+        {
+            "id": a.id,
+            "nome": a.nome,
+            "ativo": a.ativo,
+            "online": _registry.esta_online(a.id),
+        }
+        for a in agentes
+    ]
+    online = sum(1 for it in items if it["online"])
+    return {
+        "total": len(items),
+        "total_online": online,
+        "agentes": items,
+    }
+
+
 @router.get("", response_model=list[AgentePublico])
 async def listar(
     user: Usuario = Depends(usuario_atual),
