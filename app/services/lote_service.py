@@ -16,7 +16,13 @@ from __future__ import annotations
 
 from app.core.logging import get_logger
 from app.models import Usuario
-from app.services import dispatcher, selecao_service, templates_service
+from app.services import (
+    afiliado_service,
+    dispatcher,
+    linkbuilder,
+    selecao_service,
+    templates_service,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = get_logger(__name__)
@@ -76,8 +82,33 @@ async def rodar_lote(
         }
 
     # 2-4. Renderiza + enfileira
+    # Late binding da tag de afiliado: produto.url_afiliado pode estar
+    # "congelado" com tag desatualizada (de quando importou). Aqui
+    # recalculamos a URL POR POSTAGEM, aplicando a tag do disparador via
+    # cascata. Cada user posta com a tag dele (ou fallback do admin).
     tarefas_ids: list[int] = []
     sem_template = 0
+
+    # Cache de tag por plataforma — evita N queries pra mesma plataforma
+    # quando o lote pega vários produtos do mesmo marketplace.
+    cache_tag: dict[str, str | None] = {}
+
+    async def _url_pro_produto(p) -> str:
+        """Recalcula `url_afiliado` na hora usando tag do disparador."""
+        plat = (p.plataforma or "").lower()
+        if plat not in cache_tag:
+            cache_tag[plat] = await afiliado_service.tag_com_cascata(
+                db,
+                plataforma=plat,
+                usuario_id=criado_por_usuario_id,
+                org_id=org_id,
+            )
+        url_com_tag = linkbuilder.gerar_url_afiliado(
+            plataforma=plat,
+            url_canonica=p.url_canonica,
+            tag=cache_tag[plat],
+        )
+        return url_com_tag or p.url_canonica or ""
 
     for comb in combinacoes:
         template = await templates_service.selecionar_template(
@@ -86,16 +117,23 @@ async def rodar_lote(
             nicho_ids=comb.nichos_do_produto,
         )
 
+        url_override = await _url_pro_produto(comb.produto)
+
         if template is None:
             # Usa fallback hardcoded — não bloqueia o lote
             sem_template += 1
-            texto = templates_service.renderizar_com_fallback(comb.produto)
+            texto = templates_service.renderizar(
+                templates_service.TEMPLATE_FALLBACK, comb.produto,
+                url_override=url_override,
+            )
             detalhes.append(
                 f"⚠ Produto '{comb.produto.nome[:40]}' usou template fallback "
                 f"(nicho sem template cadastrado)"
             )
         else:
-            texto = templates_service.renderizar(template, comb.produto)
+            texto = templates_service.renderizar(
+                template, comb.produto, url_override=url_override,
+            )
             await templates_service.registrar_uso(db, template_id=template.id)
 
         # Enfileira
