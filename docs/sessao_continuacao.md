@@ -43,6 +43,30 @@
 - Org_id=1 (Achadinhos), user `SILVIOVARGAS`, agente_id=1.
 - Servidor confirma `agente.conectado total_online=1` nos logs.
 
+✅ **Fase 9.1 — build PyInstaller validado** (2026-05-15)
+- `agente/build.spec` rodou sem ajustes — todas as deps detectadas (selenium,
+  undetected-chromedriver, pystray, pyautogui, websockets, structlog).
+- Artefato: `agente/dist/AchadinhosAgent.exe` ~ **30 MB**.
+- Smoke test do `.exe`: leu config salva, conectou no WSS de prod em **1.2s**
+  (`agent.iniciando` → `ws.conectando` → `ws.conectado`). Servidor confirmou
+  via logs (`agente.conectado total_online=1`). Comportamento idêntico ao
+  `python -m agent.main`.
+- Comando de build: `cd agente && pyinstaller --noconfirm --clean build.spec`.
+- `dist/` e `build/` ignorados via `agente/.gitignore`.
+
+✅ **Agente movido pra monorepo** (2026-05-15)
+- Source ficava em `D:\achadinhos-agent\` (pasta solta, sem git).
+- Agora em `agente/` no mesmo repo do servidor (`silviosvargas/achadinhosv3`).
+- O `D:\achadinhos-agent\` original ainda existe (com `.venv`, `dist`, `build`)
+  — pode ser deletado quando o user validar que a versão monorepo roda igual.
+- Pra rodar a versão monorepo, user precisa recriar venv:
+  ```powershell
+  cd D:\ACHADINHOSV3\agente
+  python -m venv .venv
+  .venv\Scripts\activate
+  pip install -e .
+  ```
+
 ✅ **Signup público + wizard onboarding** validados em prod
 - Smoke test parcial executado em 2026-05-15: criada conta `Teste Prod` em
   janela anônima, /onboarding renderizou os 4 cards (config ML, baixar
@@ -65,21 +89,34 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.1 — build PyInstaller (Recommended)
+### 1️⃣ Começar Fase 9.2 — HTTP local server no agente (Recommended)
 
-**ADR-009 detalha** a arquitetura completa da Fase 9 (botão "Conectar meu
-WhatsApp" no dashboard, agente como `.exe` instalável, ponte browser↔agente).
-Próximo concreto:
+**ADR-009 detalha** a arquitetura completa da Fase 9. A 9.1 foi feita
+(ver "O que está NO AR" acima). Próxima é 9.2:
 
-1. Validar `D:\achadinhos-agent\build.spec` atual — possivelmente desatualizado.
-2. Rodar `pyinstaller build.spec` no venv do agente, ver se gera `.exe` funcional.
-3. Smoke test do `.exe`: rodar fora do venv, verificar que conecta no
-   WebSocket de prod igual ao `python -m agent.main --sem-tray`.
-4. Se faltar alguma dep (Selenium driver, chromedriver, etc.), ajustar `.spec`.
-5. Commit do `.spec` ajustado + nota em `docs/decisoes.md` sobre artefatos
-   gerados (tamanho, deps).
+Criar um servidor HTTP leve em `127.0.0.1:5577` dentro do agente, rodando
+em paralelo ao loop WebSocket. Endpoints:
+- `GET /ping` — devolve `{"ok": true, "agente_id": N, "versao": "x.y.z"}`.
+  Usado pelo dashboard pra detectar se agente tá ativo.
+- `POST /pair` — recebe `{"jwt": "..."}` do dashboard. Agente usa esse JWT
+  pra chamar `POST /api/v1/agentes/registrar-self` e salva token de agente.
+  Substitui o setup CLI pra usuário comum (mantém CLI pra dev).
+- `POST /abrir-tudo` — abre WhatsApp Web + marketplaces afiliados no Chrome.
+- `GET /status` — devolve estado: conectado/desconectado/ocupado, último erro, etc.
 
-Saída esperada: 1 `.exe` standalone que vira a base das próximas mini-fases.
+Considerações:
+- **CORS**: dashboard (`https://achadinhos.maisseguidores.ia.br`) precisa de
+  CORS habilitado pra `127.0.0.1:5577`. `Access-Control-Allow-Origin` com a
+  origem certa, suporte a preflight.
+- **Porta alternativa**: se `5577` em uso, tentar `5578`, `5579`. Expor a porta
+  ativa via header no `/ping` (ou registry/file lido pelo JS).
+- **Lib**: usar `aiohttp` ou `starlette` standalone (FastAPI puxa muita coisa).
+  Já temos `websockets` async; aiohttp é compatível com asyncio loop.
+- **Lifecycle**: subir junto com o WS client (mesma `asyncio.gather`), parar
+  junto.
+
+Saída esperada: agente expõe HTTP local, dá pra fazer `curl http://127.0.0.1:5577/ping`
+e receber JSON.
 
 ### 2️⃣ Telegram smoke test (paralelo, quando tiver bot)
 
@@ -110,7 +147,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 
 | Sub-fase | Descrição | Tempo |
 |----------|-----------|-------|
-| **9.1** | Build PyInstaller funcionando (`.exe` standalone) | 1 sessão |
+| ✅ **9.1** | Build PyInstaller funcionando (`.exe` standalone) — **feita 2026-05-15** | — |
 | **9.2** | HTTP local server no agente (127.0.0.1:5577 — `/ping`, `/pair`, `/abrir-tudo`, `/status`) | 1 sessão |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
@@ -138,8 +175,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 
    > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
    > e docs/decisoes.md (ADR-009 sobre Fase 9). O estado completo está lá.
-   > Próximo passo é começar a Fase 9.1 — validar/ajustar build PyInstaller
-   > do agente."*
+   > Próximo passo é Fase 9.2 — HTTP local server no agente (127.0.0.1:5577)."*
 
 3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
    re-explicar arquitetura, decisões ou estado.

@@ -81,9 +81,29 @@ Celery 5 + JWT (bcrypt direto) + Jinja2. Cifragem reversível: Fernet
   - Trade-off: restart do worker reseta o estado do beat (perde no máximo 1
     execução).
 
-**Projeto agente (separado):** `D:\achadinhos-agent\` — Python + Selenium +
-undetected-chromedriver. Hoje roda via `python -m agent.main`; vira `.exe`
-na Fase 6 (já tem `agent/setup.py` interativo, falta empacotar PyInstaller).
+**Agente desktop (monorepo):** `agente/` no mesmo repo — Python + Selenium +
+undetected-chromedriver. Build do `.exe` via PyInstaller já funciona
+(`pyinstaller build.spec` → `agente/dist/AchadinhosAgent.exe`, ~30 MB).
+Empacotamento user-friendly (installer Inno Setup, ponte browser↔agente,
+botão "Conectar" no dashboard) vem na Fase 9 — ver ADR-009.
+
+**Setup dev do agente (uma vez):**
+```powershell
+cd D:\ACHADINHOSV3\agente
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .
+```
+
+**Rodar agente dev:**
+```powershell
+cd D:\ACHADINHOSV3\agente
+.venv\Scripts\activate
+python -m agent.setup             # 1× — pede email/senha, registra agente
+python -m agent.login_ml          # 1× ou quando sessão ML expirar
+python -m agent.login_whatsapp    # 1× ou quando WhatsApp Web expirar
+python -m agent.main --sem-tray   # roda
+```
 
 ---
 
@@ -99,6 +119,7 @@ na Fase 6 (já tem `agent/setup.py` interativo, falta empacotar PyInstaller).
 - **3.10.0** — Deploy produção: Railway api online, Cloudflare DNS, subdomínio HTTPS
 - **3.10.1** — Worker no Railway (Celery worker + beat embedded num único service, criado via Railway CLI + GraphQL API)
 - **3.10.2** — Agente local apontando pra prod via WSS, signup público + onboarding validados em prod, ADR-009 (Fase 9 expandida em 9.1-9.8)
+- **3.11.0** — Fase 9.1: build PyInstaller validado (`dist/AchadinhosAgent.exe` ~30 MB, conecta no WSS prod em 1.2s). Agente movido pra monorepo (`agente/`).
 
 ---
 
@@ -123,15 +144,7 @@ docker compose logs -f api        # logs
 docker compose down               # para
 ```
 
-**Agente local:**
-```powershell
-cd D:\achadinhos-agent
-.venv\Scripts\activate
-python -m agent.setup             # 1× — pede email/senha, registra agente
-python -m agent.login_ml          # 1× ou quando sessão ML expirar
-python -m agent.login_whatsapp    # 1× ou quando WhatsApp Web expirar
-python -m agent.main --sem-tray   # conecta no WS, processa buscas/postagens
-```
+**Agente local:** ver bloco "Setup dev do agente" e "Rodar agente dev" mais acima.
 
 URLs dev: dashboard http://localhost:8000 · docs http://localhost:8000/docs · flower http://localhost:5555
 
