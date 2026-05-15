@@ -258,6 +258,68 @@ class LocalServer:
             status=501,
         )
 
+    async def _handle_uri_trigger(self, request: web.Request) -> web.Response:
+        """Recebe uma URI `achadinhos://` encaminhada por outra instância
+        do agente (Fase 9.6 — single-instance handoff). Quando o user clica
+        num link no browser, Windows lança o `.exe` com `--uri "..."`. Se já
+        houver outro agente rodando, o novo processo encaminha a URI pra cá
+        e termina, evitando 2 agentes no mesmo PC.
+
+        Body: `{"uri": "achadinhos://abrir-tudo?foo=bar"}`
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"erro": "bad_request", "msg": "Body inválido (esperado JSON)"},
+                status=400,
+            )
+        uri = (body.get("uri") or "").strip()
+        if not uri:
+            return web.json_response(
+                {"erro": "bad_request", "msg": "Campo 'uri' obrigatório"},
+                status=400,
+            )
+        await self.processar_uri(uri)
+        return web.json_response({"ok": True, "uri": uri})
+
+    async def processar_uri(self, uri: str) -> None:
+        """Roteia uma URI `achadinhos://` pra ação interna correspondente.
+
+        Convenção: o `host` da URI é o nome da ação.
+            achadinhos://abrir-tudo   → action=abrir-tudo
+            achadinhos://pair         → action=pair
+            achadinhos://ping         → action=ping
+
+        Query string é repassada como parâmetros da action.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        try:
+            parsed = urlparse(uri)
+        except Exception as e:
+            log.warning("uri.parse_falhou", uri=uri, erro=str(e))
+            return
+
+        if parsed.scheme != "achadinhos":
+            log.warning("uri.scheme_invalido", uri=uri, scheme=parsed.scheme)
+            return
+
+        action = (parsed.netloc or parsed.path.lstrip("/")).lower()
+        params = parse_qs(parsed.query)
+        log.info("uri.recebida", action=action, params=dict(params))
+
+        # Mapeamento action → handler interno
+        if action in ("abrir-tudo", "abrir", "open"):
+            # TODO Fase 9.x: subprocess pra abrir Chrome com WhatsApp Web +
+            # marketplaces afiliados. Por enquanto só loga.
+            log.info("uri.acao_abrir_tudo_stub",
+                     msg="Abertura de tabs vem em fase futura")
+        elif action in ("ping", ""):
+            log.info("uri.acao_ping_ok")
+        else:
+            log.warning("uri.acao_desconhecida", action=action)
+
     async def _handle_options_catchall(self, request: web.Request) -> web.Response:
         """Preflight OPTIONS pra qualquer rota."""
         return web.Response(status=204)
@@ -270,6 +332,7 @@ class LocalServer:
         app.router.add_get("/status", self._handle_status)
         app.router.add_post("/pair", self._handle_pair)
         app.router.add_post("/abrir-tudo", self._handle_abrir_tudo)
+        app.router.add_post("/uri-trigger", self._handle_uri_trigger)
         app.router.add_route("OPTIONS", "/{tail:.*}", self._handle_options_catchall)
         return app
 

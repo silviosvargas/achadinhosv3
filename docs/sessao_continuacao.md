@@ -122,33 +122,36 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.6 — URL protocol handler no agente (Recommended)
+### 1️⃣ Começar Fase 9.x — ação "abrir-tudo" real (Recommended)
 
-**Fases 9.1–9.5 estão feitas.** A 9.6 fecha o último gap: quando o dashboard
-tenta `achadinhos://abrir-tudo` (porque agente está instalado mas parado),
-o Windows lança `AchadinhosAgent.exe --uri "achadinhos://abrir-tudo"`. O
-agente precisa interpretar esse argumento:
+**Toda a infra da Fase 9 (9.1–9.6) está pronta.** O que falta é a **ação
+concreta** quando o dashboard pede `POST /abrir-tudo` (ou URL protocol
+`achadinhos://abrir-tudo`): hoje o handler é stub que só loga.
 
-1. Adicionar parse de `--uri` em `agente/agent/main.py` (`parse_args()`)
-2. Antes de inicializar WS/local_server: se já há outra instância rodando
-   (detectar via tentativa de bind em 5577 — se falhar, agente já tá ativo),
-   encaminhar o comando pra HTTP local existente (`POST /127.0.0.1:5577/abrir-tudo`)
-   e sair sem subir nada.
-3. Se for o primeiro launch (porta livre), subir tudo normal e processar
-   o `--uri` localmente após o startup.
+Implementar `LocalServer.processar_uri()` (e/ou `_handle_abrir_tudo`) pra:
+
+1. Subprocesar Chrome no perfil persistente do agente (já existe —
+   `agent/chrome.py`), abrindo:
+   - **WhatsApp Web** (`https://web.whatsapp.com`) — pra QR scan ou
+     reutilizar sessão existente
+   - **Mercado Livre** (`https://mercadolivre.com.br`) — pra login ML
+   - **Outros marketplaces** que o admin tenha afiliado configurado
+     (`shopee_affiliate_id`, `amazon_affiliate_tag`, `magalu_affiliate_id`,
+     `aliexpress_affiliate_id` em `app/core/config.py` ou tabela `usuarios`)
+2. Ordem: WhatsApp Web primeiro, marketplaces em sequência (cada um em
+   nova aba do MESMO Chrome).
+3. Retornar `{"abriu": ["whatsapp_web", "mercadolivre", ...]}` no /abrir-tudo.
 
 Detalhes:
-- O Windows entrega o URI completo (`achadinhos://abrir-tudo?foo=bar`)
-  como 2º argv. Parse com `urllib.parse` pra extrair host (`abrir-tudo`)
-  e query string.
-- Pra detectar "outra instância rodando", usar `socket.socket().bind()`
-  num try/except em vez de bater no `/ping` (mais rápido, não precisa http).
-- Single-instance pattern: salvar PID em arquivo lock OU usar o próprio
-  bind da porta como lock (mais robusto).
-
-Saída esperada: click no botão "Conectar" quando agente parado dispara
-`achadinhos://abrir-tudo` → Windows abre o `.exe` → ele detecta que tem
-algo pra processar e procede.
+- Reaproveitar `agent/chrome.py` que já gerencia o Chrome em modo debug
+  com perfil persistente. Usar `webbrowser.open` ou Selenium pra abrir
+  novas tabs no instance existente.
+- Marketplaces ativos vêm de um endpoint server-side novo, tipo
+  `GET /api/v1/marketplaces/ativos` (lista os com afiliado configurado),
+  OU o dashboard manda a lista no body do `/abrir-tudo`.
+- Atualizar template `agente_baixar.html` pra também disparar
+  `POST /abrir-tudo` depois do pair bem-sucedido (ou ter botão separado
+  "Abrir minhas plataformas").
 
 ### O QUE FALTA EXTERNO PRA FAZER (sem código)
 
@@ -190,6 +193,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | ✅ **9.3** | Pareamento via JWT (`/pair` real + main.py roda sem token) — **feita 2026-05-15** | — |
 | ✅ **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→download placeholder) — **feita 2026-05-15** | — |
 | ✅ **9.5** | Inno Setup installer (registry handler + auto-start) + GitHub Actions CI — **feita 2026-05-15** | — |
+| ✅ **9.6** | URL protocol handler (`--uri` parse + single-instance handoff + `processar_uri()`) — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
@@ -215,8 +219,9 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 2. Primeira mensagem ao Claude:
 
    > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
-   > e docs/decisoes.md (ADR-009 sobre Fase 9). O estado completo está lá.
-   > Próximo passo é Fase 9.4 — botão 'Conectar' no dashboard."*
+   > e docs/decisoes.md (ADR-009 sobre Fase 9). Toda infra da Fase 9 está pronta;
+   > falta implementar a ação real do `/abrir-tudo` (subprocess Chrome com
+   > WhatsApp Web + marketplaces). Esse é o próximo passo."*
 
 3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
    re-explicar arquitetura, decisões ou estado.

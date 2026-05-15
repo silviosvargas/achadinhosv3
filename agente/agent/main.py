@@ -66,7 +66,40 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--log-level", default="INFO")
     p.add_argument("--sem-tray", action="store_true",
                    help="Roda só headless, sem ícone (útil em dev).")
+    p.add_argument("--uri",
+                   help="URI achadinhos:// vinda do URL protocol handler (Fase 9.6). "
+                        "Se outra instância já está rodando, encaminha pra ela e sai.")
     return p.parse_args()
+
+
+def _handoff_uri_pra_instancia_rodando(uri: str) -> bool:
+    """Tenta encaminhar uma URI achadinhos:// pra outra instância do agente
+    já rodando (Fase 9.6). Retorna True se conseguiu — caller deve sair.
+
+    Por que: se o user já tem o agente rodando em background, e clica num link
+    achadinhos:// no browser, o Windows lança UM NOVO processo do .exe com
+    `--uri`. Não queremos 2 agentes rodando — encaminhamos a URI pra instância
+    existente e o novo processo termina.
+    """
+    import urllib.error
+    import urllib.request
+    import json as _json
+
+    payload = _json.dumps({"uri": uri}).encode("utf-8")
+    for porta in (5577, 5578, 5579):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{porta}/uri-trigger",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=2) as r:
+                if 200 <= r.status < 300:
+                    return True
+        except (urllib.error.URLError, OSError, TimeoutError):
+            continue
+    return False
 
 
 def montar_config(args: argparse.Namespace) -> Config | None:
@@ -90,7 +123,12 @@ def montar_config(args: argparse.Namespace) -> Config | None:
 
 
 # ── Main async ──────────────────────────────────────
-async def main_async(cfg: Config | None, *, com_tray: bool = True) -> None:
+async def main_async(
+    cfg: Config | None,
+    *,
+    com_tray: bool = True,
+    uri_inicial: str | None = None,
+) -> None:
     parar_evento = asyncio.Event()
     cfg_disponivel = asyncio.Event()
     if cfg is not None:
@@ -130,6 +168,11 @@ async def main_async(cfg: Config | None, *, com_tray: bool = True) -> None:
     except Exception as e:
         log.error("local_server.indisponivel", erro=str(e))
         local_srv = None
+
+    # Fase 9.6: se essa instância foi acionada com `--uri` (URL protocol),
+    # processa AGORA, após o servidor local estar pronto.
+    if uri_inicial and local_srv is not None:
+        await local_srv.processar_uri(uri_inicial)
 
     # Se ainda não há cfg, aguarda /pair (ou Ctrl+C)
     if cfg is None:
@@ -226,6 +269,15 @@ async def main_async(cfg: Config | None, *, com_tray: bool = True) -> None:
 def main() -> None:
     args = parse_args()
     configurar_logging(args.log_level)
+
+    # Fase 9.6: se foi invocado pelo URL protocol handler (achadinhos://...),
+    # tenta encaminhar pra instância já rodando antes de subir um 2º agente.
+    if args.uri:
+        if _handoff_uri_pra_instancia_rodando(args.uri):
+            log.info("uri.handoff_ok", uri=args.uri)
+            return
+        log.info("uri.sem_instancia_rodando_inicia_normal", uri=args.uri)
+
     cfg = montar_config(args)
     if cfg is None:
         log.info("agent.iniciando", servidor=None,
@@ -234,7 +286,7 @@ def main() -> None:
         log.info("agent.iniciando", servidor=cfg.servidor_ws)
 
     try:
-        asyncio.run(main_async(cfg, com_tray=not args.sem_tray))
+        asyncio.run(main_async(cfg, com_tray=not args.sem_tray, uri_inicial=args.uri))
     except KeyboardInterrupt:
         log.info("agent.encerrado_por_usuario")
 
