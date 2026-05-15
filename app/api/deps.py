@@ -80,6 +80,35 @@ async def usuario_admin(user: Usuario = Depends(usuario_atual)) -> Usuario:
     return user
 
 
+def requer_plano(flag: str):
+    """Factory de dependency que exige que o plano da org do user tenha
+    a flag dada. Uso:
+
+        @router.post("/...", )
+        async def algo(user: Usuario = Depends(requer_plano("pode_cadastrar_afiliado"))):
+            ...
+
+    Se a flag não estiver true no plano, retorna 403 com mensagem clara.
+    Fase 9.9 (signup free restrito) — flags em `planos`:
+    pode_cadastrar_afiliado, pode_criar_buscas, pode_criar_produto_proprio.
+    """
+    async def _checker(user: Usuario = Depends(usuario_atual)) -> Usuario:
+        org = user.organizacao
+        if org is None or org.plano is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Org sem plano configurado",
+            )
+        if not getattr(org.plano, flag, False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Seu plano não permite essa ação ({flag}). "
+                       f"Faça upgrade pra um plano que libere.",
+            )
+        return user
+    return _checker
+
+
 async def agente_atual(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db_async),

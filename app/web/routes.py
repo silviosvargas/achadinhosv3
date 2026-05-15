@@ -382,12 +382,17 @@ async def pagina_onboarding(
         )
     ) or 0
 
-    passos = {
-        "credenciais": {"ok": tem_cred},
+    # Fase 9.9: passo de credenciais só aparece pra plano que permite.
+    # No plano free, esse passo é skipado (postagem usa afiliado do admin).
+    pode_credenciais = bool(org and org.plano and org.plano.pode_cadastrar_afiliado)
+
+    passos: dict[str, dict] = {
         "agente":      {"ok": total_agentes > 0, "total": total_agentes},
         "canal":       {"ok": total_canais > 0,  "total": total_canais},
         "grupo":       {"ok": total_grupos > 0,  "total": total_grupos},
     }
+    if pode_credenciais:
+        passos = {"credenciais": {"ok": tem_cred}, **passos}
     completo = all(p["ok"] for p in passos.values())
 
     # Persiste flag (idempotente)

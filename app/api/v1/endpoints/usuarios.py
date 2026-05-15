@@ -139,6 +139,8 @@ async def atualizar_credenciais(
     Quem pode mexer:
     - Admin da org: pode mexer em qualquer usuário da org.
     - Usuário comum / afiliado: só nas próprias credenciais.
+    - **Plano free não permite** (Fase 9.9): user free posta com
+      afiliado do admin, não cadastra credenciais próprias.
 
     Comportamento da senha:
     - `senha_ml=None`  → não mexe na senha existente
@@ -152,6 +154,15 @@ async def atualizar_credenciais(
         raise HTTPException(
             status_code=403,
             detail="Só admin ou o próprio dono pode mudar essas credenciais",
+        )
+
+    # Fase 9.9: gate por plano. Free não cadastra afiliado.
+    if not getattr(user.organizacao.plano, "pode_cadastrar_afiliado", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Seu plano não permite cadastrar credenciais de afiliado. "
+                   "No plano free, suas postagens usam o afiliado do administrador. "
+                   "Faça upgrade pra cadastrar suas próprias.",
         )
 
     if body.usuario_ml is not None:

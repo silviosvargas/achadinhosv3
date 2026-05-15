@@ -57,6 +57,13 @@ async def criar(
     user: Usuario = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db_async),
 ) -> BuscaPublica:
+    # Fase 9.9: plano free não cria buscas — usa catálogo do admin.
+    if not getattr(user.organizacao.plano, "pode_criar_buscas", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Seu plano não permite criar buscas. Use os produtos "
+                   "já cadastrados pelo administrador. Faça upgrade pra criar suas próprias.",
+        )
     # Valida agente_id se passado
     if body.agente_id is not None:
         agente = await db.get(Agente, body.agente_id)

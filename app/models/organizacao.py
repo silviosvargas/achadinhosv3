@@ -30,6 +30,11 @@ class Plano(Base, TimestampMixin):
     limite_postagens_mes:  Mapped[int]    = mapped_column(Integer, default=500)
     permite_telegram:      Mapped[bool]   = mapped_column(Boolean, default=True)
     permite_agendamento:   Mapped[bool]   = mapped_column(Boolean, default=True)
+    # Flags adicionados pela "Fase 9.9" (signup free restrito).
+    # Plano `free` posta SÓ produtos do catálogo global, com afiliado do admin.
+    pode_cadastrar_afiliado:        Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    pode_criar_buscas:              Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    pode_criar_produto_proprio:     Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     ativo:                 Mapped[bool]   = mapped_column(Boolean, default=True)
 
 

@@ -118,6 +118,13 @@ async def criar(
     admin: Usuario = Depends(usuario_admin),
     db: AsyncSession = Depends(get_db_async),
 ) -> ProdutoPublico:
+    # Fase 9.9: plano free não cria produtos próprios — só consome catálogo.
+    if not getattr(admin.organizacao.plano, "pode_criar_produto_proprio", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Seu plano não permite criar produtos próprios. No plano free, "
+                   "você posta os produtos já cadastrados pelo administrador.",
+        )
     novo = Produto(
         org_id=admin.org_id,
         plataforma=body.plataforma,

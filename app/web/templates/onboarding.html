@@ -20,6 +20,8 @@
 
 <ol class="onboarding-lista">
 
+  {# Fase 9.9: card de credenciais só pra planos que permitem cadastrar afiliado. #}
+  {% if "credenciais" in passos %}
   <li class="onboarding-passo {% if passos.credenciais.ok %}ok{% endif %}">
     <div class="passo-icone">{% if passos.credenciais.ok %}✅{% else %}1️⃣{% endif %}</div>
     <div class="passo-conteudo">
@@ -35,6 +37,7 @@
       {% endif %}
     </div>
   </li>
+  {% endif %}
 
   <li class="onboarding-passo {% if passos.agente.ok %}ok{% endif %}">
     <div class="passo-icone">{% if passos.agente.ok %}✅{% else %}2️⃣{% endif %}</div>
