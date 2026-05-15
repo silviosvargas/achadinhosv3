@@ -122,36 +122,36 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.x — ação "abrir-tudo" real (Recommended)
+### 1️⃣ Começar Fase 9.8 — Status do agente no dashboard (Recommended)
 
-**Toda a infra da Fase 9 (9.1–9.6) está pronta.** O que falta é a **ação
-concreta** quando o dashboard pede `POST /abrir-tudo` (ou URL protocol
-`achadinhos://abrir-tudo`): hoje o handler é stub que só loga.
+**Toda a Fase 9 (9.1–9.6 + ação `abrir-tudo`) está pronta.** O ciclo
+zero-CLI ponta-a-ponta funciona: user instala via Inno Setup → dashboard
+detecta via `/ping` → pareia via `/pair` → abre WhatsApp+ML via `/abrir-tudo`.
 
-Implementar `LocalServer.processar_uri()` (e/ou `_handle_abrir_tudo`) pra:
+A 9.8 cobre o **cenário "controle remoto"** do roadmap: user no celular,
+PC em casa, e ele precisa **saber** se o PC tá online antes de mandar
+buscas/postagens. Sem isso, ele clica "rodar lote" no celular e nada
+acontece sem feedback.
 
-1. Subprocesar Chrome no perfil persistente do agente (já existe —
-   `agent/chrome.py`), abrindo:
-   - **WhatsApp Web** (`https://web.whatsapp.com`) — pra QR scan ou
-     reutilizar sessão existente
-   - **Mercado Livre** (`https://mercadolivre.com.br`) — pra login ML
-   - **Outros marketplaces** que o admin tenha afiliado configurado
-     (`shopee_affiliate_id`, `amazon_affiliate_tag`, `magalu_affiliate_id`,
-     `aliexpress_affiliate_id` em `app/core/config.py` ou tabela `usuarios`)
-2. Ordem: WhatsApp Web primeiro, marketplaces em sequência (cada um em
-   nova aba do MESMO Chrome).
-3. Retornar `{"abriu": ["whatsapp_web", "mercadolivre", ...]}` no /abrir-tudo.
+Implementar:
 
-Detalhes:
-- Reaproveitar `agent/chrome.py` que já gerencia o Chrome em modo debug
-  com perfil persistente. Usar `webbrowser.open` ou Selenium pra abrir
-  novas tabs no instance existente.
-- Marketplaces ativos vêm de um endpoint server-side novo, tipo
-  `GET /api/v1/marketplaces/ativos` (lista os com afiliado configurado),
-  OU o dashboard manda a lista no body do `/abrir-tudo`.
-- Atualizar template `agente_baixar.html` pra também disparar
-  `POST /abrir-tudo` depois do pair bem-sucedido (ou ter botão separado
-  "Abrir minhas plataformas").
+1. **Indicador persistente** no `app/web/templates/base.html` (header ou
+   nav): bolinha verde "Agentes online: 1" / vermelha "Nenhum agente
+   online" / amarela "Conectando…".
+2. **Endpoint** `GET /api/v1/agentes/status` que devolve:
+   ```json
+   { "total_online": 1, "agentes": [{"id":1,"nome":"HP_SILVIO","ultimo_ping":"..."}] }
+   ```
+   Lê do estado dos WebSockets ativos no servidor (já há um mapping
+   `agente_id → conexão` em algum lugar — provavelmente
+   `app/services/ws_router.py` ou similar; investigar).
+3. **JS polling** a cada 15-30s no client do dashboard (ou via SSE, se
+   quiser ser elegante). Atualiza o indicador.
+4. **Quando o user clicar "Rodar lote" e total_online == 0**: bloqueia
+   ou avisa "Nenhum PC seu está online — ligue ele e tente de novo."
+
+Saída esperada: olhando o dashboard, dá pra saber em tempo real se o PC
+da casa tá vivo. Crítico pra UX "controle remoto via celular".
 
 ### O QUE FALTA EXTERNO PRA FAZER (sem código)
 
@@ -194,6 +194,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | ✅ **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→download placeholder) — **feita 2026-05-15** | — |
 | ✅ **9.5** | Inno Setup installer (registry handler + auto-start) + GitHub Actions CI — **feita 2026-05-15** | — |
 | ✅ **9.6** | URL protocol handler (`--uri` parse + single-instance handoff + `processar_uri()`) — **feita 2026-05-15** | — |
+| ✅ **9.x** | Ação real do `/abrir-tudo` (`webbrowser.open()` no browser default) + JS no dashboard que chama após pair — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |

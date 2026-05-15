@@ -182,6 +182,20 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
     return data;
   }
 
+  async function abrirPlataformas(porta) {
+    // body vazio → agente usa URLS_DEFAULT (WhatsApp Web + Mercado Livre)
+    try {
+      const r = await fetchComTimeout(`http://127.0.0.1:${porta}/abrir-tudo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      return r.ok ? await r.json() : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   async function fluxoConectar() {
     elBtn.disabled = true;
     setMsg('Pareando…', 'info');
@@ -201,10 +215,13 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
         `<strong>✓ Agente conectado</strong> · ID ${resultado.agente_id} · ` +
         `<span class="muted">${resultado.agente_nome || ''}</span>`,
       );
-      setBtn('', null);
+      setMsg('Pareado! Abrindo WhatsApp Web e marketplaces…', 'info');
+      const abertura = await abrirPlataformas(agente.porta);
+      const qtdAbriu = (abertura && abertura.abriu) ? abertura.abriu.length : 0;
+      setBtn('Abrir minhas plataformas de novo', () => abrirPlataformas(agente.porta));
       setMsg(
-        `Pronto! Volte pro <a href="/dashboard">dashboard</a> ou inicie um lote em ` +
-        `<a href="/lote">Lote</a>.`,
+        `Pronto. ${qtdAbriu} tab(s) abertas. Volte pro <a href="/dashboard">dashboard</a> ` +
+        `ou inicie um lote em <a href="/lote">Lote</a>.`,
         'sucesso',
       );
     } catch (e) {
@@ -235,11 +252,23 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
         `<strong>✓ Agente já conectado</strong> · ID ${agente.agente_id} · ` +
         `<span class="muted">versão ${agente.versao}, porta ${agente.porta}</span>`,
       );
-      setBtn('', null);
+      setBtn('Abrir minhas plataformas', async () => {
+        elBtn.disabled = true;
+        setMsg('Abrindo WhatsApp Web e marketplaces…', 'info');
+        const abertura = await abrirPlataformas(agente.porta);
+        const qtd = (abertura && abertura.abriu) ? abertura.abriu.length : 0;
+        elBtn.disabled = false;
+        setMsg(
+          qtd > 0
+            ? `${qtd} tab(s) abertas no seu browser. Bom trabalho.`
+            : `Não consegui abrir as tabs. Veja o log do agente.`,
+          qtd > 0 ? 'sucesso' : 'erro',
+        );
+      });
       setMsg(
-        `Tudo pronto. Vá pro <a href="/dashboard">dashboard</a> ou ` +
-        `<a href="/lote">Lote</a> pra começar a postar.`,
-        'sucesso',
+        `Tudo pronto. Use o botão acima pra abrir WhatsApp Web + marketplaces, ` +
+        `ou vá direto pro <a href="/dashboard">dashboard</a> / <a href="/lote">Lote</a>.`,
+        'info',
       );
       return;
     }

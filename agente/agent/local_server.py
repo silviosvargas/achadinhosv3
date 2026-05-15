@@ -22,6 +22,7 @@ import base64
 import json
 import platform
 import socket
+import webbrowser
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 import httpx
@@ -32,6 +33,13 @@ from agent.config import Config
 
 if TYPE_CHECKING:
     pass
+
+
+# URLs default quando o dashboard não passa lista explícita no /abrir-tudo
+URLS_DEFAULT = (
+    "https://web.whatsapp.com",
+    "https://www.mercadolivre.com.br",
+)
 
 
 log = structlog.get_logger(__name__)
@@ -252,11 +260,56 @@ class LocalServer:
         })
 
     async def _handle_abrir_tudo(self, request: web.Request) -> web.Response:
-        """Abre WhatsApp Web + tabs de marketplaces — implementado em fase futura."""
-        return web.json_response(
-            {"erro": "not_implemented", "msg": "Abertura de tabs vem em fase futura"},
-            status=501,
-        )
+        """Abre WhatsApp Web + tabs de marketplaces no browser default do user.
+
+        Body opcional: `{"urls": ["https://...", ...]}`. Se ausente, usa
+        `URLS_DEFAULT` (WhatsApp Web + Mercado Livre).
+
+        Usa `webbrowser.open()` (stdlib) pra abrir cada URL no browser
+        registrado como default no Windows — sem instanciar Chrome próprio.
+        Cada URL vira uma tab nova; se o browser estiver fechado, abre uma
+        janela primeiro e depois as tabs.
+
+        Retorna `{"abriu": [...], "falhou": [...]}`.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        urls = body.get("urls") if isinstance(body, dict) else None
+        if not isinstance(urls, list) or not urls:
+            urls = list(URLS_DEFAULT)
+
+        # Sanity: deixa só http(s) URLs (não abrir file:// nem javascript:)
+        urls_validas = [
+            u for u in urls
+            if isinstance(u, str) and (u.startswith("http://") or u.startswith("https://"))
+        ]
+        resultado = await self._abrir_urls(urls_validas)
+        return web.json_response({"ok": True, **resultado})
+
+    async def _abrir_urls(self, urls: list[str]) -> dict:
+        """Abre cada URL no browser default. Roda em thread pra não bloquear
+        o loop async. Retorna `{"abriu": [...], "falhou": [...]}`.
+        """
+        import asyncio
+
+        abriu: list[str] = []
+        falhou: list[dict] = []
+
+        for u in urls:
+            try:
+                ok = await asyncio.to_thread(webbrowser.open, u, 2, True)
+                if ok:
+                    abriu.append(u)
+                else:
+                    falhou.append({"url": u, "erro": "webbrowser.open returned False"})
+            except Exception as e:
+                falhou.append({"url": u, "erro": str(e)})
+
+        log.info("abrir_tudo.feito", abriu=abriu, falhou=falhou)
+        return {"abriu": abriu, "falhou": falhou}
 
     async def _handle_uri_trigger(self, request: web.Request) -> web.Response:
         """Recebe uma URI `achadinhos://` encaminhada por outra instância
@@ -311,10 +364,11 @@ class LocalServer:
 
         # Mapeamento action → handler interno
         if action in ("abrir-tudo", "abrir", "open"):
-            # TODO Fase 9.x: subprocess pra abrir Chrome com WhatsApp Web +
-            # marketplaces afiliados. Por enquanto só loga.
-            log.info("uri.acao_abrir_tudo_stub",
-                     msg="Abertura de tabs vem em fase futura")
+            # `urls` opcional via query string (separadas por vírgula)
+            urls_qs = params.get("urls", [])
+            urls = (urls_qs[0].split(",") if urls_qs and urls_qs[0]
+                    else list(URLS_DEFAULT))
+            await self._abrir_urls(urls)
         elif action in ("ping", ""):
             log.info("uri.acao_ping_ok")
         else:
