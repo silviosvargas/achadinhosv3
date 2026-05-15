@@ -19,15 +19,22 @@
 - Cloudflare na frente (proxy DESLIGADO/cinza pra Railway validar — pode reativar laranja depois)
 
 ✅ **`worker` service no Railway** — Celery worker **+ beat embedded**
-- StartCommand: `sh -c 'celery -A app.workers.celery_app worker --beat --loglevel=info'`
-- Variables: 25 vars copiadas do service `acadinhosv3` (incluindo JWT_SECRET,
-  CREDENCIAIS_SECRET_KEY, DATABASE_URL, REDIS_URL, ADMIN_*)
+- StartCommand: `celery -A app.workers.celery_app worker --beat --pool=solo --loglevel=info`
+  (definido em `railway.worker.json`, ativado via setting `railwayConfigFile`)
+- Variables: 26 vars (25 copiadas do `acadinhosv3` + `REDIS_URL_OVERRIDE=${{Redis.REDIS_URL}}`)
 - Sem healthcheck (worker não tem HTTP), sem preDeploy (api faz migrations)
-- Por que combinado: Free plan permite poucos services. Beat embedded é OK pra essa
-  escala — restart do worker reseta schedule, mas crontab "todo minuto" se recupera
-  em ≤60s.
-- Criado via: Railway CLI (`railway add --service worker`) + GraphQL API
-  (variableCollectionUpsert + serviceConnect + serviceInstanceUpdate)
+- Por que combinado: Free plan limita services. Beat embedded é OK — restart do
+  worker reseta schedule, mas crontab "todo minuto" se recupera em ≤60s.
+- Por que `--pool=solo`: Free plan tem pouca RAM; prefork c/ 48 workers (default)
+  estourava memória e matava o worker em loop.
+- Por que `REDIS_URL_OVERRIDE` em vez de `REDIS_URL`: a app só lê env var
+  `REDIS_URL_OVERRIDE` (`app/core/config.py:64`); `REDIS_URL` "puro" fica ignorado
+  e a app cai no fallback `redis://redis:6379/0` (hostname dev) que não existe em
+  prod. **TODO menor**: api tem o mesmo bug mas ainda não manifesta porque só usa
+  Redis em pub/sub de WebSocket (lazy, sem agente conectado ainda).
+- Criado via Railway CLI (`railway add --service worker`) + GraphQL API
+  (variableCollectionUpsert + serviceConnect + serviceInstanceUpdate com
+  `railwayConfigFile`)
 
 ### O que NÃO está no ar (próxima sessão)
 

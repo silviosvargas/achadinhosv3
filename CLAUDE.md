@@ -66,10 +66,20 @@ Celery 5 + JWT (bcrypt direto) + Jinja2. Cifragem reversível: Fernet
 - `acadinhosv3` (api) — **ATIVO**
 - `Postgres` add-on
 - `Redis` add-on
-- `worker` — **ATIVO** · roda Celery worker **+ beat embedded** (`celery worker --beat`),
-  porque o plano Free do Railway não dá pra ter beat como service separado.
-  Schedule de `agendar_buscas_devidas` (crontab a cada minuto) roda dentro do worker.
-  Trade-off: restart do worker reseta o estado do beat (perde no máximo 1 execução).
+- `worker` — **ATIVO** · roda Celery worker **+ beat embedded**
+  (`celery worker --beat --pool=solo`), porque o plano Free do Railway não dá
+  pra ter beat como service separado. Schedule de `agendar_buscas_devidas`
+  (crontab a cada minuto) roda dentro do worker. Notas:
+  - **`--pool=solo`** (1 processo): default Celery é prefork c/ concurrency=nproc,
+    e Railway no Free reporta 48 vCPUs → estourava RAM. Solo é leve, single-thread.
+  - **`railway.worker.json`** no repo + setting `railwayConfigFile=railway.worker.json`
+    no service worker: sobrescreve o `railway.json` padrão (sem healthcheck, sem
+    preDeploy, startCommand do celery).
+  - **`REDIS_URL_OVERRIDE=${{Redis.REDIS_URL}}`** como env var: a app só lê
+    `REDIS_URL_OVERRIDE` (não `REDIS_URL` direto). Sem isso o worker tentava
+    `redis://redis:6379/0` (hostname dev) e crashava.
+  - Trade-off: restart do worker reseta o estado do beat (perde no máximo 1
+    execução).
 
 **Projeto agente (separado):** `D:\achadinhos-agent\` — Python + Selenium +
 undetected-chromedriver. Hoje roda via `python -m agent.main`; vira `.exe`
