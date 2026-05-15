@@ -98,6 +98,25 @@ async def atualizar(
     return AgentePublico.model_validate(agente)
 
 
+@router.get("/download")
+async def download_instalador(_: Usuario = Depends(usuario_atual)) -> dict:
+    """
+    Placeholder do download do instalador `.exe` do agente (Fase 9.5).
+
+    Por enquanto retorna instruções pra modo dev. A Fase 9.5 vai gerar um
+    installer Windows nativo (Inno Setup + PyInstaller via GitHub Actions)
+    e este endpoint vai redirecionar pra última release do GitHub.
+    """
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "erro": "installer_em_construcao",
+            "msg": "Installer .exe ainda não disponível — entrega na Fase 9.5.",
+            "alternativa": "Por enquanto rode em modo dev: ver /agentes/baixar",
+        },
+    )
+
+
 @router.post("/registrar-self", response_model=AutoRegistroResponse,
              status_code=status.HTTP_201_CREATED)
 async def auto_registrar(

@@ -105,6 +105,35 @@ async def me(user: Usuario = Depends(usuario_atual)) -> Usuario:
     return user
 
 
+@router.get("/me/pair-token")
+async def pair_token(user: Usuario = Depends(usuario_atual)) -> dict:
+    """
+    Devolve um JWT de acesso pro user logado, pra ser usado pelo botão
+    "Conectar meu WhatsApp" no dashboard (Fase 9.4).
+
+    O JS do dashboard chama este endpoint, recebe `{jwt, expires_in}`, e
+    posta esse JWT pra `http://127.0.0.1:5577/pair` (servidor HTTP local do
+    agente). O agente então chama `POST /api/v1/agentes/registrar-self`
+    com esse JWT, recebe um token de agente (1 ano) e salva localmente.
+
+    Como o JWT principal do usuário vive em cookie HttpOnly (JS não acessa),
+    este endpoint server-side é a forma do JS obter um JWT pra repassar
+    pro agente local. Emite um access_token novo (mesma expiração do login —
+    `jwt_access_token_expire_minutes`).
+
+    Segurança: exige sessão ativa (cookie). Não devolve refresh_token.
+    Pra refinar no futuro: emitir token short-lived (5 min) com scope
+    limitado a `registrar-self` apenas.
+    """
+    token = criar_access_token(
+        usuario_id=user.id, org_id=user.org_id, papel=user.papel,
+    )
+    return {
+        "jwt": token,
+        "expires_in": settings.jwt_access_token_expire_minutes * 60,
+    }
+
+
 @router.post("/signup", response_model=SignupResponse,
              status_code=status.HTTP_201_CREATED)
 async def signup(
