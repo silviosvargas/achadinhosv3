@@ -1,0 +1,104 @@
+# =============================================================================
+# Build do installer do agente desktop (Fase 9.5)
+#
+# Roda em runner Windows porque precisa do PyInstaller e do Inno Setup nativos.
+# Dispara em:
+# - push de tag `agente-v*` (release real)
+# - workflow_dispatch (manual, pra testar antes da tag)
+#
+# Saída:
+# - Artifact `AchadinhosAgent-Setup-X.Y.Z.exe` anexado ao workflow run.
+# - Quando o trigger for tag `agente-v*`, também publica como GitHub Release.
+#
+# Fase futura (9.7): hook de auto-update no agente que lê a última release
+# desse workflow e troca o exe local.
+# =============================================================================
+name: release-agente
+
+on:
+  push:
+    tags:
+      - 'agente-v*'
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão pra estampar no installer (sobrescreve a do pyproject)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write    # pra criar releases
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: agente
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: 'agente/pyproject.toml'
+
+      - name: Install agent deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Build .exe via PyInstaller
+        run: pyinstaller --noconfirm --clean build.spec
+
+      - name: Verify .exe exists
+        run: |
+          if (-not (Test-Path dist\AchadinhosAgent.exe)) {
+            Write-Error "dist\AchadinhosAgent.exe não foi gerado"
+            exit 1
+          }
+          $size = (Get-Item dist\AchadinhosAgent.exe).Length / 1MB
+          Write-Host ("AchadinhosAgent.exe: {0:N1} MB" -f $size)
+
+      - name: Install Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
+        with:
+          path: agente/installer.iss
+          options: /O+
+
+      - name: Locate installer artifact
+        id: locate
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path installer -Filter "AchadinhosAgent-Setup-*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "Installer não foi gerado em agente/installer/"
+            exit 1
+          }
+          "installer_path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "installer_name=$($installer.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $size = $installer.Length / 1MB
+          Write-Host ("Installer: {0} ({1:N1} MB)" -f $installer.Name, $size)
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.locate.outputs.installer_name }}
+          path: ${{ steps.locate.outputs.installer_path }}
+          retention-days: 30
+
+      - name: Create GitHub Release (only on tag push)
+        if: startsWith(github.ref, 'refs/tags/agente-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: ${{ steps.locate.outputs.installer_path }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -122,6 +122,8 @@ python -m agent.main --sem-tray   # roda
 - **3.11.0** — Fase 9.1: build PyInstaller validado (`dist/AchadinhosAgent.exe` ~30 MB, conecta no WSS prod em 1.2s). Agente movido pra monorepo (`agente/`).
 - **3.11.1** — Fase 9.2: `agente/agent/local_server.py` (aiohttp em `127.0.0.1:5577`, fallback 5578/5579). Endpoints `/ping`, `/status` ativos; `/pair`, `/abrir-tudo` stub 501. CORS pronto pra origem prod + localhost dev. Roda em paralelo ao WS no `main.py`. Validado via Python e via `.exe` rebuilt.
 - **3.11.2** — Fase 9.3: pareamento via JWT no `/pair` real. `main.py` agora roda **sem token** (sobe local_server, aguarda `POST /pair`, daí sobe WS dinamicamente). Re-pareamento durante runtime salva config mas pede restart (token novo só ativa no próximo boot). Fluxo end-to-end **zero-CLI** validado em prod: agente sem cfg → dashboard envia JWT → agente chama `registrar-self` no servidor → token salvo → WS conectado em ~1s.
+- **3.11.3** — Fase 9.4: botão **"Conectar meu agente"** em `/agentes/baixar`. JS detecta `127.0.0.1:5577-5579/ping`, dá 3 UX (já pareado / rodando-sem-token / não-instalado). Endpoint server `GET /api/v1/auth/me/pair-token` devolve JWT pro JS (cookie HttpOnly não dá pra ler). Placeholder `GET /api/v1/agentes/download` retorna 503 (Fase 9.5 entrega real).
+- **3.11.4** — Fase 9.5: `agente/installer.iss` (Inno Setup) + `.github/workflows/release-agente.yml`. CI builda `.exe` + installer Windows nativo no runner `windows-latest`. Installer per-user (sem admin), registra `achadinhos://` URL protocol, opt-in pra auto-start no Windows e atalho no desktop. Disparado por tag `agente-v*` (cria GitHub Release) ou `workflow_dispatch` manual.
 
 ---
 

@@ -122,68 +122,39 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.4 — Botão "Conectar" no dashboard (Recommended)
+### 1️⃣ Começar Fase 9.6 — URL protocol handler no agente (Recommended)
 
-**ADR-009 detalha** a arquitetura. 9.1, 9.2, 9.3 estão feitas (agente +
-HTTP local + pareamento via JWT funcionam end-to-end). Próxima é 9.4 — fechar
-o loop com a UX no dashboard.
+**Fases 9.1–9.5 estão feitas.** A 9.6 fecha o último gap: quando o dashboard
+tenta `achadinhos://abrir-tudo` (porque agente está instalado mas parado),
+o Windows lança `AchadinhosAgent.exe --uri "achadinhos://abrir-tudo"`. O
+agente precisa interpretar esse argumento:
 
-Criar o botão "Conectar meu WhatsApp" no dashboard, com JS que orquestra:
+1. Adicionar parse de `--uri` em `agente/agent/main.py` (`parse_args()`)
+2. Antes de inicializar WS/local_server: se já há outra instância rodando
+   (detectar via tentativa de bind em 5577 — se falhar, agente já tá ativo),
+   encaminhar o comando pra HTTP local existente (`POST /127.0.0.1:5577/abrir-tudo`)
+   e sair sem subir nada.
+3. Se for o primeiro launch (porta livre), subir tudo normal e processar
+   o `--uri` localmente após o startup.
 
-1. **Detecção** — `fetch http://127.0.0.1:5577/ping`:
-   - **HTTP 200 com `agente_id != null`** → agente instalado E pareado E ativo.
-     Botão mostra "✓ Agente conectado (ID N)". Próximo passo: 9.x (abrir tabs).
-   - **HTTP 200 com `agente_id == null`** → agente instalado mas SEM token.
-     Botão dispara fluxo de pareamento (passo 2).
-   - **Fetch falha** (CORS / connection refused) → agente não tá rodando.
-     Tenta URL protocol `achadinhos://abrir` (Fase 9.6 cobre o handler).
-     Se URL protocol também falha (timeout ~3s), mostra "Baixar agente"
-     com link pra download do `.exe`.
+Detalhes:
+- O Windows entrega o URI completo (`achadinhos://abrir-tudo?foo=bar`)
+  como 2º argv. Parse com `urllib.parse` pra extrair host (`abrir-tudo`)
+  e query string.
+- Pra detectar "outra instância rodando", usar `socket.socket().bind()`
+  num try/except em vez de bater no `/ping` (mais rápido, não precisa http).
+- Single-instance pattern: salvar PID em arquivo lock OU usar o próprio
+  bind da porta como lock (mais robusto).
 
-2. **Pareamento** — `POST http://127.0.0.1:5577/pair`:
-   ```js
-   fetch('http://127.0.0.1:5577/pair', {
-     method: 'POST',
-     headers: {'Content-Type': 'application/json'},
-     credentials: 'include',  // pra mandar cookie de sessão se houver
-     body: JSON.stringify({
-       jwt: <jwt_da_sessao_atual>,
-       servidor_api: window.location.origin,
-     }),
-   })
-   ```
-   - Pegar o JWT da sessão: depende de como o dashboard guarda hoje (cookie,
-     localStorage, meta tag injetada pelo Jinja). Olhar `app/api/v1/endpoints/auth.py`
-     e os templates do dashboard pra ver. Se for HttpOnly cookie, expor via
-     endpoint server-side `GET /api/v1/auth/me/jwt` que devolve o JWT
-     atual baseado na sessão.
-   - Trata response:
-     - 200 → toast "Pareado! Agente {agente_nome} pronto." + atualizar UI.
-     - 400 → mensagem clara (provavelmente body inválido, bug no JS).
-     - 401 → "Sua sessão expirou — faça login de novo."
-     - 502 → "Servidor não respondeu. Tente em alguns segundos."
+Saída esperada: click no botão "Conectar" quando agente parado dispara
+`achadinhos://abrir-tudo` → Windows abre o `.exe` → ele detecta que tem
+algo pra processar e procede.
 
-3. **Local do botão** — onde colocar?
-   - **Banner persistente** no topo do dashboard até agente pareado (preferível).
-   - **Card no /onboarding** wizard (card 2 hoje aponta pra /agentes/baixar).
-   - **Página /agentes/baixar** já existe, então o botão pode entrar ali primeiro
-     (menor escopo) e depois replicar.
+### O QUE FALTA EXTERNO PRA FAZER (sem código)
 
-4. **Endpoint do servidor pra link de download** — Fase 9.5 vai gerar o
-   installer real. Por enquanto pode ser placeholder `/api/v1/agentes/instalador`
-   que retorna 404 com mensagem "Em construção — vem na Fase 9.5".
-
-Considerações técnicas:
-- CORS já configurado no agente pra `https://achadinhos.maisseguidores.ia.br`
-  e `http://localhost:8000` (dev). Validar que cookies/credentials viajam.
-- Pra detectar URL protocol não-instalado, padrão JS é tentar `window.location.href =
-  'achadinhos://abrir'` e setar um timer; se a página não perde foco em ~2s,
-  assume não instalado.
-- Endpoint `/api/v1/auth/me/jwt` (se precisar criar): rota autenticada que
-  devolve `{jwt: <token_da_sessao>}`. Usado SÓ pelo dashboard pra pareamento.
-
-Saída esperada: user logado clica botão → agente local (já rodando) recebe
-JWT → pareia → toast de sucesso. Fluxo zero-CLI completo end-to-end.
+- **Acionar GitHub Actions** uma vez pra validar que o pipeline funciona:
+  Actions → `release-agente` → Run workflow (manual `workflow_dispatch`).
+  Ou criar tag `agente-v3.0.0` pra gerar release oficial.
 
 ### 2️⃣ Telegram smoke test (paralelo, quando tiver bot)
 
@@ -217,6 +188,8 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | ✅ **9.1** | Build PyInstaller funcionando (`.exe` standalone) — **feita 2026-05-15** | — |
 | ✅ **9.2** | HTTP local server no agente (`/ping`, `/status` ativos) — **feita 2026-05-15** | — |
 | ✅ **9.3** | Pareamento via JWT (`/pair` real + main.py roda sem token) — **feita 2026-05-15** | — |
+| ✅ **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→download placeholder) — **feita 2026-05-15** | — |
+| ✅ **9.5** | Inno Setup installer (registry handler + auto-start) + GitHub Actions CI — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
