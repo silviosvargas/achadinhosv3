@@ -54,6 +54,25 @@
 - Comando de build: `cd agente && pyinstaller --noconfirm --clean build.spec`.
 - `dist/` e `build/` ignorados via `agente/.gitignore`.
 
+✅ **Fase 9.2 — HTTP local server no agente** (2026-05-15)
+- `agente/agent/local_server.py` — aiohttp em `127.0.0.1:5577` (fallback 5578, 5579).
+- Roda em paralelo ao WS via `asyncio.gather` no `main.py`.
+- Endpoints:
+  - `GET /ping` — detecção: `{ok, versao, agente_id, porta}`
+  - `GET /status` — estado: `{configurado, servidor_ws, ws_conectado, ultimo_erro, ...}`
+  - `POST /pair` — stub 501 (vem na 9.3)
+  - `POST /abrir-tudo` — stub 501 (vem em fase futura)
+- **CORS** habilitado pra `https://achadinhos.maisseguidores.ia.br`,
+  `http://localhost:8000`, `http://127.0.0.1:8000`. Preflight OPTIONS testado
+  e retorna 204 com todos os Access-Control-* headers.
+- **Smoke tests OK**: tanto rodando via `python -m agent.main` quanto via
+  `.exe` reconstruído (`dist/AchadinhosAgent.exe` ~30 MB, +~1MB por aiohttp).
+- Deps adicionadas em `agente/pyproject.toml`: `aiohttp>=3.10`,
+  `undetected-chromedriver>=3.5` (esta última estava faltando — só vivia no
+  venv velho).
+- **TODO menor pra 9.3+**: hookar WSClient ↔ LocalServer pra `ws_conectado`
+  refletir status real do WS no `/status` (hoje retorna `false` sempre).
+
 ✅ **Agente movido pra monorepo** (2026-05-15)
 - Source ficava em `D:\achadinhos-agent\` (pasta solta, sem git).
 - Agora em `agente/` no mesmo repo do servidor (`silviosvargas/achadinhosv3`).
@@ -89,34 +108,41 @@ cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando lig
 
 ## Checklist pra próxima sessão (ordem sugerida)
 
-### 1️⃣ Começar Fase 9.2 — HTTP local server no agente (Recommended)
+### 1️⃣ Começar Fase 9.3 — Pareamento via JWT (Recommended)
 
-**ADR-009 detalha** a arquitetura completa da Fase 9. A 9.1 foi feita
-(ver "O que está NO AR" acima). Próxima é 9.2:
+**ADR-009 detalha** a arquitetura. 9.1 e 9.2 estão feitas. Próxima é 9.3:
 
-Criar um servidor HTTP leve em `127.0.0.1:5577` dentro do agente, rodando
-em paralelo ao loop WebSocket. Endpoints:
-- `GET /ping` — devolve `{"ok": true, "agente_id": N, "versao": "x.y.z"}`.
-  Usado pelo dashboard pra detectar se agente tá ativo.
-- `POST /pair` — recebe `{"jwt": "..."}` do dashboard. Agente usa esse JWT
-  pra chamar `POST /api/v1/agentes/registrar-self` e salva token de agente.
-  Substitui o setup CLI pra usuário comum (mantém CLI pra dev).
-- `POST /abrir-tudo` — abre WhatsApp Web + marketplaces afiliados no Chrome.
-- `GET /status` — devolve estado: conectado/desconectado/ocupado, último erro, etc.
+Implementar o `POST /pair` no `agente/agent/local_server.py` (hoje stub 501).
 
-Considerações:
-- **CORS**: dashboard (`https://achadinhos.maisseguidores.ia.br`) precisa de
-  CORS habilitado pra `127.0.0.1:5577`. `Access-Control-Allow-Origin` com a
-  origem certa, suporte a preflight.
-- **Porta alternativa**: se `5577` em uso, tentar `5578`, `5579`. Expor a porta
-  ativa via header no `/ping` (ou registry/file lido pelo JS).
-- **Lib**: usar `aiohttp` ou `starlette` standalone (FastAPI puxa muita coisa).
-  Já temos `websockets` async; aiohttp é compatível com asyncio loop.
-- **Lifecycle**: subir junto com o WS client (mesma `asyncio.gather`), parar
-  junto.
+Comportamento esperado:
+1. Dashboard (user logado) faz `fetch http://127.0.0.1:5577/pair` com
+   body `{"jwt": "<JWT_DA_SESSAO>"}` e header `Content-Type: application/json`.
+2. Agente recebe o JWT e tenta:
+   - Decodificar pra validar formato (sem checar assinatura — confia que
+     veio do dashboard real, e o uso vai validar contra o servidor).
+   - Chamar `POST {servidor_api}/api/v1/agentes/registrar-self` com
+     `Authorization: Bearer <JWT>` e body `{"nome": <hostname>, "sistema_op": ...}`.
+   - Receber token de agente do servidor, salvar em `%APPDATA%\Achadinhos\config.json`.
+   - Retornar JSON com `{ok: true, agente_id, agente_nome}`.
+3. Se já tem config (`Config.carregar()` retorna não-None), opções:
+   - **Idempotente**: re-registrar e atualizar config (mais simples)
+   - **Confirmação**: retornar 409 com `{ja_pareado, agente_id_atual, agente_nome}`,
+     dashboard mostra modal "Re-parear vai criar novo agente. Quer mesmo?"
+4. Erros: 400 se body inválido, 401 se servidor rejeita JWT, 502 se servidor offline.
 
-Saída esperada: agente expõe HTTP local, dá pra fazer `curl http://127.0.0.1:5577/ping`
-e receber JSON.
+Detalhes técnicos:
+- `cfg.servidor_api` já existe no `Config` — deriva HTTPS de WSS.
+- Pra chamar HTTP do agente, usar `httpx` (já é dep) ou aiohttp client.
+- Pra atualizar `cfg` em runtime: criar novo `Config.from_args(...)` + `.salvar()`,
+  e idealmente notificar `WSClient` pra reconectar com novo token.
+- Pra mexer no setup atual (`agent/setup.py`), pode refatorar pra ele virar
+  um caller do mesmo handler `/pair` localmente (DRY). Ou deixar setup.py
+  como caminho CLI alternativo.
+
+Saída esperada: dashboard pode chamar `/pair` e cadastrar agente sem CLI.
+
+Depois da 9.3, próximo natural é **9.4** (botão no dashboard ligando os
+3 endpoints) — aí fecha o loop end-to-end pra um user comum.
 
 ### 2️⃣ Telegram smoke test (paralelo, quando tiver bot)
 
@@ -148,7 +174,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | Sub-fase | Descrição | Tempo |
 |----------|-----------|-------|
 | ✅ **9.1** | Build PyInstaller funcionando (`.exe` standalone) — **feita 2026-05-15** | — |
-| **9.2** | HTTP local server no agente (127.0.0.1:5577 — `/ping`, `/pair`, `/abrir-tudo`, `/status`) | 1 sessão |
+| ✅ **9.2** | HTTP local server no agente (`/ping`, `/status` ativos; `/pair`, `/abrir-tudo` stub 501) — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
@@ -175,7 +201,8 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 
    > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
    > e docs/decisoes.md (ADR-009 sobre Fase 9). O estado completo está lá.
-   > Próximo passo é Fase 9.2 — HTTP local server no agente (127.0.0.1:5577)."*
+   > Próximo passo é Fase 9.3 — implementar POST /pair (pareamento via JWT)
+   > em agente/agent/local_server.py."*
 
 3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
    re-explicar arquitetura, decisões ou estado.

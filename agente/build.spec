@@ -35,6 +35,7 @@ a = Analysis(
         'agent.busca_ml',
         'agent.ingest_client',
         'agent.chrome',
+        'agent.local_server',         # Fase 9.2 — HTTP local
         'agent.postador.whatsapp',
         'agent.postador.saude',
         # undetected-chromedriver tem imports dinâmicos

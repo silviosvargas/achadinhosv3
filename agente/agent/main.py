@@ -20,6 +20,7 @@ import structlog
 
 from agent.busca_ml import executar_busca
 from agent.config import Config
+from agent.local_server import LocalServer
 from agent.postador import whatsapp
 from agent.tray import Tray
 from agent.ws_client import WSClient
@@ -115,6 +116,14 @@ async def main_async(cfg: Config, *, com_tray: bool = True) -> None:
     # Configura o postador (porta + perfil do Chrome)
     whatsapp.configurar(porta=cfg.chrome_porta, perfil=cfg.chrome_perfil)
 
+    # Servidor HTTP local — ponte browser ↔ agente (Fase 9.2)
+    local_srv = LocalServer(cfg=cfg)
+    try:
+        await local_srv.iniciar()
+    except Exception as e:
+        log.warning("local_server.indisponivel", erro=str(e))
+        local_srv = None
+
     # Cliente WS
     cliente = WSClient(cfg)
 
@@ -170,6 +179,8 @@ async def main_async(cfg: Config, *, com_tray: bool = True) -> None:
 
     log.info("agent.parando")
     await cliente.parar()
+    if local_srv is not None:
+        await local_srv.parar()
     for t in pending:
         t.cancel()
 

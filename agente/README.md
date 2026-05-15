@@ -13,13 +13,16 @@
 3. Reporta sucesso/falha de volta pro servidor
 4. Reconecta automaticamente em caso de queda (backoff exponencial)
 5. Mostra status na barra de tarefas (tray icon)
+6. **HTTP local em `127.0.0.1:5577`** (Fase 9.2) — endpoints `GET /ping`,
+   `GET /status`, `POST /pair`, `POST /abrir-tudo`. Ponte com o dashboard
+   pro botão "Conectar meu WhatsApp" (ADR-009).
 
 ## Como rodar (fluxo recomendado — Fase 6)
 
 ### Setup inicial (1ª vez, ~2 minutos)
 
 ```bash
-cd D:\achadinhos-agent
+cd D:\ACHADINHOSV3\agente
 .venv\Scripts\activate
 
 # 1) Setup interativo — pede email/senha da sua conta, registra este PC

@@ -6,11 +6,13 @@ requires-python = ">=3.11"
 
 dependencies = [
     "websockets>=13.0",            # WS client
+    "aiohttp>=3.10.0",             # HTTP local server (127.0.0.1:5577) — Fase 9.2
     "httpx>=0.27.0",               # download de imagens
     "pyautogui>=0.9.54",           # mouse/teclado
     "pyperclip>=1.8.2",            # clipboard fallback
     "pillow>=10.0.0",              # manipular imagem
     "selenium>=4.15.0",            # automação Chrome
+    "undetected-chromedriver>=3.5", # bypass anti-bot (busca_ml, login_ml)
     "psutil>=5.9.0",               # monitora recursos
     "structlog>=24.0.0",           # logs
     'pywin32>=306; sys_platform == "win32"',  # win32clipboard
