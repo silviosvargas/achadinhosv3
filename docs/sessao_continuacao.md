@@ -194,6 +194,7 @@ Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
 | ✅ **9.6** | URL protocol handler (`--uri` parse + single-instance handoff + `processar_uri()`) — **feita 2026-05-15** | — |
 | ✅ **9.x** | Ação real do `/abrir-tudo` (`webbrowser.open()` no browser default) + JS no dashboard que chama após pair — **feita 2026-05-15** | — |
 | ✅ **9.8** | Badge "Agentes online" no header (GET `/api/v1/agentes/status` + polling 20s) — **feita 2026-05-15** | — |
+| ✅ **9.9** | Signup free restrito (flags em `planos`, gates server-side, UI condicional) — **feita 2026-05-15** | — |
 | **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
 | **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
 | **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
