@@ -242,7 +242,13 @@ async def main_async(
         """Recebe lista de URLs canônicas, retorna `meli.la/XXX` em lote.
 
         Body esperado: {"urls": ["https://mercadolivre.com.br/.../p/MLB...", ...]}
-        Resposta: {"mapping": {"url_canonica": "https://meli.la/XXX"}, "total": N}
+        Resposta: {"ok": True, "mapping": {"url": "meli.la/XXX"}, "total": N}
+
+        ⚠️ Retorno PRECISA ter `"ok": True` — ws_client._executar_handler
+        considera resultado sem `ok` como falha e envia `tarefa_falhou` ao
+        servidor (ao invés de `tarefa_concluida`). Bug em prod até v3.0.9
+        fazia o servidor NUNCA chamar `aplicar_mapping` porque a tarefa
+        nunca era marcada como concluída.
 
         Pré-condição: chrome_perfil_ml já fez login no painel ML afiliados
         (uma vez manual via `python -m agent.login_ml` num path adequado, ou
@@ -252,13 +258,18 @@ async def main_async(
 
         urls = msg.get("urls") or []
         if not isinstance(urls, list) or not urls:
-            return {"mapping": {}, "total": 0, "erro": "lista_vazia"}
+            return {"ok": False, "erro": "lista_vazia", "mapping": {}, "total": 0}
 
         if tray:
             tray.atualizar_status("postando")
         try:
             mapping = await gerar_links_em_lote(cfg, urls)
-            return {"mapping": mapping, "total": len(mapping)}
+            return {
+                "ok":      True,
+                "mapping": mapping,
+                "total":   len(mapping),
+                "pedidos": len(urls),
+            }
         finally:
             if tray:
                 tray.atualizar_status("online")
