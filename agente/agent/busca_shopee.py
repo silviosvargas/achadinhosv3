@@ -294,11 +294,47 @@ def _item_pra_produto_v3(
 # Loop principal de busca
 # ============================================================
 
+def _tem_captcha_no_dom(driver: uc.Chrome) -> bool:
+    """Detecta captcha renderizado como MODAL/OVERLAY na página (não como
+    redirect de URL).
+
+    A Shopee frequentemente mostra o captcha como popup do tipo "slider
+    puzzle" SEM trocar a URL (continua `/offer/product_offer`). Sem essa
+    detecção via DOM, agente seguiria sem aguardar.
+    """
+    try:
+        return bool(driver.execute_script(r"""
+            var seletores = [
+                'iframe[src*="captcha"]',
+                'iframe[src*="puzzle"]',
+                'iframe[src*="vcode"]',
+                'iframe[src*="verify"]',
+                '[class*="captcha-popup"]',
+                '[class*="verify-popup"]',
+                '[class*="shopee-puzzle"]',
+                '[class*="puzzle-wrapper"]',
+                '[class*="slide-verify"]',
+            ];
+            for (var i = 0; i < seletores.length; i++) {
+                var els = document.querySelectorAll(seletores[i]);
+                for (var j = 0; j < els.length; j++) {
+                    if (els[j].offsetParent !== null) return true;
+                }
+            }
+            return false;
+        """))
+    except Exception as e:
+        log.debug("shopee.detectar_captcha_dom_falhou", erro=str(e)[:120])
+        return False
+
+
 def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
     """Detecta se o painel pediu login ou captcha.
 
-    Retorna (motivo, instrucao_user) ou None se tudo OK.
-    `motivo` vai pros logs; `instrucao_user` é mostrada num banner no Chrome.
+    Estratégia em cascata:
+    1. URL contém keywords de login/captcha (caso fácil)
+    2. v3.8.9: DOM tem modal/iframe de captcha visível (caso comum Shopee —
+       captcha renderizado como overlay sem trocar URL)
     """
     url = (driver.current_url or "").lower()
     if "login" in url or "buyer/login" in url:
@@ -312,6 +348,12 @@ def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
             "captcha",
             "🤖 Shopee pediu CAPTCHA. Resolva o desafio nesta janela do Chrome. "
             "Quando voltar pra Ofertas de Produtos, vou continuar.",
+        )
+    if _tem_captcha_no_dom(driver):
+        return (
+            "captcha",
+            "🤖 Shopee pediu CAPTCHA (popup nesta página). Resolva nesta janela "
+            "do Chrome — vou esperar e continuar automaticamente.",
         )
     return None
 
@@ -430,75 +472,49 @@ def _aguardar_login(
 
 def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
     """
-    CAPTCHA: aguarda user resolver SEM recarregar a página.
+    CAPTCHA: aguarda 30s FIXOS sem executar nada e continua a busca.
 
-    v3.8.8: corrige bug crítico — versões anteriores recarregavam
-    `URL_PAINEL` (`driver.get`) entre as tentativas, e isso **re-disparava**
-    o captcha na Shopee (cada novo load com sessão "marcada" emite novo
-    desafio). Resultado: user resolvia, agente recarregava, captcha voltava,
-    loop infinito até esgotar tentativas.
+    v3.8.9 — pedido explícito do user (16/05/2026):
+    "AGUARDE SEM EXECUTAR NENHUM COMANDO POR 30 SEGUNDOS. DEPOIS
+    SIMPLESMENTE CONTINUE A BUSCA PELOS PRODUTOS"
 
-    Pedido explícito do user (16/05/2026):
-    "ABRIR URL_PAINEL UMA VEZ E NÃO FAZER NENHUMA OUTRA TENTATIVA APÓS
-    RESOLVER O CAPTCHA"
+    Estratégia minimalista:
+    1. Mostra banner amarelo no Chrome
+    2. Publica aviso no dashboard
+    3. `time.sleep(30)` — NADA mais. Sem polling, sem reload, sem checagem.
+    4. Remove banner + limpa aviso → retorna True
+    5. Caller continua a busca normalmente
 
-    Estratégia atual:
-    1. Mostra banner + publica aviso no dashboard
-    2. Espera 30s × até 3 tentativas, checando o ESTADO ATUAL DA PÁGINA
-       a cada ciclo (sem recarregar). Quando o user resolve o captcha, a
-       Shopee navega/limpa naturalmente — basta detectar a ausência.
-    3. Quando detectar resolução → retorna True. Caller faz `driver.get`
-       UMA VEZ se necessário e continua a busca sem revalidar.
+    Por que `time.sleep` puro funciona melhor que loops de polling/reload
+    pra captcha Shopee: cada `driver.get` em sessão marcada re-emite o
+    desafio, e polling de URL nem sempre detecta a resolução porque o
+    Shopee fecha o modal sem mudar a URL.
 
-    Returna True se resolveu, False se esgotou as 3 tentativas.
+    Returna sempre True (confia no user). Se ele não resolveu em 30s, a
+    próxima chamada de API vai falhar naturalmente.
     """
     from agent import avisos
 
-    for tentativa in range(1, CAPTCHA_MAX_TENTATIVAS + 1):
-        msg_tentativa = (
-            f"{mensagem_usuario}\n\n"
-            f"Tentativa {tentativa}/{CAPTCHA_MAX_TENTATIVAS} — "
-            f"aguardando {CAPTCHA_ESPERA_FIXA_SEG}s..."
-        )
-        log.warning("shopee.captcha_tentativa",
-                    tentativa=tentativa, max=CAPTCHA_MAX_TENTATIVAS,
-                    espera_seg=CAPTCHA_ESPERA_FIXA_SEG,
-                    url_atual=(driver.current_url or "")[:200])
+    log.warning("shopee.captcha_aguardando",
+                espera_seg=CAPTCHA_ESPERA_FIXA_SEG,
+                url_atual=(driver.current_url or "")[:200])
 
-        _mostrar_banner_chrome(driver, msg_tentativa)
-        avisos.publicar(
-            "captcha", mensagem_usuario,
-            detalhe=f"Tentativa {tentativa}/{CAPTCHA_MAX_TENTATIVAS} — "
-                    f"aguardando {CAPTCHA_ESPERA_FIXA_SEG}s pra você resolver.",
-            marketplace="shopee", ttl_seg=CAPTCHA_ESPERA_FIXA_SEG + 30,
-        )
+    _mostrar_banner_chrome(driver, mensagem_usuario)
+    avisos.publicar(
+        "captcha", mensagem_usuario,
+        detalhe=f"Aguardando {CAPTCHA_ESPERA_FIXA_SEG}s pra você resolver. "
+                "Depois sigo automaticamente.",
+        marketplace="shopee", ttl_seg=CAPTCHA_ESPERA_FIXA_SEG + 30,
+    )
 
-        # Espera fixa de 30s pra dar tempo do user resolver.
-        # NÃO recarrega a página (era o bug — recarregar re-emite captcha).
-        time.sleep(CAPTCHA_ESPERA_FIXA_SEG)
+    # Pausa pura — sem polling, sem reload. User resolve, agente segue.
+    time.sleep(CAPTCHA_ESPERA_FIXA_SEG)
 
-        # Checa o estado ATUAL (sem reload). Quando user resolve, Shopee
-        # naturalmente fecha o modal/sai da URL de captcha.
-        problema = _detectou_login_ou_captcha(driver)
-        if problema is None:
-            log.info("shopee.captcha_resolvido", tentativa=tentativa)
-            _remover_banner_chrome(driver)
-            avisos.limpar(marketplace="shopee")
-            return True
-
-        motivo_atual, _ = problema
-        # Se virou login (outro estado), abandona o loop de captcha
-        if motivo_atual == "login_expirado":
-            log.info("shopee.captcha_virou_login")
-            avisos.limpar(marketplace="shopee")
-            return False
-
-        log.info("shopee.captcha_persiste", tentativa=tentativa)
-
-    log.warning("shopee.captcha_esgotou_tentativas",
-                tentativas=CAPTCHA_MAX_TENTATIVAS)
+    _remover_banner_chrome(driver)
     avisos.limpar(marketplace="shopee")
-    return False
+    log.info("shopee.captcha_aguardou_ok",
+             espera_seg=CAPTCHA_ESPERA_FIXA_SEG)
+    return True
 
 
 def _resolver_login_ou_captcha(
