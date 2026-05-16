@@ -113,6 +113,36 @@
       </select>
     </label>
 
+    {# Comissão: faixa min..max em % #}
+    <label>
+      <span>Comissão (%)</span>
+      <div style="display:flex; gap:6px;">
+        <input type="number" name="comissao_min" step="0.5" min="0" max="100"
+               placeholder="mín"
+               value="{{ filtro_comissao_min }}"
+               style="flex:1; min-width:0;">
+        <input type="number" name="comissao_max" step="0.5" min="0" max="100"
+               placeholder="máx"
+               value="{{ filtro_comissao_max }}"
+               style="flex:1; min-width:0;">
+      </div>
+    </label>
+
+    {# Preço: faixa min..max em R$ #}
+    <label>
+      <span>Preço (R$)</span>
+      <div style="display:flex; gap:6px;">
+        <input type="number" name="preco_min" step="0.01" min="0"
+               placeholder="mín"
+               value="{{ filtro_preco_min }}"
+               style="flex:1; min-width:0;">
+        <input type="number" name="preco_max" step="0.01" min="0"
+               placeholder="máx"
+               value="{{ filtro_preco_max }}"
+               style="flex:1; min-width:0;">
+      </div>
+    </label>
+
     <label>
       <span>Limite</span>
       <select name="limite">

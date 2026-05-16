@@ -1166,10 +1166,32 @@ async def lista_produtos(
     afiliado: str | None = None,        # "meli" (tem meli.la) / "fallback" / "" / None
     busca: str | None = None,
     limite: str | None = None,          # default 100, max 500
+    # Filtros novos por faixa de comissão e preço
+    comissao_min: str | None = None,    # %, ex: "10"
+    comissao_max: str | None = None,
+    preco_min:    str | None = None,    # R$, ex: "50"
+    preco_max:    str | None = None,
 ):
     nicho_id_int = _query_int(nicho_id)
     bloqueado_int = _query_int(bloqueado)
     limite_int = max(10, min(500, _query_int(limite) or 100))
+
+    def _query_float(v: str | None) -> float | None:
+        """Parse float aceitando vírgula brasileira; vazio → None."""
+        if v is None:
+            return None
+        s = str(v).replace(",", ".").strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    comissao_min_f = _query_float(comissao_min)
+    comissao_max_f = _query_float(comissao_max)
+    preco_min_f    = _query_float(preco_min)
+    preco_max_f    = _query_float(preco_max)
 
     base = select(Produto).where(Produto.org_id == user.org_id)
 
@@ -1192,6 +1214,18 @@ async def lista_produtos(
             Produto.url_afiliado.is_not(None),
             ~Produto.url_afiliado.ilike("%meli.la/%"),
         )
+
+    # Faixa de comissão (NULL conta como excluído quando min é definido)
+    if comissao_min_f is not None:
+        base = base.where(Produto.comissao.is_not(None), Produto.comissao >= comissao_min_f)
+    if comissao_max_f is not None:
+        base = base.where(Produto.comissao.is_not(None), Produto.comissao <= comissao_max_f)
+
+    # Faixa de preço
+    if preco_min_f is not None:
+        base = base.where(Produto.preco >= preco_min_f)
+    if preco_max_f is not None:
+        base = base.where(Produto.preco <= preco_max_f)
 
     # Contagem total (sem limit) pra UI mostrar "X de N"
     from sqlalchemy import func as sa_func, select as sa_select
@@ -1228,6 +1262,8 @@ async def lista_produtos(
         nicho_id_int is not None,
         bloqueado_int is not None,
         afiliado,
+        comissao_min_f is not None, comissao_max_f is not None,
+        preco_min_f is not None,    preco_max_f is not None,
     ])
 
     return templates.TemplateResponse(
@@ -1243,6 +1279,10 @@ async def lista_produtos(
             "filtro_afiliado": afiliado or "",
             "filtro_busca": busca or "",
             "filtro_limite": limite_int,
+            "filtro_comissao_min": comissao_min_f if comissao_min_f is not None else "",
+            "filtro_comissao_max": comissao_max_f if comissao_max_f is not None else "",
+            "filtro_preco_min":    preco_min_f    if preco_min_f    is not None else "",
+            "filtro_preco_max":    preco_max_f    if preco_max_f    is not None else "",
             "filtros_ativos": filtros_ativos,
             "total_count": int(total_count or 0),
             "mostrados": len(produtos),
