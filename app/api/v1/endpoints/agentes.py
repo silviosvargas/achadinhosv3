@@ -50,23 +50,30 @@ async def criar(
     )
 
 
-# Cache de 5min pra metadata da última release do agente (versão + URL).
-# Evita bater no GitHub API a cada poll do dashboard.
+# Cache de 60s pra metadata da última release do agente (versão + URL).
+# Evita bater no GitHub API a cada poll do dashboard. Era 5min, reduzido
+# pra 60s pra detecção mais rápida de releases novas (cenário: user acabou
+# de publicar release e atualizou o agente — quer ver o badge sumir já).
 _VERSAO_CACHE: dict[str, str | float | None] = {
     "versao": None, "url_download": None, "ate": 0.0,
 }
-_VERSAO_TTL_S = 300
+_VERSAO_TTL_S = 60
 
 
 @router.get("/versao-atual")
-async def versao_agente_atual(_: Usuario = Depends(usuario_atual)) -> dict:
+async def versao_agente_atual(
+    _: Usuario = Depends(usuario_atual),
+    nocache: int = 0,
+) -> dict:
     """Retorna metadata da última release publicada do agente desktop.
 
     Usado pelo dashboard pra detectar se o agente instalado do user está
     desatualizado. Compara `versao` retornada aqui com a versão que o agente
     local reporta em `/ping` (campo `versao`).
 
-    Cache local de 5min — evita bater na API do GitHub a cada poll.
+    Cache local de 60s — evita bater na API do GitHub a cada poll. Use
+    `?nocache=1` pra forçar consulta fresh (debug).
+
     Retorna `{versao: null, url_download: null}` se não houver release ou
     se a consulta ao GitHub falhar — caller deve tratar como "ignora".
     """
@@ -74,7 +81,12 @@ async def versao_agente_atual(_: Usuario = Depends(usuario_atual)) -> dict:
     import httpx
 
     agora = time.time()
-    if _VERSAO_CACHE["versao"] and isinstance(_VERSAO_CACHE["ate"], float) and agora < _VERSAO_CACHE["ate"]:
+    if (
+        not nocache
+        and _VERSAO_CACHE["versao"]
+        and isinstance(_VERSAO_CACHE["ate"], float)
+        and agora < _VERSAO_CACHE["ate"]
+    ):
         return {
             "versao":       _VERSAO_CACHE["versao"],
             "url_download": _VERSAO_CACHE["url_download"],
