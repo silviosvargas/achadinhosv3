@@ -159,7 +159,18 @@ python -m agent.main --sem-tray   # roda
 - **3.21.1** — Hotfix Fase 17: **schema Pydantic descartava `url_afiliado` silenciosamente**. `IngestProdutoItem` em `app/schemas/produto.py` não declarava `url_afiliado` nem `comissao` → Pydantic com `extra="ignore"` (default) cortava esses campos do payload do agente, fazendo `meli.la/XXX` capturado pelo linkbuilder NUNCA chegar ao `_upsert_produto` → DB salvava sempre o fallback `?matt_word=`. Fix: declara ambos os campos + `model_config = {"extra": "allow"}` pra aceitar marcadores internos (`_personalizado_dono_id`, `_personalizado_criador_id`). **Lição registrada em armadilhas conhecidas.**
 - **3.21.2** — Fix Fase 17 robustez: 500 no `/postar` (rota chamava `rodar_lote(max_produtos=1)` esperando pegar produto específico, mas é genérico). Nova função dedicada `lote_service.postar_produto_imediato(produto_id, ...)` — carrega produto + nichos, acha 1 grupo compatível não-postado-recentemente, renderiza template + late-binding tag, enfileira via dispatcher. Retorna `{ok, erro}` explícito mostrado no redirect.
 - **3.21.3** — Fix Fase 17 scraper por_url ML (v3.2.2): produtos legacy com MLB curto (`MLB6087`, 4-7 dígitos) eram rejeitados pelo regex `\d{8,15}` → **regex permissivo** `MLB[A-Z]?-?\d{4,15}`. Página de catálogo com layout diferente do produto único tinha `dados_insuficientes preco=None tem_nome=False` → **espera explícita** com `WebDriverWait` até `h1.ui-pdp-title` OU `<script type="application/ld+json">` OU `meta og:title` (12s timeout), `_scroll_lazy_load` agressivo, **cascata de 5 seletores de preço** (PDP + catálogo + meta Schema.org), **diagnóstico em disco** (HTML+screenshot em `%APPDATA%\Achadinhos\debug\ml_porurl_*.png,html`) quando extração falha.
-- **3.22.0** — Fase 18: **Curadoria via nota no produto + precisão de dados** (v3.3.0). Reformulação total da Fase 18 anterior (descartada — usava snapshot diário). Migration 0012 adiciona em `produtos`: `nota` (0..100), `is_bestseller`, `is_em_alta`, `total_vendidos`, `comissao_fonte` (`ml_painel`/`shopee_api`/`amazon_tabela`/`estimativa`), `comissao_validada`, `preco_atualizado_em`, `comissao_atualizada_em`, `vendidos_atualizado_em` + índice `(org_id, nota DESC)`. **Captura precisa de dados nos 3 scrapers**: (a) `busca_ml.py:_achar_vendidos` parseia "+5 mil vendidos" do card; (b) `linkbuilder_ml.py:_gerar_lote_sync` agora extrai % comissão real da tabela do painel ML e propaga via `_gerar_meli_la_no_driver` → `comissao_fonte="ml_painel"`; (c) `busca_shopee.py` adiciona `historical_sold`/`sold` + marca `is_em_alta=True` + `comissao_fonte="shopee_api"` (comissão já era real); (d) `busca_amazon.py` marca `is_bestseller=True` + usa rank como proxy de vendas (`_rank_para_vendas_estimadas`). Servidor: `app/core/comissoes.py` tem ranges esperados por marketplace (ML 0.5-25%, Shopee 0.5-30%, Amazon 1-12%) usados em `validar_comissao`. `app/services/scoring.py:calcular_nota` é função pura: 30% preço × 40% comissão (zerado se !validada) × 30% vendas. Aplicada em `busca_service._upsert_produto` no ingest. `app/services/curadoria_service.py` faz `listar_top` via query direta (`SELECT FROM produtos WHERE nota >= 30 ORDER BY nota DESC LIMIT 50` + filtro NOT EXISTS postagem últimos 7d) — **sem snapshot, sem beat task, live**. Cascata de fallback Fase 11 (admin_org). Endpoints `GET /curadoria/top` + `POST /recalcular-notas` + `POST /revalidar-comissoes` (admin). UI: página `/curadoria/top` com badge ⭐ N/100 + breakdown comissão/fonte/vendas + filtro de nota mínima. Sidebar grupo Catálogo ganha **🏆 Top por nota**. Dashboard mini-grid de 6 cards.
+- **3.22.0** — Fase 18: **Curadoria via nota no produto + precisão de dados** (v3.3.0). Reformulação total da Fase 18 anterior (descartada — usava snapshot diário). Migration 0012 adiciona em `produtos`: `nota` (0..100), `is_bestseller`, `is_em_alta`, `total_vendidos`, `comissao_fonte` (`ml_painel`/`shopee_api`/`amazon_tabela`/`estimativa`), `comissao_validada`, `preco_atualizado_em`, `comissao_atualizada_em`, `vendidos_atualizado_em` + índice `(org_id, nota DESC)`. **Captura precisa de dados nos 3 scrapers**: (a) `busca_ml.py:_achar_vendidos` parseia "+5 mil vendidos" do card; (b) `linkbuilder_ml.py:_gerar_lote_sync` agora extrai % comissão real da tabela do painel ML e propaga via `_gerar_meli_la_no_driver` → `comissao_fonte="ml_painel"`; (c) `busca_shopee.py` adiciona `historical_sold`/`sold` + marca `is_em_alta=True` + `comissao_fonte="shopee_api"` (comissão já era real); (d) `busca_amazon.py` marca `is_bestseller=True` + usa rank como proxy de vendas (`_rank_para_vendas_estimadas`). Servidor: `app/core/comissoes.py` tem ranges esperados por marketplace (ML 0.5-25%, Shopee 0.5-30%, Amazon 1-12%) usados em `validar_comissao`. `app/services/scoring.py:calcular_nota` é função pura: 30% preço × 40% comissão (zerado se !validada) × 30% vendas. Aplicada em `busca_service._upsert_produto` no ingest. `app/services/curadoria_service.py` faz `listar_top` via query direta — **sem snapshot, sem beat task, live**.
+- **3.22.1** — Hotfix preço (v3.3.1): scraper ML pegava preço RISCADO (`<s>`) em vez do promocional. Fix com XPath excluindo descendentes de `<s>`. Tênis Puma de R$269,99 (com 46% OFF) era exibido como R$499,99.
+- **3.22.2** — v3.4.0/v3.4.1: captura comissão da barra preta ML DURANTE busca + lockfix `_LOCK_CHROME_ML`. Tabela detalhada `comissoes_ml_categorias.py` (50 categorias) substitui as 8 hardcoded do agente.
+- **3.22.3** — v3.4.2/v3.4.3: 3 ping-pongs do fluxo de captura. Fim da iteração: `meli.la → /social/ → clicar "Ir para produto" → barra` (decisão do user na época).
+- **3.22.4** — v3.4.4: **hierarquia de `comissao_fonte`** (`_HIERARQUIA_FONTE_COMISSAO` em busca_service.py). Servidor NÃO sobrescreve fonte alta com baixa. Bug raiz: busca rebuscando produto com captura ok salvava estimativa por cima. JS prefere `GANHOS EXTRAS` sobre `GANHOS` base. Doc nova armadilha em CLAUDE.md.
+- **3.22.5** — Edição manual de comissão (servidor-only): admin edita em `/produtos/{id}/editar` → `comissao_fonte=manual` (topo da hierarquia, imune a sobrescrita automática). UI label `✏️ manual`. Filtros novos `/produtos`: faixa de comissão (%) e faixa de preço (R$). Coluna "Comissão" na tabela `/produtos` com label da fonte.
+- **3.23.0** — Fase 19: **Buscas padrão** (v3.5.0). Lista hardcoded `app/core/buscas_padrao.py` (não tabela DB). Primeira entry: `ml_mais_vendidos_completo` itera 8 categorias × 30 candidatos, gera meli.la, abre cada um pra capturar comissão real, ordena por (preço × comissão_real), top 10. Service `buscas_padrao_service.disparar(slug, org_id)` cria Tarefa(BUSCAR_MERCADO_LIVRE) com `tipo_busca=padrao_mais_vendidos_completo`. UI: seção "⭐ Buscas padrão" no topo de `/buscas` com cards e botão "▶ Rodar agora".
+- **3.23.1** — v3.5.1: busca padrão **descarta produtos sem captura real** (não polui DB com estimativa). Mantém só os que tiveram `comissao_fonte=ml_barra_afiliados`. Candidatos aumentado de 20→30 pra compensar descartes.
+- **3.24.0** — Fase 20: **Barra de progresso em tempo real no dashboard** (v3.6.0). Migration 0013 (`tarefas.progresso_pct/mensagem/atualizado_em`). WS handler `_h_busca_progresso` persiste DB. Endpoint `GET /api/v1/tarefas/em-progresso`. Card flutuante no dashboard com polling 3s, barra animada (gradient verde, transição CSS suave). Agente helper `ws_progresso.reportar(tarefa_id, pct, msg)` chamado em checkpoints da busca padrão (0% → 12.5% → 25% → ... → 100%).
+- **3.24.1** — v3.6.1: botão **"✕ Cancelar"** na barra de progresso. Cancelamento cooperativo via flag global thread-safe (`agent/cancelamento.py`). `dispatcher.cancelar` envia comando WS pro agente + marca CANCELADA. Agente checa flag entre etapas, para gracioso.
+- **3.25.0** — Fase 20.1: captura simplificada (v3.7.0). User REVERTEU orientação anterior: agora abrir URL canônica DIRETO (não meli.la → /social/). Chrome do agente está logado como afiliado em `chrome_perfil_ml` → barra preta aparece automática. ~3x mais rápido. **Tempo decorrido** na barra (`⏱ Xmin Ys`) calculado server-side. **`tarefas.duracao_seg`** (migration 0014) preenchido em `_calcular_duracao_seg` quando tarefa termina. Mensagem final "✓ Concluído em Xmin Ys".
+- **3.25.1** — v3.7.1: **meli.la gerado em batches incrementais** durante `_processar_categoria` (a cada 10 capturados, não no fim). Check de cancelamento DENTRO do loop (entre produtos, não só entre categorias). Garantia: se cancelar no produto 4 de uma categoria, gera meli.la pros 4 antes de parar — nenhum produto perdido.
 
 ---
 
@@ -209,6 +220,8 @@ Migrations atuais:
 - 0010 busca tipo + marketplaces (Fase 16)
 - 0011 produto criado_por (Fase 17 Personalizados)
 - 0012 produtos nota + flags vendas + comissao_fonte + 3 timestamps (Fase 18)
+- 0013 tarefas progresso_pct + mensagem + atualizado_em (Fase 20 barra)
+- 0014 tarefas duracao_seg (Fase 20.1 tempo total)
 
 Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
@@ -551,20 +564,45 @@ fixos × 3 tentativas pra captcha e login. Implementação detalhada em
 
 **Leia `docs/sessao_continuacao.md` PRIMEIRO — tem tudo consolidado.**
 
-Estado atual: caminho zero-CLI 100% funcional. Agente em **v3.0.10**.
-Pipeline completo de busca ML + geração `meli.la` + ingest **validado em prod**.
+Estado atual: **agente v3.7.1 publicado**. Migration head `0014_duracao`.
+Buscas padrão com captura comissão real + barra de progresso + cancelamento
+parcial + tempo decorrido + duracao_seg salvo.
 
-Fases novas entregues nesta sessão (15-16/05/2026):
-- Fase 16.4 — busca por URL/link (v3.0.4)
-- Fase 16.5 parcial — handlers dedicados por tipo (v3.0.5)
-- CRUD produtos UI (v3.18.1)
-- Linkbuilder inline + bug raiz resolvido (v3.0.10)
+Fases novas entregues nesta sessão (16/05/2026 — dia inteiro):
+- Fase 18 — curadoria via nota + precisão de dados (v3.3.0+)
+- Fase 19 — buscas padrão (v3.5.0+)
+- Fase 20 — barra de progresso no dashboard + cancelar (v3.6.0+)
+- Fase 20.1 — captura simplificada (URL canônica direto) + tempo + duracao_seg (v3.7.0)
+- Fase 20.2 — meli.la incremental + cancelamento granular (v3.7.1)
 
 **Próximas fases na ordem:**
-1. Fase 16.5 — scraper Shopee (API interna retorna `long_link` afiliado pronto)
-2. Fase 17 — curadoria automatizada TOP 50 (Celery beat diário)
-3. Fase 18 — métricas no dashboard (clicks do `/r/{slug}`)
+1. **Validar v3.7.1 end-to-end** (user instala exe, roda busca padrão, testa cancelamento parcial)
+2. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples
+3. **Mais buscas padrão** — Shopee bestsellers, Amazon bestsellers
+4. **Magalu** (4º marketplace — segue `docs/contrato_busca_marketplace.md`)
+5. **AliExpress + TikTok** (após Magalu)
+6. **Configurar `ANTHROPIC_API_KEY`** no Railway pra ativar IA dos Personalizados
 
 Bugs anotados (não bloqueiam, vale fixar quando tiver tempo):
 - `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)
 - `ADMIN_PASSWORD` env var no Railway desatualizada (user trocou via `/conta`)
+
+---
+
+## 🤖 POLÍTICA OBRIGATÓRIA pra próximas sessões da Claude
+
+**Ao final de qualquer sessão substancial** (≥3 commits OU mudança de
+fluxo OU release de agente), SEMPRE atualizar — sem precisar o user
+pedir:
+
+1. `docs/sessao_continuacao.md` — estado atual + próximos passos
+2. CLAUDE.md "Fases entregues" — adicionar novas versões
+3. CLAUDE.md "Migrations atuais" — se tiver migration nova
+4. Lista "Próxima fase imediata" — atualizar com o que falta
+
+**Por que essa política**: o user pediu explicitamente em 2026-05-16:
+> *"informe esse pedido na documentação para sempre aplicar dessa forma
+> nas novas sessões sem a necessidade de eu explicar"*
+
+Documentado em `memory/feedback_documentar_sempre.md`. Tratar como
+hábito automático, igual `git status` antes de commit.
