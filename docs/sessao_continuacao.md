@@ -4,8 +4,8 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-16 (após v3.0.10 — BUG RAIZ do `meli.la` resolvido)
-**Versão do agente em prod:** `3.0.10` (pipeline busca + linkbuilder inline + ingest validado em prod)
+**Última atualização:** 2026-05-16 (Amazon integrada + retry login 30s×3 padronizado)
+**Versão do agente em prod:** `3.2.1` (ML + Shopee + Amazon validados; modo interativo padronizado)
 **Migration head:** `0010_busca_tipo_mkt`
 
 ## 🔥 LEITURA OBRIGATÓRIA antes de mexer em busca/linkbuilder
@@ -13,10 +13,24 @@
 1. [docs/contrato_handlers_ws.md](contrato_handlers_ws.md) — **handlers WS PRECISAM
    retornar `"ok": True/False`**. Sem isso, ws_client envia `tarefa_falhou` e
    servidor nunca chama hooks de pós-conclusão. Bug ficou escondido 5 meses.
-2. [docs/sessao_2026-05-15-16.md](sessao_2026-05-15-16.md) — sessão completa
+2. **[docs/contrato_busca_marketplace.md](contrato_busca_marketplace.md)** — guia
+   pra adicionar marketplace novo (Magalu/AliExpress/TikTok). Checklist completo
+   + template de código + padrão de modo interativo (banner Chrome + aviso
+   dashboard + retry 30s × 3 pra captcha/login). **Padrão usado em ML/Shopee/Amazon.**
+3. [docs/sessao_2026-05-15-16.md](sessao_2026-05-15-16.md) — sessão completa
    2026-05-15→16 com cada alteração funcional, em ordem cronológica + lições.
-3. Seção "Armadilhas conhecidas" no [CLAUDE.md](../CLAUDE.md) — 5 armadilhas
+4. Seção "Armadilhas conhecidas" no [CLAUDE.md](../CLAUDE.md) — 5 armadilhas
    já pisadas e como evitar.
+
+## ✅ Marketplaces operacionais (validados em prod)
+
+| Marketplace | Versão | Estratégia | Link de afiliado | Login |
+|---|---|---|---|---|
+| **🛒 Mercado Livre** | v3.0.10+ | Scraping + linkbuilder painel ML | `meli.la/XXX` | `agent.login_ml` |
+| **🛍️ Shopee** | v3.1.2+ | API interna `/api/v3/offer/product/list` | `long_link` direto API | `agent.login_shopee` |
+| **📦 Amazon** | v3.2.1 | Scraping `/gp/bestsellers/` + SiteStripe | `amzn.to/XXX` (fallback `?tag=`) | `agent.login_amazon` |
+
+Modo interativo (banner Chrome + aviso dashboard) universal nos 3 — 30s×3 retry.
 
 ---
 

@@ -150,6 +150,11 @@ python -m agent.main --sem-tray   # roda
 - **3.18.4** — Limpeza URL no momento da extração do card (igual V2). `agente/agent/busca_ml.py:_achar_url` portado 1:1 da V2 (`src/buscar/ml.py:121`): itera múltiplos seletores de anchor (`a.poly-component__title`, etc), limpa URL com `split('?')[0].split('#')[0]`, filtra `click1`/`publicidade` (patrocinados sem comissão) e URLs absurdamente curtas. Mesmo em `_extrair_produto_unico` (busca por_url). Razão: V2 sempre funcionou porque limpava na origem; V3 mantinha URL crua e tentava limpar em N camadas — cada falha gerou bug diferente. Release `agente-v3.0.8`.
 - **3.18.5** — Linkbuilder INLINE no agente (igual V2 — mesmo driver). `_gerar_meli_la_no_driver(driver, produtos, log_prefixo)` recebe driver aberto + lista de produtos, abre painel linkbuilder ML NO MESMO driver, captura `meli.la`, atualiza `produto["url_afiliado"]` in-place. Chamada antes do `finally` que fecha driver em `_varrer_lista_urls_sync` / `_varrer_termo_livre_sync` / `_varrer_produto_unico_sync`. `_upsert_produto` no servidor detecta `item.url_afiliado` como `meli.la` e salva direto (fallback `?matt_word=` só se agente não conseguiu gerar). REMOVIDO o trecho que enfileirava GERAR_LINK pós-ingest — não precisa mais. Vantagens: 1 só Chrome ML por vez, sem race de re-entrega WS, sem callback assíncrono que pode falhar. Release `agente-v3.0.9`.
 - **3.19.0** — **BUG RAIZ encontrado e corrigido** (escondido desde a Fase 15, v3.5.0). `agente/agent/main.py:handler_gerar_links_ml` retornava `{"mapping": ..., "total": ...}` SEM `"ok": True`. O `ws_client._executar_handler` decide `tarefa_concluida` vs `tarefa_falhou` por `resultado.get("ok")`. Sem `ok=True`, SEMPRE caía em `tarefa_falhou` → servidor marcava tarefa FALHOU → `dispatcher.marcar_concluida` nunca chamava `afiliado_ml_writer.aplicar_mapping` → `produtos.url_afiliado` nunca virava `meli.la`. Os 6 fixes anteriores (v3.0.4 → v3.0.9) eram melhorias reais mas nenhum atacava esse bug porque o callback nem chegava. Fix: retornar `{"ok": True, "mapping", "total", "pedidos"}`. Contrato documentado em `docs/contrato_handlers_ws.md`. **Validado em prod com regenerar meli.la — produtos receberam `https://meli.la/XXX` no `url_afiliado`.** Release `agente-v3.0.10` publicada.
+- **3.20.0** — Fase 16.5 (Shopee) + 16.6 (Amazon): **3 marketplaces ativos**.
+  - **Shopee** (v3.1.0): API interna `affiliate.shopee.com.br/api/v3/offer/product/list` retorna `long_link` afiliado pronto (sem segundo passo de linkbuilder). `agente/agent/busca_shopee.py` faz fetch via `driver.execute_script` no painel logado pra reaproveitar cookies. Lock `_LOCK_CHROME_SHOPEE`. Login manual via `agent.login_shopee`. 6 marketplaces na UI agora.
+  - **Modo interativo Shopee** (v3.1.1, 3.1.2): banner amarelo no Chrome + aviso no dashboard via WS (`agent.avisos.publicar`) quando detecta captcha/login expirado. Endpoint `GET /api/v1/agentes/avisos` + polling JS no `base.html` (8s) mostra toast persistente. Captcha = 30s fixos × 3 tentativas; login = polling 5min.
+  - **Amazon** (v3.2.0): `agente/agent/busca_amazon.py` scraping de 10 categorias `/gp/bestsellers/` + SiteStripe (`#amzn-ss-get-link-button`) gera `amzn.to/XXX`. Cards `div.p13n-sc-uncoverable-faceout`, ASIN extraído de id ou regex `/dp/([A-Z0-9]{10})`. Comissões estimadas por categoria (3-10%). Sem login Associates → cai em fallback `?tag=<sua_tag>` no servidor.
+- **3.20.1** — **Padronização final do retry interativo** (v3.2.1): unifica estratégia pra captcha + login_expirado em TODOS os marketplaces. 30s fixos × 3 tentativas (substitui polling 5min do login). `_verificar_login_amazon` acessa `associados.amazon.com.br/home` (página protegida) ANTES de iterar categorias — se redirect pra signin, dispara retry. Após desbloqueio aparente, verificação dupla pra confirmar login real (evita falso positivo de redirect intermediário). Aviso no dashboard agora inclui texto "Após resolver, vou re-testar automaticamente". **Padrão documentado em `docs/contrato_busca_marketplace.md` — usar nos próximos marketplaces (Magalu, AliExpress, TikTok).**
 
 ---
 
@@ -245,6 +250,33 @@ execução → conflito de Chrome ML (`SessionNotCreatedException`).
 `agente/agent/linkbuilder_ml.py:_LOCK_CHROME_ML` (threading.Lock) garante
 1 driver ML por vez no agente. Sem ele, duas GERAR_LINK chegando próximas
 crashavam o 2º Chrome porque o perfil estava bloqueado.
+
+### Adicionar marketplace novo? Use o contrato
+
+`docs/contrato_busca_marketplace.md` tem o **checklist completo** + template
+de código pra criar `busca_<marketplace>.py` seguindo o padrão dos 3 já
+funcionando (ML, Shopee, Amazon). Padronização do modo interativo (30s × 3
+retry), formato de produto retornado, integração no orquestrador, UI, build.
+
+Não invente padrão novo — copia `busca_amazon.py` (template mais robusto)
+e adapta. Pra novo tipo de busca dentro de um marketplace existente (ex:
+"melhor avaliação"), adiciona handler dentro do módulo do marketplace
+alvo (não cria módulo separado).
+
+---
+
+## Marketplaces ativos
+
+| Marketplace | Estratégia | Login | Link de afiliado | Status |
+|---|---|---|---|---|
+| **🛒 Mercado Livre** | Scraping listagem/produto + linkbuilder painel ML afiliados | `python -m agent.login_ml` | `meli.la/XXX` via scraping inline | ✅ Prod |
+| **🛍️ Shopee** | API interna `affiliate.shopee.com.br/api/v3/...` | `python -m agent.login_shopee` | `long_link` direto da API | ✅ Prod |
+| **📦 Amazon** | Scraping `/gp/bestsellers/<cat>` + SiteStripe (`#amzn-ss-get-link-button`) | `python -m agent.login_amazon` | `amzn.to/XXX` via SiteStripe, fallback `?tag=` | ✅ Prod |
+| 🌟 Magalu / 🌏 AliExpress / 🎵 TikTok | A implementar | — | — | 🚧 |
+
+**Modo interativo** (banner Chrome + aviso dashboard) é universal — 30s
+fixos × 3 tentativas pra captcha e login. Implementação detalhada em
+`docs/contrato_busca_marketplace.md`.
 
 ---
 
