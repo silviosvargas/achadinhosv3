@@ -264,14 +264,136 @@ def _item_pra_produto_v3(
 # Loop principal de busca
 # ============================================================
 
-def _detectou_login_ou_captcha(driver: uc.Chrome) -> str | None:
-    """Detecta se o painel pediu login ou captcha. Retorna msg de erro ou None."""
+def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
+    """Detecta se o painel pediu login ou captcha.
+
+    Retorna (motivo, instrucao_user) ou None se tudo OK.
+    `motivo` vai pros logs; `instrucao_user` é mostrada num banner no Chrome.
+    """
     url = (driver.current_url or "").lower()
     if "login" in url or "buyer/login" in url:
-        return f"Shopee exige login (redirecionou pra {url[:120]}). Rode `python -m agent.login_shopee` uma vez."
-    if "captcha" in url or "verify" in url:
-        return f"Shopee disparou captcha em {url[:120]}. Abra o Chrome e resolva manualmente."
+        return (
+            "login_expirado",
+            "🔐 Faça login na sua conta Shopee Afiliados, depois volte para a página "
+            "Ofertas de Produtos. Vou esperar você terminar.",
+        )
+    if "captcha" in url or "verify" in url or "vcode" in url:
+        return (
+            "captcha",
+            "🤖 Shopee pediu CAPTCHA. Resolva o desafio nesta janela do Chrome. "
+            "Quando voltar pra Ofertas de Produtos, vou continuar.",
+        )
     return None
+
+
+# JS que injeta um banner amarelo fixo no topo da página com instruções.
+# Mantém em strings escapadas pra passar pro driver.execute_script.
+_BANNER_AVISO_JS = """
+(function(mensagem) {
+  // Remove banner anterior se existir
+  var antigo = document.getElementById('achadinhos-aviso');
+  if (antigo) antigo.remove();
+  // Cria div fixo no topo
+  var d = document.createElement('div');
+  d.id = 'achadinhos-aviso';
+  d.style.cssText = (
+    'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
+    'background:linear-gradient(90deg,#f59e0b,#fbbf24);' +
+    'color:#1f2937;padding:14px 20px;' +
+    'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+    'font-size:15px;font-weight:600;text-align:center;' +
+    'box-shadow:0 4px 16px rgba(0,0,0,0.25);' +
+    'border-bottom:2px solid #d97706;'
+  );
+  d.textContent = mensagem;
+  // Aguarda body existir (algumas páginas de login têm body só depois do JS)
+  function attach() {
+    if (document.body) {
+      document.body.appendChild(d);
+    } else {
+      setTimeout(attach, 100);
+    }
+  }
+  attach();
+})(arguments[0]);
+"""
+
+
+def _aguardar_resolucao_manual(
+    driver: uc.Chrome,
+    *,
+    motivo: str,
+    mensagem_usuario: str,
+    timeout_seg: int = 300,
+) -> bool:
+    """
+    Mostra banner no Chrome com instruções e fica em polling até o user
+    resolver (URL voltar pra painel afiliados) ou estourar `timeout_seg`.
+
+    Igual V2 (`src/buscar/shopee.py:344`) — que fazia `input("ENTER")`.
+    Aqui não temos stdin (agente roda em background), então pollamos a URL.
+
+    Retorna True se user resolveu dentro do timeout, False senão.
+    """
+    log.warning(
+        "shopee.precisa_intervencao_manual",
+        motivo=motivo, timeout_seg=timeout_seg,
+        url_atual=(driver.current_url or "")[:200],
+    )
+
+    # 1. Injeta banner amarelo no Chrome com instruções
+    try:
+        driver.execute_script(_BANNER_AVISO_JS, mensagem_usuario)
+    except Exception as e:
+        log.debug("shopee.banner_falhou", erro=str(e)[:120])
+
+    # 2. Tenta trazer a janela pro primeiro plano (best-effort)
+    try:
+        driver.execute_script("window.focus();")
+        driver.maximize_window()
+    except Exception:
+        pass
+
+    # 3. Polling de 5s até URL voltar pra painel ou timeout
+    inicio = time.time()
+    while time.time() - inicio < timeout_seg:
+        time.sleep(5)
+        try:
+            url_atual = (driver.current_url or "").lower()
+        except Exception:
+            # Provavelmente user fechou a janela
+            log.warning("shopee.janela_fechada_durante_espera")
+            return False
+
+        # Resolveu se voltou pra painel afiliados ou saiu de login/captcha
+        if "/offer/product_offer" in url_atual or "/offer/" in url_atual:
+            log.info("shopee.user_resolveu",
+                     duracao=int(time.time() - inicio), url=url_atual[:120])
+            # Remove banner — não polui screenshots posteriores
+            try:
+                driver.execute_script(
+                    "var b=document.getElementById('achadinhos-aviso');"
+                    "if(b)b.remove();"
+                )
+            except Exception:
+                pass
+            time.sleep(2)   # estabiliza após user clicar
+            return True
+
+        # Se URL deixou de ter login/captcha, recarrega o painel
+        if not any(
+            s in url_atual for s in ("login", "captcha", "verify", "vcode")
+        ):
+            log.info("shopee.fora_de_login_recarregando", url=url_atual[:120])
+            try:
+                driver.get(URL_PAINEL)
+                time.sleep(3)
+            except Exception:
+                pass
+            return True
+
+    log.warning("shopee.timeout_aguardando_user", timeout_seg=timeout_seg)
+    return False
 
 
 def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
@@ -287,9 +409,24 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
             # 1. Carrega painel (autentica via cookies persistidos)
             driver.get(URL_PAINEL)
             time.sleep(4)
-            erro = _detectou_login_ou_captcha(driver)
-            if erro:
-                raise RuntimeError(erro)
+            problema = _detectou_login_ou_captcha(driver)
+            if problema:
+                motivo, instrucao = problema
+                resolveu = _aguardar_resolucao_manual(
+                    driver,
+                    motivo=motivo,
+                    mensagem_usuario=instrucao,
+                    timeout_seg=300,   # 5 minutos pra user logar/resolver captcha
+                )
+                if not resolveu:
+                    raise RuntimeError(
+                        f"Shopee {motivo} — usuário não resolveu em 5 minutos. "
+                        "Refaça login: `python -m agent.login_shopee`."
+                    )
+                # Após resolver, garante que estamos no painel certo
+                if "/offer/product_offer" not in (driver.current_url or "").lower():
+                    driver.get(URL_PAINEL)
+                    time.sleep(3)
 
             # 2. Itera abas + páginas
             por_aba = max(5, max_produtos // len(ABAS_BUSCA) + 2)
@@ -317,13 +454,39 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                         log.warning("shopee.api_status",
                                     aba=nome_aba, pag=pagina + 1,
                                     status=status, body=str(result.get("body"))[:200])
-                        # Status 0 = network error / sem cookies; 401 = não autenticado
+                        # Status 0 = network error / sem cookies; 401/403 = sessão
+                        # expirou no meio da busca. Tenta reautenticar abrindo o
+                        # painel e aguardando user resolver.
                         if status in (0, 401, 403):
-                            raise RuntimeError(
-                                f"Shopee API retornou status={status} — "
-                                "provavelmente sessão expirou. Rode `python -m agent.login_shopee`."
+                            driver.get(URL_PAINEL)
+                            time.sleep(3)
+                            problema = _detectou_login_ou_captcha(driver)
+                            if problema:
+                                motivo_re, instrucao_re = problema
+                                if not _aguardar_resolucao_manual(
+                                    driver,
+                                    motivo=f"meio_busca_{motivo_re}",
+                                    mensagem_usuario=instrucao_re,
+                                    timeout_seg=300,
+                                ):
+                                    raise RuntimeError(
+                                        f"Shopee sessão expirou no meio (HTTP {status}) e "
+                                        "user não resolveu em 5 minutos."
+                                    )
+                            # Retry: refaz a chamada da mesma página
+                            result = _chamar_api(
+                                driver,
+                                list_type=aba["list_type"],
+                                page_offset=offset,
+                                page_limit=PRODUTOS_POR_PAGINA,
+                                cat=aba.get("cat"),
                             )
-                        break
+                            if result.get("status") != 200:
+                                log.warning("shopee.retry_falhou",
+                                            status=result.get("status"))
+                                break
+                        else:
+                            break
 
                     try:
                         data = json.loads(result["body"])
