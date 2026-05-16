@@ -179,12 +179,17 @@ def _extrair_item_id(url: str) -> str | None:
     """
     URLs do ML carregam o MLB no slug:
       https://produto.mercadolivre.com.br/MLB-1234567890-titulo-...
-      https://www.mercadolivre.com.br/.../p/MLB12345  (catalog)
-    Aceita ambas; normaliza pra 'MLBxxxxxxxxxx'.
+      https://www.mercadolivre.com.br/.../p/MLB12345     (catalog comum)
+      https://www.mercadolivre.com.br/.../p/MLB6087      (catalog legacy curto)
+      https://www.mercadolivre.com.br/.../up/MLBU338…    (unified catalog)
+    Aceita todas as variantes; normaliza pra 'MLB<dígitos>' ou 'MLBU<dígitos>'.
+
+    Regex permissivo: `MLB[A-Z]?-?\d{4,15}` — aceita 4-15 dígitos pra cobrir
+    produtos legacy do ML (que têm IDs curtos de 4-7 dígitos).
     """
     if not url:
         return None
-    m = re.search(r"(MLB-?\d{8,15})", url)
+    m = re.search(r"(MLB[A-Z]?-?\d{4,15})", url)
     if not m:
         return None
     return m.group(1).replace("-", "")
@@ -733,35 +738,71 @@ def _extrair_produto_unico(driver, url: str) -> dict[str, Any] | None:
     if not foto:
         foto = _meta_property(driver, "og:image")
 
-    # Fallback preço via CSS — pega a primeira instância de preço atual
-    # (`.ui-pdp-price__second-line` cobre tanto preço único quanto promocional).
-    if preco is None:
-        try:
-            preco_box = driver.find_element(
-                By.CSS_SELECTOR,
-                ".ui-pdp-price__second-line .andes-money-amount, "
-                ".andes-money-amount[aria-hidden='true']",
-            )
-            inteiro_el = preco_box.find_element(
-                By.CSS_SELECTOR, ".andes-money-amount__fraction",
-            )
-            try:
-                cents_el = preco_box.find_element(
-                    By.CSS_SELECTOR, ".andes-money-amount__cents",
-                )
-            except NoSuchElementException:
-                cents_el = None
-            preco = _parse_preco(inteiro_el, cents_el)
-        except NoSuchElementException:
-            pass
-
     # Fallback nome via h1
     if not nome:
-        try:
-            h1 = driver.find_element(By.CSS_SELECTOR, "h1.ui-pdp-title, h1")
-            nome = (h1.text or "").strip() or None
-        except NoSuchElementException:
-            pass
+        for sel in ("h1.ui-pdp-title", "h1", "[itemprop='name']"):
+            try:
+                h1 = driver.find_element(By.CSS_SELECTOR, sel)
+                t = (h1.text or h1.get_attribute("textContent") or "").strip()
+                if t:
+                    nome = t
+                    break
+            except NoSuchElementException:
+                continue
+
+    # Fallback preço via CSS — múltiplas estratégias em cascata.
+    # Catalog ML usa estrutura diferente de produto único; cobrimos várias.
+    if preco is None:
+        seletores_preco = [
+            # PDP padrão (produto único)
+            ".ui-pdp-price__second-line .andes-money-amount[aria-hidden='true']",
+            ".ui-pdp-price__second-line .andes-money-amount",
+            # Catalog (página /p/MLB)
+            ".andes-money-amount.andes-money-amount--cents-superscript[aria-hidden='true']",
+            ".andes-money-amount[aria-hidden='true']",
+            # Último recurso
+            ".andes-money-amount",
+        ]
+        for sel in seletores_preco:
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, sel)
+            except Exception:
+                continue
+            for preco_box in els:
+                try:
+                    inteiro_el = preco_box.find_element(
+                        By.CSS_SELECTOR, ".andes-money-amount__fraction",
+                    )
+                except NoSuchElementException:
+                    continue
+                try:
+                    cents_el = preco_box.find_element(
+                        By.CSS_SELECTOR, ".andes-money-amount__cents",
+                    )
+                except NoSuchElementException:
+                    cents_el = None
+                preco_candidato = _parse_preco(inteiro_el, cents_el)
+                if preco_candidato and preco_candidato > 0:
+                    preco = preco_candidato
+                    break
+            if preco is not None:
+                break
+
+    # Último recurso: meta tag de preço (Schema.org / OG)
+    if preco is None:
+        for prop in ("product:price:amount", "og:price:amount", "price"):
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, f"meta[property='{prop}'], meta[itemprop='{prop}']")
+                v = (el.get_attribute("content") or "").strip()
+                if v:
+                    try:
+                        preco = float(v.replace(",", "."))
+                        if preco > 0:
+                            break
+                    except ValueError:
+                        pass
+            except NoSuchElementException:
+                continue
 
     # Categoria via JSON-LD BreadcrumbList ou breadcrumb CSS — já existe util
     categoria = _categoria_de_jsonld(driver) or _categoria_de_css(driver)
@@ -791,42 +832,69 @@ def _varrer_produto_unico_sync(
     *,
     url: str,
 ) -> list[dict[str, Any]]:
-    """Abre 1 URL de produto ML e extrai dados — retorna lista com 0 ou 1 item."""
+    """Abre 1 URL de produto ML e extrai dados — retorna lista com 0 ou 1 item.
+
+    Estratégia robusta de carregamento:
+    1. driver.get(url)
+    2. Aguarda h1.ui-pdp-title (sinal de página de detalhe pronta) OU
+       script JSON-LD (catalog) — timeout 12s.
+    3. Detecta redirect pra login/captcha.
+    4. Scroll progressivo pra disparar lazy load (foto + preços).
+    5. Extrai cascata JSON-LD → OG → CSS.
+    6. Se falhar, salva HTML+screenshot debug pro user mandar.
+    """
     if not url.lower().startswith(("http://", "https://")):
-        log.warning("ml.por_url.url_invalida", url=url[:120])
+        log.warning("ml.por_url.url_invalida", url=url[:200])
         return []
 
     driver = _criar_driver_ml(cfg)
     try:
-        log.info("ml.por_url.abrindo", url=url[:120])
+        log.info("ml.por_url.abrindo", url=url[:200])
         driver.get(url)
+
+        # Espera carregamento: title de produto OU JSON-LD aparecer.
+        # Tempo maior pra catalogo pesado (até 12s).
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            WebDriverWait(driver, 12).until(
+                lambda d: (
+                    d.find_elements(By.CSS_SELECTOR, "h1.ui-pdp-title")
+                    or d.find_elements(By.CSS_SELECTOR, "script[type='application/ld+json']")
+                    or d.find_elements(By.CSS_SELECTOR, "meta[property='og:title']")
+                )
             )
         except TimeoutException:
-            log.warning("ml.por_url.timeout_body")
-            return []
+            log.warning("ml.por_url.timeout_carregamento",
+                        url_final=(driver.current_url or "")[:200],
+                        titulo=(driver.title or "")[:120])
 
-        # Detecta bloqueio/login do ML — mesma lógica de _varrer_sync
-        url_final = driver.current_url.lower()
-        if any(s in url_final for s in ("/gz/account-verification", "/login", "/jms/mlb/lgz")):
+        # Detecta bloqueio/login do ML
+        if _bloqueado_por_login(driver.current_url):
             raise RuntimeError(
-                f"ML exige login (redirecionou pra {url_final[:120]}). "
+                f"ML exige login (redirecionou pra {driver.current_url[:120]}). "
                 "Rode UMA vez: python -m agent.login_ml — loga manualmente, "
                 "fecha o Chrome, e tenta de novo."
             )
 
-        # Pequeno scroll pra deixar lazy load de imagens disparar antes do og:image
-        try:
-            driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(0.8)
-            driver.execute_script("window.scrollTo(0, 0);")
-        except Exception:
-            pass
+        # Scroll progressivo pra forçar lazy load de imagens + preços
+        _scroll_lazy_load(driver)
 
         produto = _extrair_produto_unico(driver, driver.current_url)
         if not produto:
+            # Diagnóstico: salva HTML + screenshot pra inspeção
+            try:
+                from pathlib import Path
+                debug_dir = Path(cfg.config_dir) / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                stamp = int(time.time())
+                driver.save_screenshot(str(debug_dir / f"ml_porurl_{stamp}.png"))
+                (debug_dir / f"ml_porurl_{stamp}.html").write_text(
+                    driver.page_source[:300_000], encoding="utf-8", errors="ignore",
+                )
+                log.warning("ml.por_url.falhou_diagnostico_salvo",
+                            url=(driver.current_url or "")[:200],
+                            debug_dir=str(debug_dir))
+            except Exception:
+                pass
             return []
         log.info("ml.por_url.ok", item_id=produto["item_id"], nome=produto["nome"][:60])
 
