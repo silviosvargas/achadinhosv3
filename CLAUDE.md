@@ -141,6 +141,7 @@ python -m agent.main --sem-tray   # roda
 - **3.16.0** — Fase 16.1+16.2: UI nova `/buscas/nova` com dropdown "tipo de busca" (`termo_livre`/`por_url`/`mais_vendidos`/`melhor_comissao`/`em_alta`) + checkbox 6 marketplaces. Schema (migration 0010) adiciona `tipo` + `marketplaces` (JSON array) em `buscas_ml`. Backend route POST aceita `tipo` + `marketplaces[]` e converte pra entrada compatível.
 - **3.16.3** — Fase 16.3: scraper "mais vendidos" ML (8 categorias hardcoded da V2). `agente/agent/busca_ml.py` ganha `_varrer_mais_vendidos_sync` que itera Roupas/Esportes/Beleza/Bebês/Casa/Eletrônicos/Informática/Ferramentas. Display names casam com `nicho_categoria_ml` (auto-classificação funciona). Roteamento em `executar_busca` por `msg.tipo_busca`. Release `agente-v3.0.2` publicada (`AchadinhosAgent-Setup-3.0.2.exe` 31.8 MB).
 - **3.16.4** — Hotfix conflito de chave `tipo` no payload WS: `dispatcher._tentar_entrega` monta msg como `{"tipo": comando_ws, **tarefa.payload}` e o spread sobrescrevia o `tipo` do nível superior (comando WS) com o `tipo` da busca (definido na Fase 16.1). Agente recebia `tipo=mais_vendidos` em vez de `tipo=iniciar_busca_ml`, abortava com `ws.tipo_sem_handler`. Fix: renomeia campo no payload pra `tipo_busca` (agente já lê assim em `executar_busca`). Release `agente-v3.0.3` publicada. **Busca "Mais vendidos" validada em prod pelo user.**
+- **3.17.0** — Fase 16.4: busca personalizada por URL/link. Nova `_varrer_produto_unico_sync` em `agente/agent/busca_ml.py` que abre 1 URL de produto ML e extrai dados (nome, preço, foto, categoria) via cascata JSON-LD Product → OpenGraph meta → CSS. Roteamento em `executar_busca` quando `tipo_busca == 'por_url'`. Pipeline GERAR_LINK (Fase 15) gera `meli.la` automaticamente após ingest. Dono do produto segue regra de afiliado: afiliado = privado, admin/usuario = público da org. Bug fix oportuno: `app/workers/scheduler_tasks.py` agora inclui `tipo_busca` + `marketplaces` no payload das buscas agendadas (faltava — Celery beat estava degradando qualquer busca agendada pra `termo_livre`). Release `agente-v3.0.4` publicada.
 
 ---
 
@@ -195,10 +196,9 @@ Estado atual: caminho zero-CLI 100% funcional. Agente em v3.0.2.
 Buscas multi-tipo com scraper "mais vendidos" ML (8 categorias) já entregue.
 
 **Próximas fases na ordem:**
-1. Fase 16.4 — busca por URL/link (1 produto específico, gera afiliado na hora)
-2. Fase 16.5 — scraper Shopee (API interna retorna `long_link` afiliado pronto)
-3. Fase 17 — curadoria automatizada TOP 50 (Celery beat diário)
-4. Fase 18 — métricas no dashboard (clicks do `/r/{slug}`)
+1. Fase 16.5 — scraper Shopee (API interna retorna `long_link` afiliado pronto)
+2. Fase 17 — curadoria automatizada TOP 50 (Celery beat diário)
+3. Fase 18 — métricas no dashboard (clicks do `/r/{slug}`)
 
 Bugs anotados:
 - `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)

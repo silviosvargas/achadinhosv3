@@ -4,8 +4,8 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-16 (após hotfix `tipo_busca` + release v3.0.3)
-**Versão do agente em prod:** `3.0.3` (publicada como GitHub Release — **busca "Mais vendidos" validada em prod**)
+**Última atualização:** 2026-05-15 (após Fase 16.4 — busca por URL/link)
+**Versão do agente em prod:** `3.0.4` (após Fase 16.4 — busca por URL; release v3.0.3 ainda é a última publicada como GitHub Release validada)
 **Migration head:** `0010_busca_tipo_mkt`
 
 ---
@@ -51,6 +51,7 @@ confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
 | Linkbuilder ML real | OK | Scraping painel ML afiliados gera `meli.la` |
 | Buscas multi-tipo UI | OK | `/buscas/nova` com dropdown tipo + checkbox marketplaces |
 | Scraper "mais vendidos" ML | OK | 8 categorias hardcoded da V2 |
+| Busca por URL/link (Fase 16.4) | OK | 1 produto ML extraído via cascata JSON-LD → OG → CSS |
 | Lote com late binding tag | OK | Recalcula URL na hora da postagem |
 | Badge "agentes online" | OK | Polling 20s, cookie-aware |
 
@@ -90,8 +91,9 @@ confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
 | 28 | [a8f835a](https://github.com/silviosvargas/achadinhosv3/commit/a8f835a) | release | Bump v3.0.2 + tag |
 | 29 | [ba876e5](https://github.com/silviosvargas/achadinhosv3/commit/ba876e5) | docs | Consolidação completa pra próxima sessão |
 | 30 | [03f63d1](https://github.com/silviosvargas/achadinhosv3/commit/03f63d1) | hotfix | Conflito chave `tipo` no payload WS → renomeia pra `tipo_busca` + bump v3.0.3 |
+| 31 | _pendente_ | 16.4 | Fase 16.4 — busca personalizada por URL/link (extrator de produto único ML) + fix scheduler tipo_busca/marketplaces + bump v3.0.4 |
 
-**Total:** 30 commits + 4 releases (v3.0.0, v3.0.1, v3.0.2, v3.0.3).
+**Total:** 31 commits + 4 releases publicadas (v3.0.0, v3.0.1, v3.0.2, v3.0.3). v3.0.4 entra com Fase 16.4.
 **Busca "Mais vendidos" ML validada em prod com a v3.0.3.**
 
 ---
@@ -259,11 +261,16 @@ servidor:
 
 ## 🎯 Próximas fases planejadas (em ordem)
 
-### Fase 16.4 — Busca personalizada (`por_url`)
-**O que falta:** quando user cola URL de produto específico, agente abre, extrai dados (nome, preço, foto, categoria), gera afiliado ML, salva como produto privado.
-- V2 tem: `src/buscar_palavra/extrator_link.py` (com detecção de plataforma por domínio)
-- Local: criar função `_buscar_por_url_sync(driver, url)` em `agente/agent/busca_ml.py`
-- Rotear em `executar_busca` quando `tipo == 'por_url'`
+### ~~Fase 16.4 — Busca personalizada (`por_url`)~~ ✅ ENTREGUE (v3.0.4)
+Implementado em `agente/agent/busca_ml.py`:
+- `_varrer_produto_unico_sync(cfg, url)` abre URL ML, extrai dados via cascata
+  JSON-LD Product → OpenGraph meta tags → CSS direto
+- Roteamento em `executar_busca` quando `tipo_busca == 'por_url'`
+- Pipeline GERAR_LINK (Fase 15) gera `meli.la` automaticamente após ingest
+- Dono do produto segue regra padrão: afiliado=privado, admin/usuario=público
+- **Bug fix oportuno** no `app/workers/scheduler_tasks.py`: agora inclui
+  `tipo_busca` + `marketplaces` no payload das buscas AGENDADAS (faltava —
+  Celery beat estava degradando qualquer busca agendada pra `termo_livre`)
 
 ### Fase 16.5+ — Scrapers outros marketplaces
 - **Shopee** (mais fácil): API interna `affiliate.shopee.com.br/api/v3/offer/product/list` retorna `long_link` afiliado pronto. Porta de V2 `src/buscar/shopee.py`.

@@ -45,7 +45,7 @@ URLS_DEFAULT = (
 log = structlog.get_logger(__name__)
 
 
-VERSAO_AGENTE = "3.0.3"
+VERSAO_AGENTE = "3.0.4"
 
 # Origens permitidas pelo CORS. Adicionar aqui qualquer host que vá
 # falar com o agente local pelo browser.

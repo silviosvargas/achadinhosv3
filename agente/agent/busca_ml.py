@@ -462,6 +462,188 @@ CATEGORIAS_MAIS_VENDIDOS = [
 ]
 
 
+# ============================================================
+# Busca por URL — 1 produto específico (Fase 16.4)
+# ============================================================
+
+def _texto_ld_product(driver) -> dict[str, Any] | None:
+    """JSON-LD Product schema (ML mantém pra SEO). Mais confiável que CSS."""
+    import json
+    try:
+        scripts = driver.find_elements(
+            By.CSS_SELECTOR, "script[type='application/ld+json']"
+        )
+        for s in scripts:
+            raw = s.get_attribute("textContent") or s.get_attribute("innerText") or ""
+            if '"Product"' not in raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            blocos = data if isinstance(data, list) else [data]
+            for b in blocos:
+                if b.get("@type") == "Product":
+                    return b
+    except Exception:
+        pass
+    return None
+
+
+def _meta_property(driver, prop: str) -> str | None:
+    """Lê <meta property='og:...' content='...'>."""
+    try:
+        el = driver.find_element(By.CSS_SELECTOR, f"meta[property='{prop}']")
+        v = el.get_attribute("content")
+        return v.strip() if v else None
+    except NoSuchElementException:
+        return None
+
+
+def _extrair_produto_unico(driver, url: str) -> dict[str, Any] | None:
+    """
+    Extrai 1 produto de uma página de detalhe do ML.
+    Cascata: JSON-LD Product → OpenGraph meta → CSS direto.
+    Retorna None se URL não é página de produto válida.
+    """
+    item_id = _extrair_item_id(url)
+    if not item_id:
+        log.warning("ml.por_url.sem_mlb", url=url[:120])
+        return None
+
+    nome: str | None = None
+    preco: float | None = None
+    foto: str | None = None
+    categoria: str | None = None
+
+    ld = _texto_ld_product(driver)
+    if ld:
+        nome = (ld.get("name") or "").strip() or None
+        img = ld.get("image")
+        if isinstance(img, list):
+            foto = img[0] if img else None
+        elif isinstance(img, str):
+            foto = img
+        offers = ld.get("offers") or {}
+        if isinstance(offers, list):
+            offers = offers[0] if offers else {}
+        try:
+            p = offers.get("price") or offers.get("lowPrice")
+            if p is not None:
+                preco = float(str(p).replace(",", "."))
+        except (TypeError, ValueError):
+            preco = None
+
+    # Fallback nome/foto via OG meta
+    if not nome:
+        nome = _meta_property(driver, "og:title")
+    if not foto:
+        foto = _meta_property(driver, "og:image")
+
+    # Fallback preço via CSS — pega a primeira instância de preço atual
+    # (`.ui-pdp-price__second-line` cobre tanto preço único quanto promocional).
+    if preco is None:
+        try:
+            preco_box = driver.find_element(
+                By.CSS_SELECTOR,
+                ".ui-pdp-price__second-line .andes-money-amount, "
+                ".andes-money-amount[aria-hidden='true']",
+            )
+            inteiro_el = preco_box.find_element(
+                By.CSS_SELECTOR, ".andes-money-amount__fraction",
+            )
+            try:
+                cents_el = preco_box.find_element(
+                    By.CSS_SELECTOR, ".andes-money-amount__cents",
+                )
+            except NoSuchElementException:
+                cents_el = None
+            preco = _parse_preco(inteiro_el, cents_el)
+        except NoSuchElementException:
+            pass
+
+    # Fallback nome via h1
+    if not nome:
+        try:
+            h1 = driver.find_element(By.CSS_SELECTOR, "h1.ui-pdp-title, h1")
+            nome = (h1.text or "").strip() or None
+        except NoSuchElementException:
+            pass
+
+    # Categoria via JSON-LD BreadcrumbList ou breadcrumb CSS — já existe util
+    categoria = _categoria_de_jsonld(driver) or _categoria_de_css(driver)
+
+    if not nome or preco is None or preco <= 0:
+        log.warning("ml.por_url.dados_insuficientes",
+                    url=url[:120], item_id=item_id,
+                    tem_nome=bool(nome), preco=preco)
+        return None
+
+    return {
+        "plataforma":   "ml",
+        "item_id":      item_id,
+        "nome":         nome[:500],
+        "preco":        preco,
+        "preco_orig":   None,
+        "desconto":     None,
+        "frete_gratis": False,
+        "categoria":    categoria,
+        "url_canonica": url,
+        "foto_url":     foto if (foto and foto.startswith("http")) else None,
+    }
+
+
+def _varrer_produto_unico_sync(
+    cfg: Config,
+    *,
+    url: str,
+) -> list[dict[str, Any]]:
+    """Abre 1 URL de produto ML e extrai dados — retorna lista com 0 ou 1 item."""
+    if not url.lower().startswith(("http://", "https://")):
+        log.warning("ml.por_url.url_invalida", url=url[:120])
+        return []
+
+    driver = _criar_driver_ml(cfg)
+    try:
+        log.info("ml.por_url.abrindo", url=url[:120])
+        driver.get(url)
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+        except TimeoutException:
+            log.warning("ml.por_url.timeout_body")
+            return []
+
+        # Detecta bloqueio/login do ML — mesma lógica de _varrer_sync
+        url_final = driver.current_url.lower()
+        if any(s in url_final for s in ("/gz/account-verification", "/login", "/jms/mlb/lgz")):
+            raise RuntimeError(
+                f"ML exige login (redirecionou pra {url_final[:120]}). "
+                "Rode UMA vez: python -m agent.login_ml — loga manualmente, "
+                "fecha o Chrome, e tenta de novo."
+            )
+
+        # Pequeno scroll pra deixar lazy load de imagens disparar antes do og:image
+        try:
+            driver.execute_script("window.scrollTo(0, 300);")
+            time.sleep(0.8)
+            driver.execute_script("window.scrollTo(0, 0);")
+        except Exception:
+            pass
+
+        produto = _extrair_produto_unico(driver, driver.current_url)
+        if produto:
+            log.info("ml.por_url.ok", item_id=produto["item_id"], nome=produto["nome"][:60])
+            return [produto]
+        return []
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
 def _varrer_mais_vendidos_sync(
     cfg: Config,
     *,
@@ -690,7 +872,25 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
             produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
         )
 
-    # Caminho legado: termo_livre / por_url / qualquer outra coisa
+    # Fase 16.4: busca personalizada — 1 URL de produto ML, extrai dados
+    if tipo_busca == "por_url":
+        try:
+            produtos = await asyncio.to_thread(
+                _varrer_produto_unico_sync, cfg, url=entrada,
+            )
+        except RuntimeError as e:
+            log.warning("busca.bloqueada", motivo=str(e)[:200])
+            return {"ok": False, "erro": f"ml_bloqueou: {str(e)[:300]}",
+                    "tentar_de_novo": False}
+        except Exception as e:
+            log.exception("busca.crash_selenium_por_url", erro=str(e))
+            return {"ok": False, "erro": f"selenium_crash: {type(e).__name__}",
+                    "tentar_de_novo": True}
+        return await _enviar_produtos_e_responder(
+            produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
+        )
+
+    # Caminho legado: termo_livre / qualquer outra coisa
     try:
         url_inicial = montar_url_inicial(
             tipo_entrada=tipo_entrada, entrada=entrada,

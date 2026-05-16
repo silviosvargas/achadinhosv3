@@ -11,6 +11,7 @@ modo síncrono. O agente puxa via `reentregar_pendentes` quando reconectar.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -49,6 +50,13 @@ def agendar_buscas_devidas() -> dict:
             processadas += 1
             try:
                 tipo_entrada = detectar_tipo_entrada(busca.entrada)
+                # Fase 16: parseia marketplaces (JSON string no DB) pra lista
+                try:
+                    marketplaces_list = json.loads(busca.marketplaces or '["ml"]')
+                    if not isinstance(marketplaces_list, list):
+                        marketplaces_list = ["ml"]
+                except (json.JSONDecodeError, TypeError):
+                    marketplaces_list = ["ml"]
                 tarefa = Tarefa(
                     org_id=busca.org_id,
                     tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
@@ -61,6 +69,10 @@ def agendar_buscas_devidas() -> dict:
                         "max_paginas":   busca.max_paginas,
                         "max_produtos":  busca.max_produtos,
                         "disparado_por": busca.criado_por_usuario_id,
+                        # "tipo_busca" (não "tipo") pra não colidir com a chave
+                        # de comando WS no spread do dispatcher (lição v3.0.3).
+                        "tipo_busca":   getattr(busca, "tipo", "termo_livre"),
+                        "marketplaces": marketplaces_list,
                     },
                     criado_por_usuario_id=busca.criado_por_usuario_id,
                 )
