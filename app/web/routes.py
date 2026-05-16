@@ -1130,32 +1130,70 @@ async def criar_usuario_form(
 # Produtos
 # ============================================================
 
+def _query_int(valor: str | None) -> int | None:
+    """Converte query param string → int. Vazio/inválido → None.
+
+    Necessário pq FastAPI com `int | None` declarado direto explode 422
+    quando o form envia `?campo=` (string vazia). Pega como string e
+    parseia manualmente.
+    """
+    if valor is None:
+        return None
+    v = valor.strip()
+    if not v:
+        return None
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return None
+
+
 @router.get("/produtos", response_class=HTMLResponse)
 async def lista_produtos(
     request: Request,
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
-    nicho_id: int | None = None,
+    nicho_id: str | None = None,        # parseado via _query_int (aceita "" do form)
     plataforma: str | None = None,
-    bloqueado: int | None = None,   # 1/0/None
+    bloqueado: str | None = None,       # "1" / "0" / "" / None
+    afiliado: str | None = None,        # "meli" (tem meli.la) / "fallback" / "" / None
     busca: str | None = None,
+    limite: str | None = None,          # default 100, max 500
 ):
+    nicho_id_int = _query_int(nicho_id)
+    bloqueado_int = _query_int(bloqueado)
+    limite_int = max(10, min(500, _query_int(limite) or 100))
+
     base = select(Produto).where(Produto.org_id == user.org_id)
 
     if plataforma:
         base = base.where(Produto.plataforma == plataforma)
-    if bloqueado == 1:
+    if bloqueado_int == 1:
         base = base.where(Produto.bloqueado.is_(True))
-    elif bloqueado == 0:
+    elif bloqueado_int == 0:
         base = base.where(Produto.bloqueado.is_(False))
     if busca:
         base = base.where(Produto.nome.ilike(f"%{busca}%"))
-    if nicho_id is not None:
-        subq = select(ProdutoNicho.produto_id).where(ProdutoNicho.nicho_id == nicho_id)
+    if nicho_id_int is not None:
+        subq = select(ProdutoNicho.produto_id).where(ProdutoNicho.nicho_id == nicho_id_int)
         base = base.where(Produto.id.in_(subq))
+    # Filtro "afiliado" — produtos COM meli.la salvo vs COM fallback `?matt_word=`
+    if afiliado == "meli":
+        base = base.where(Produto.url_afiliado.ilike("%meli.la/%"))
+    elif afiliado == "fallback":
+        base = base.where(
+            Produto.url_afiliado.is_not(None),
+            ~Produto.url_afiliado.ilike("%meli.la/%"),
+        )
+
+    # Contagem total (sem limit) pra UI mostrar "X de N"
+    from sqlalchemy import func as sa_func, select as sa_select
+    total_count = (await db.execute(
+        sa_select(sa_func.count()).select_from(base.subquery())
+    )).scalar_one()
 
     produtos = list((await db.execute(
-        base.order_by(Produto.atualizado_em.desc()).limit(100)
+        base.order_by(Produto.atualizado_em.desc()).limit(limite_int)
     )).scalars().all())
 
     # Nichos pra filtros do form
@@ -1177,6 +1215,14 @@ async def lista_produtos(
             if n:
                 nichos_por_prod.setdefault(pid, []).append(n)
 
+    # Detecta se ALGUM filtro está ativo (pra UI mostrar "limpar filtros")
+    filtros_ativos = any([
+        busca, plataforma,
+        nicho_id_int is not None,
+        bloqueado_int is not None,
+        afiliado,
+    ])
+
     return templates.TemplateResponse(
         request, "produtos.html",
         {
@@ -1184,10 +1230,15 @@ async def lista_produtos(
             "produtos": produtos,
             "nichos": nichos,
             "nichos_por_prod": nichos_por_prod,
-            "filtro_nicho_id": nicho_id,
-            "filtro_plataforma": plataforma,
-            "filtro_bloqueado": bloqueado,
+            "filtro_nicho_id": nicho_id_int,
+            "filtro_plataforma": plataforma or "",
+            "filtro_bloqueado": bloqueado_int,
+            "filtro_afiliado": afiliado or "",
             "filtro_busca": busca or "",
+            "filtro_limite": limite_int,
+            "filtros_ativos": filtros_ativos,
+            "total_count": int(total_count or 0),
+            "mostrados": len(produtos),
             "pode_criar": user.eh_admin,
         },
     )

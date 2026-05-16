@@ -38,34 +38,99 @@
 <div class="alerta alerta-ok" style="margin-bottom:12px;">{{ _mensagem }}</div>
 {% endif %}
 
-<form method="get" action="/produtos" class="filtros-form">
-  <input type="text" name="busca" placeholder="Buscar nome..." value="{{ filtro_busca }}">
+<details class="filtros-card" {% if filtros_ativos %}open{% endif %}
+         style="margin:16px 0 18px; border:1px solid #e5e7eb; border-radius:10px;
+                background:#f9fafb;">
+  <summary style="cursor:pointer; padding:12px 16px; font-weight:600;
+                  display:flex; align-items:center; gap:10px;
+                  user-select:none;">
+    🔍 Filtros
+    {% if filtros_ativos %}
+      <span class="badge badge-azul" style="font-size:11px;">ativos</span>
+    {% endif %}
+    <span class="muted small" style="margin-left:auto; font-weight:400;">
+      {% if total_count > mostrados %}
+        Mostrando <strong>{{ mostrados }}</strong> de <strong>{{ total_count }}</strong> produtos
+      {% else %}
+        <strong>{{ total_count }}</strong> produto{{ 's' if total_count != 1 else '' }}
+      {% endif %}
+    </span>
+  </summary>
 
-  <select name="plataforma">
-    <option value="">Todas plataformas</option>
-    <option value="ml"     {% if filtro_plataforma == 'ml' %}selected{% endif %}>Mercado Livre</option>
-    <option value="shopee" {% if filtro_plataforma == 'shopee' %}selected{% endif %}>Shopee</option>
-    <option value="amazon" {% if filtro_plataforma == 'amazon' %}selected{% endif %}>Amazon</option>
-  </select>
+  <form method="get" action="/produtos"
+        style="padding:4px 16px 16px; display:grid;
+               grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+               gap:12px;">
+    <label style="grid-column: 1 / -1;">
+      <span class="muted small">Nome do produto</span>
+      <input type="text" name="busca" placeholder="ex: fone bluetooth"
+             value="{{ filtro_busca }}" autocomplete="off">
+    </label>
 
-  <select name="nicho_id">
-    <option value="">Todos nichos</option>
-    {% for n in nichos %}
-      <option value="{{ n.id }}" {% if filtro_nicho_id == n.id %}selected{% endif %}>
-        {{ n.icone or '' }} {{ n.label }}
-      </option>
-    {% endfor %}
-  </select>
+    <label>
+      <span class="muted small">Plataforma</span>
+      <select name="plataforma">
+        <option value="">Todas</option>
+        <option value="ml"         {% if filtro_plataforma == 'ml' %}selected{% endif %}>🛒 Mercado Livre</option>
+        <option value="shopee"     {% if filtro_plataforma == 'shopee' %}selected{% endif %}>🛍️ Shopee</option>
+        <option value="amazon"     {% if filtro_plataforma == 'amazon' %}selected{% endif %}>📦 Amazon</option>
+        <option value="magalu"     {% if filtro_plataforma == 'magalu' %}selected{% endif %}>🌟 Magalu</option>
+        <option value="aliexpress" {% if filtro_plataforma == 'aliexpress' %}selected{% endif %}>🌏 AliExpress</option>
+      </select>
+    </label>
 
-  <select name="bloqueado">
-    <option value="">Todos</option>
-    <option value="0" {% if filtro_bloqueado == 0 %}selected{% endif %}>Não bloqueados</option>
-    <option value="1" {% if filtro_bloqueado == 1 %}selected{% endif %}>Bloqueados</option>
-  </select>
+    <label>
+      <span class="muted small">Nicho</span>
+      <select name="nicho_id">
+        <option value="">Todos</option>
+        {% for n in nichos %}
+          <option value="{{ n.id }}" {% if filtro_nicho_id == n.id %}selected{% endif %}>
+            {{ n.icone or '' }} {{ n.label }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
 
-  <button type="submit" class="btn btn-primario">Filtrar</button>
-  <a href="/produtos" class="btn-link">limpar</a>
-</form>
+    <label>
+      <span class="muted small">Status</span>
+      <select name="bloqueado">
+        <option value="">Todos</option>
+        <option value="0" {% if filtro_bloqueado == 0 %}selected{% endif %}>✅ Ativos</option>
+        <option value="1" {% if filtro_bloqueado == 1 %}selected{% endif %}>🚫 Bloqueados</option>
+      </select>
+    </label>
+
+    <label>
+      <span class="muted small">Link de afiliado</span>
+      <select name="afiliado">
+        <option value="">Qualquer</option>
+        <option value="meli"     {% if filtro_afiliado == 'meli' %}selected{% endif %}>🔗 Tem meli.la</option>
+        <option value="fallback" {% if filtro_afiliado == 'fallback' %}selected{% endif %}>⚠️ Só fallback</option>
+      </select>
+    </label>
+
+    <label>
+      <span class="muted small">Limite</span>
+      <select name="limite">
+        <option value="50"  {% if filtro_limite == 50 %}selected{% endif %}>50</option>
+        <option value="100" {% if filtro_limite == 100 %}selected{% endif %}>100</option>
+        <option value="250" {% if filtro_limite == 250 %}selected{% endif %}>250</option>
+        <option value="500" {% if filtro_limite == 500 %}selected{% endif %}>500</option>
+      </select>
+    </label>
+
+    <div style="grid-column: 1 / -1; display:flex; gap:10px;
+                justify-content:flex-end; flex-wrap:wrap; margin-top:4px;">
+      {% if filtros_ativos %}
+      <a href="/produtos" class="btn"
+         style="background:white; border:1px solid #d1d5db; color:#374151;">
+        ✕ Limpar filtros
+      </a>
+      {% endif %}
+      <button type="submit" class="btn btn-primario">Aplicar filtros</button>
+    </div>
+  </form>
+</details>
 
 {% if produtos %}
 <table class="tabela">
@@ -153,17 +218,26 @@
     {% endfor %}
   </tbody>
 </table>
-<p class="muted small" style="margin-top:14px;">
-  Mostrando até 100 produtos. Use os filtros pra refinar.
+<p class="muted small" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+  Mostrando <strong>{{ mostrados }}</strong> de <strong>{{ total_count }}</strong> produto{{ 's' if total_count != 1 else '' }}.
+  {% if total_count > mostrados %}
+    <span>Aumente o <em>limite</em> nos filtros ou refine a busca pra ver mais.</span>
+  {% endif %}
 </p>
 {% else %}
-<div class="vazio">
-  <p>Nenhum produto encontrado.</p>
-  {% if pode_criar %}
-  <p class="muted">
-    Use <a href="/produtos/import-csv">importar CSV</a> pra alimentar o catálogo,
-    ou <a href="/produtos/novo">adicione um produto manualmente</a>.
-  </p>
+<div class="vazio" style="text-align:center; padding:32px 16px; border:1px dashed #e5e7eb; border-radius:10px;">
+  {% if filtros_ativos %}
+    <p style="font-size:18px;">🔍 Nenhum produto bate com esses filtros.</p>
+    <p class="muted">Ajuste ou <a href="/produtos">limpe os filtros</a> pra ver todo o catálogo.</p>
+  {% else %}
+    <p style="font-size:18px;">📦 Catálogo vazio.</p>
+    {% if pode_criar %}
+    <p class="muted">
+      Use <a href="/produtos/import-csv">importar CSV</a> pra alimentar o catálogo,
+      <a href="/produtos/novo">adicione um produto manualmente</a>,
+      ou rode uma <a href="/buscas">busca</a> pra popular automaticamente.
+    </p>
+    {% endif %}
   {% endif %}
 </div>
 {% endif %}
