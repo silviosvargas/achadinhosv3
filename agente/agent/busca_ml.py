@@ -531,6 +531,50 @@ def _scroll_lazy_load(driver) -> None:
         pass
 
 
+def _gerar_meli_la_no_driver(
+    driver, produtos: list[dict[str, Any]], *, log_prefixo: str,
+) -> None:
+    """
+    Gera meli.la pros produtos extraídos, IN-PLACE, no mesmo driver Chrome.
+
+    Igual V2 (`src/buscar/ml.py:gerar_todos_links` chamado de `executar`):
+    a busca e a geração de links compartilham 1 driver. Sem ronda WS,
+    sem conflito de perfil, sem tarefa GERAR_LINK separada.
+    Produto fica com `url_afiliado=meli.la/XXX` ANTES do ingest.
+
+    Falhas (sessão expirada, painel mudou) deixam `url_afiliado` ausente —
+    servidor aplica fallback genérico `?matt_word=...` no ingest.
+    """
+    from agent.linkbuilder_ml import _gerar_lote_sync, LOTE_TAMANHO
+
+    urls = list({
+        p["url_canonica"] for p in produtos
+        if p.get("url_canonica")
+    })
+    if not urls:
+        return
+
+    log.info(f"{log_prefixo}.linkbuilder_inline", urls=len(urls))
+    mapa: dict[str, str] = {}
+    for i in range(0, len(urls), LOTE_TAMANHO):
+        lote = urls[i:i + LOTE_TAMANHO]
+        try:
+            mapa.update(_gerar_lote_sync(driver, lote))
+        except Exception as e:
+            log.warning(f"{log_prefixo}.linkbuilder_lote_falhou",
+                        n=i // LOTE_TAMANHO + 1, erro=str(e)[:120])
+
+    aplicados = 0
+    for p in produtos:
+        url_c = p.get("url_canonica")
+        meli = mapa.get(url_c) if url_c else None
+        if meli and "meli.la/" in meli:
+            p["url_afiliado"] = meli
+            aplicados += 1
+    log.info(f"{log_prefixo}.linkbuilder_aplicado",
+             gerados=len(mapa), aplicados=aplicados, total_produtos=len(produtos))
+
+
 def _varrer_lista_urls_sync(
     cfg: Config,
     *,
@@ -543,8 +587,8 @@ def _varrer_lista_urls_sync(
     abre cada URL, extrai cards, balanceia por unidade.
 
     Usado por mais_vendidos / melhor_comissao / em_alta. Mesmo padrão da V2
-    `buscar_mais_vendidos`. Cards extraídos já vêm com campos preenchidos por
-    `_extrair_cards_da_pagina`; aqui só enriquecemos categoria + comissão.
+    `buscar_mais_vendidos` + `gerar_todos_links` no MESMO driver: extrai
+    cards, depois gera os meli.la inline antes de fechar o Chrome.
     """
     driver = _criar_driver_ml(cfg)
     todos: list[dict[str, Any]] = []
@@ -594,6 +638,10 @@ def _varrer_lista_urls_sync(
                 adicionados += 1
             log.info(f"{log_prefixo}.unidade_ok",
                      nome=nome_unidade, extraidos=adicionados, total=len(todos))
+
+        # Gera meli.la INLINE no mesmo driver — antes de fechar (igual V2)
+        _gerar_meli_la_no_driver(driver, todos, log_prefixo=log_prefixo)
+
     finally:
         try:
             driver.quit()
@@ -778,10 +826,13 @@ def _varrer_produto_unico_sync(
             pass
 
         produto = _extrair_produto_unico(driver, driver.current_url)
-        if produto:
-            log.info("ml.por_url.ok", item_id=produto["item_id"], nome=produto["nome"][:60])
-            return [produto]
-        return []
+        if not produto:
+            return []
+        log.info("ml.por_url.ok", item_id=produto["item_id"], nome=produto["nome"][:60])
+
+        # Gera meli.la INLINE no mesmo driver — igual V2
+        _gerar_meli_la_no_driver(driver, [produto], log_prefixo="ml.por_url")
+        return [produto]
     finally:
         try:
             driver.quit()
@@ -913,6 +964,9 @@ def _varrer_termo_livre_sync(
 
             log.info("ml.termo_livre.pagina_ok",
                      numero=pag, extraidos=adicionados, total=len(todos))
+
+        # Gera meli.la INLINE no mesmo driver — igual V2
+        _gerar_meli_la_no_driver(driver, todos, log_prefixo="ml.termo_livre")
 
     finally:
         try:

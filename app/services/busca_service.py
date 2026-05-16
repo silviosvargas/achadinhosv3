@@ -282,30 +282,13 @@ async def ingerir_produtos(
         tarefa_id=tarefa_id, **{k: v for k, v in stats.items() if k != "detalhes"},
     )
 
-    # Fase 15: dispara tarefa pro AGENTE gerar shortlinks `meli.la` oficiais
-    # via scraping do painel ML afiliados. Coleta URLs canônicas dos produtos
-    # ML que AINDA não têm `url_afiliado=meli.la` (pra evitar re-scraping).
-    # NOTA: agente envia o campo `url_canonica` (não `link_produto` como era
-    # nomenclatura na V2). Bug em prod até v3.18 era ler `link_produto` aqui,
-    # resultando em lista vazia → GERAR_LINK nunca enfileirada → produtos
-    # ficavam sem `meli.la` no banco.
-    # URLs são LIMPAS (fragment/query removidos) — alinhado com o que foi
-    # salvo no DB pelo `_limpar_url_canonica` no _upsert_produto.
-    urls_pendentes = await _coletar_urls_sem_meli_la(
-        db, org_id=org_id,
-        urls_ingeridas=[
-            _limpar_url_canonica(i.get("url_canonica")) for i in produtos_recebidos
-            if (i.get("plataforma") or "").lower() == "ml"
-            and i.get("url_canonica")
-        ],
-    )
-    if urls_pendentes:
-        await _enfileirar_geracao_links_ml(
-            db, org_id=org_id, agente_id=agente_id,
-            usuario_id=disparador.id if disparador else None,
-            urls=urls_pendentes,
-        )
-
+    # Agente v3.0.9+: gera meli.la INLINE durante a busca (mesmo driver Chrome,
+    # igual V2). Servidor não enfileira mais tarefa GERAR_LINK separada — isso
+    # criava conflito de driver e race conditions na re-entrega WS.
+    #
+    # Fallback: se algum produto vier do agente AINDA sem meli.la (sessão ML
+    # expirou no linkbuilder, painel mudou layout), o endpoint
+    # /produtos/regenerar-meli-la ainda existe pra retry manual via UI.
     return stats
 
 
@@ -418,9 +401,17 @@ async def _upsert_produto(
     # Limpa fragment/query — scraping ML traz `#polycard_client=...&tracking_id=...`
     # que polui URL canônica e quebra match com meli.la mapping (Fase 15+).
     url_canonica = _limpar_url_canonica(item.get("url_canonica"))
-    url_afiliado = linkbuilder.gerar_url_afiliado(
-        plataforma=plataforma, url_canonica=url_canonica, tag=tag_ml,
-    )
+
+    # Agente v3.0.9+ envia `url_afiliado` JÁ COMO `meli.la/XXX` (linkbuilder
+    # rodado inline no mesmo driver da busca, igual V2). Quando vier, salva
+    # direto. Senão usa fallback genérico `?matt_word=...` do linkbuilder.
+    url_afiliado_agente = (item.get("url_afiliado") or "").strip() or None
+    if url_afiliado_agente and "meli.la/" in url_afiliado_agente:
+        url_afiliado = url_afiliado_agente
+    else:
+        url_afiliado = linkbuilder.gerar_url_afiliado(
+            plataforma=plataforma, url_canonica=url_canonica, tag=tag_ml,
+        )
 
     if existente is None:
         produto = Produto(
@@ -456,7 +447,14 @@ async def _upsert_produto(
         produto.frete_gratis = bool(item.get("frete_gratis", produto.frete_gratis))
         if url_canonica:
             produto.url_canonica = url_canonica
-            produto.url_afiliado = url_afiliado
+            # Atualiza url_afiliado se: já tinha meli.la (preserva), OU
+            # se o agente mandou meli.la novo, OU fallback se não tem nada melhor.
+            if "meli.la/" in (produto.url_afiliado or ""):
+                # Mantém meli.la antigo se agente não mandou novo
+                if url_afiliado_agente and "meli.la/" in url_afiliado_agente:
+                    produto.url_afiliado = url_afiliado_agente
+            else:
+                produto.url_afiliado = url_afiliado
         if item.get("foto_url"):
             produto.foto_url = item["foto_url"]
         criou = False
