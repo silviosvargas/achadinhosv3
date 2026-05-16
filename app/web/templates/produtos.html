@@ -119,6 +119,13 @@
       <td>
         {% if pode_criar %}
         <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          {% set _link = p.url_afiliado or p.url_canonica %}
+          {% if _link %}
+          <a href="{{ _link }}" target="_blank" rel="noopener noreferrer"
+             class="btn-link" title="Abre o produto no marketplace via link de afiliado">
+            🔗 Ver produto
+          </a>
+          {% endif %}
           <a href="/produtos/{{ p.id }}/editar" class="btn-link"
              title="Editar produto">✏️ editar</a>
           <form method="post" action="/produtos/{{ p.id }}/bloquear" style="display:inline">
