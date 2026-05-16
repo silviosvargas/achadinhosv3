@@ -294,66 +294,31 @@ def _item_pra_produto_v3(
 # Loop principal de busca
 # ============================================================
 
-def _tem_captcha_no_dom(driver: uc.Chrome) -> bool:
-    """Detecta captcha renderizado como MODAL/OVERLAY na página (não como
-    redirect de URL).
-
-    A Shopee frequentemente mostra o captcha como popup do tipo "slider
-    puzzle" SEM trocar a URL (continua `/offer/product_offer`). Sem essa
-    detecção via DOM, agente seguiria sem aguardar.
-    """
-    try:
-        return bool(driver.execute_script(r"""
-            var seletores = [
-                'iframe[src*="captcha"]',
-                'iframe[src*="puzzle"]',
-                'iframe[src*="vcode"]',
-                'iframe[src*="verify"]',
-                '[class*="captcha-popup"]',
-                '[class*="verify-popup"]',
-                '[class*="shopee-puzzle"]',
-                '[class*="puzzle-wrapper"]',
-                '[class*="slide-verify"]',
-            ];
-            for (var i = 0; i < seletores.length; i++) {
-                var els = document.querySelectorAll(seletores[i]);
-                for (var j = 0; j < els.length; j++) {
-                    if (els[j].offsetParent !== null) return true;
-                }
-            }
-            return false;
-        """))
-    except Exception as e:
-        log.debug("shopee.detectar_captcha_dom_falhou", erro=str(e)[:120])
-        return False
-
-
 def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
     """Detecta se o painel pediu login ou captcha.
 
-    Estratégia em cascata:
-    1. URL contém keywords de login/captcha (caso fácil)
-    2. v3.8.9: DOM tem modal/iframe de captcha visível (caso comum Shopee —
-       captcha renderizado como overlay sem trocar URL)
+    v3.8.13: modelo V2 — APENAS por URL.
+    A V2 (`ACHADINHOSV2/src/buscar/shopee.py:342-344`) usa SÓ:
+
+        if "captcha" in driver.current_url.lower():
+            input("Pressione ENTER após resolver o captcha...")
+
+    Detecção via DOM (modal/iframe) e inferência via status!=200 foram
+    REMOVIDAS porque introduziam falsos positivos e loops infinitos
+    (v3.8.6 → v3.8.12 = 6 releases queimadas).
     """
     url = (driver.current_url or "").lower()
     if "login" in url or "buyer/login" in url:
         return (
             "login_expirado",
             "🔐 Faça login na sua conta Shopee Afiliados, depois volte para a página "
-            "Ofertas de Produtos. Vou esperar você terminar.",
+            "Ofertas de Produtos.",
         )
     if "captcha" in url or "verify" in url or "vcode" in url:
         return (
             "captcha",
-            "🤖 Shopee pediu CAPTCHA. Resolva o desafio nesta janela do Chrome. "
-            "Quando voltar pra Ofertas de Produtos, vou continuar.",
-        )
-    if _tem_captcha_no_dom(driver):
-        return (
-            "captcha",
-            "🤖 Shopee pediu CAPTCHA (popup nesta página). Resolva nesta janela "
-            "do Chrome — vou esperar e continuar automaticamente.",
+            "🤖 Shopee pediu CAPTCHA. Resolva o desafio nesta janela do Chrome "
+            "e clique em '✅ CAPTCHA RESOLVIDO! Continuar...' no banner amarelo.",
         )
     return None
 
@@ -601,7 +566,23 @@ def _resolver_login_ou_captcha(
 
 
 def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
-    """Versão síncrona — chama API em loop até atingir `max_produtos`."""
+    """Versão síncrona — modelo idêntico ao V2 (ACHADINHOSV2/src/buscar/shopee.py).
+
+    v3.8.13: simplificação radical pra espelhar a V2 funcional:
+    1. Abre URL_PAINEL UMA VEZ
+    2. Espera 4s
+    3. Se URL tem "captcha" → mostra banner com botão "CAPTCHA RESOLVIDO" +
+       aguarda clique. Equivalente ao `input("Pressione ENTER...")` da V2,
+       mas pra agente sem console.
+    4. Itera abas e páginas chamando API. Se status != 200, `break` simples.
+       Sem retry, sem reload, sem reverificação.
+
+    Removido (v3.8.6 → v3.8.12 introduziu várias armadilhas):
+    - Ping inicial da API (forçava captcha por falso positivo)
+    - Detecção via DOM `_tem_captcha_no_dom`
+    - Inferência por status!=200 (causava loop infinito)
+    - Retry no meio do loop com `driver.get(URL_PAINEL)` (re-disparava captcha)
+    """
     log.info("shopee.aguardando_lock", max_produtos=max_produtos)
     with _LOCK_CHROME_SHOPEE:
         log.info("shopee.lock_adquirido")
@@ -610,55 +591,25 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
         vistos: set[str] = set()
 
         try:
-            # 1. Carrega painel (autentica via cookies persistidos)
+            # 1. Carrega painel (autentica via cookies persistidos). Igual V2.
             driver.get(URL_PAINEL)
-            time.sleep(5)
-            url_inicial = (driver.current_url or "").lower()
-            log.info("shopee.url_apos_abrir_painel", url=url_inicial[:300])
+            time.sleep(4)
+            log.info("shopee.url_apos_abrir_painel",
+                     url=(driver.current_url or "")[:300])
 
+            # 2. Detecta login/captcha SÓ POR URL (igual V2 linha 342).
+            #    Se detectou, mostra banner com botão e aguarda clique.
             problema = _detectou_login_ou_captcha(driver)
-            # v3.8.10: força captcha se URL fugiu do painel.
-            # v3.8.11: faz um ping na API pra detectar bloqueio silencioso
-            # (URL volta pro painel mas fetch retorna 0).
-            if problema is None and "/offer/product_offer" not in url_inicial:
-                log.warning("shopee.bloqueio_inicial_inferido",
-                            url=url_inicial[:200])
-                problema = (
-                    "captcha",
-                    "🤖 Shopee bloqueou esta sessão. Resolva o desafio "
-                    "nesta janela do Chrome e clique em '✅ CAPTCHA "
-                    "RESOLVIDO! Continuar...' pra prosseguir.",
-                )
-            elif problema is None:
-                # URL ok — faz ping na API pra confirmar que sessão funciona
-                ping = _chamar_api(
-                    driver, list_type=ABAS_BUSCA[0]["list_type"],
-                    page_offset=0, page_limit=1, cat=None,
-                )
-                if ping.get("status") != 200:
-                    log.warning("shopee.bloqueio_inicial_via_ping",
-                                ping_status=ping.get("status"))
-                    problema = (
-                        "captcha",
-                        "🤖 Shopee bloqueou esta sessão (anti-bot silencioso). "
-                        "Resolva o desafio nesta janela do Chrome e clique "
-                        "em '✅ CAPTCHA RESOLVIDO! Continuar...'.",
-                    )
-
             if problema:
                 motivo, instrucao = problema
                 resolveu = _resolver_login_ou_captcha(driver, motivo, instrucao)
                 if not resolveu:
                     raise RuntimeError(
-                        f"Shopee {motivo} — não foi possível prosseguir. "
+                        f"Shopee {motivo} — usuário não confirmou. "
                         "Refaça login: `python -m agent.login_shopee`."
                     )
-                # Após resolver, garante que estamos no painel certo
-                if "/offer/product_offer" not in (driver.current_url or "").lower():
-                    driver.get(URL_PAINEL)
-                    time.sleep(3)
 
-            # 2. Itera abas + páginas
+            # 3. Itera abas + páginas. Igual V2 `buscar_todas_abas`.
             por_aba = max(5, max_produtos // len(ABAS_BUSCA) + 2)
 
             for aba in ABAS_BUSCA:
@@ -681,65 +632,12 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
 
                     status = result.get("status", 0)
                     if status != 200:
-                        log.warning("shopee.api_status",
-                                    aba=nome_aba, pag=pagina + 1,
-                                    status=status, body=str(result.get("body"))[:200])
-                        # Status 0 = network error / sem cookies; 401/403 = sessão
-                        # expirou no meio da busca. Tenta reautenticar abrindo o
-                        # painel e aguardando user resolver.
-                        if status in (0, 401, 403):
-                            driver.get(URL_PAINEL)
-                            time.sleep(5)
-                            url_apos = (driver.current_url or "").lower()
-                            log.info("shopee.url_apos_recarga",
-                                     url=url_apos[:300], status_orig=status)
-
-                            problema = _detectou_login_ou_captcha(driver)
-
-                            # v3.8.11: status != 200 SEMPRE força captcha,
-                            # mesmo que URL fique no painel. Cenário real
-                            # (log do user 21:15): fetch retorna status=0
-                            # mas a URL atual é exatamente `/offer/product_offer`.
-                            # = anti-bot silencioso / captcha invisível —
-                            # Shopee bloqueia a chamada API mas não redireciona
-                            # a página. User precisa interagir mesmo assim.
-                            if problema is None:
-                                log.warning(
-                                    "shopee.bloqueio_inferido_por_status",
-                                    url=url_apos[:200], status=status,
-                                )
-                                problema = (
-                                    "captcha",
-                                    "🤖 Shopee bloqueou esta sessão (API "
-                                    f"retornou status {status}). Pode ser "
-                                    "captcha invisível ou anti-bot. Resolva "
-                                    "na janela do Chrome e clique em '✅ "
-                                    "CAPTCHA RESOLVIDO! Continuar...'.",
-                                )
-
-                            if problema:
-                                motivo_re, instrucao_re = problema
-                                if not _resolver_login_ou_captcha(
-                                    driver, motivo_re, instrucao_re,
-                                ):
-                                    raise RuntimeError(
-                                        f"Shopee sessão expirou no meio (HTTP {status}) "
-                                        f"e não foi possível recuperar."
-                                    )
-                            # Retry: refaz a chamada da mesma página
-                            result = _chamar_api(
-                                driver,
-                                list_type=aba["list_type"],
-                                page_offset=offset,
-                                page_limit=PRODUTOS_POR_PAGINA,
-                                cat=aba.get("cat"),
-                            )
-                            if result.get("status") != 200:
-                                log.warning("shopee.retry_falhou",
-                                            status=result.get("status"))
-                                break
-                        else:
-                            break
+                        # Modelo V2 (`buscar_todas_abas` linha 189-191):
+                        # status != 200 → break simples. SEM retry/reload.
+                        log.warning("shopee.api_status_break",
+                                    aba=nome_aba, pag=pagina + 1, status=status,
+                                    body=str(result.get("body"))[:200])
+                        break
 
                     try:
                         data = json.loads(result["body"])
