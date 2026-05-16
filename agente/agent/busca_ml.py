@@ -190,13 +190,46 @@ def _extrair_item_id(url: str) -> str | None:
     return m.group(1).replace("-", "")
 
 
+_SELETORES_URL_CARD = [
+    "a.poly-component__title",
+    "a.poly-component__image-link",
+    "a[class*='title']",
+    "a[href*='mercadolivre.com.br']",
+]
+
+
 def _achar_url(card) -> str | None:
-    """Link clicável do card (primeiro <a href> que aponta pra mercadolivre)."""
-    try:
-        a = card.find_element(By.CSS_SELECTOR, "a[href*='mercadolivre.com.br']")
-        return a.get_attribute("href")
-    except NoSuchElementException:
-        return None
+    """Link clicável do card.
+
+    Portado da V2 (`src/buscar/ml.py:117-128`): tenta múltiplos seletores
+    de anchor e retorna URL JÁ LIMPA (sem `?` query nem `#` fragment).
+
+    Por que limpar AGORA na extração e não em camadas depois:
+    - URL limpa entra direto no DB → sem `#polycard_client=...&tracking_id=...`
+    - URL limpa vai pro painel ML linkbuilder → ML aceita sem ambiguidade
+    - URL limpa volta no mapping → match exato com DB no `aplicar_mapping`
+    - Sem retrabalho em N lugares (que era a fonte dos bugs v3.0.4-3.0.7)
+
+    Também filtra anchors de PUBLICIDADE / CLICK TRACKING — produtos
+    patrocinados não rendem comissão e poluem o catálogo.
+    """
+    for sel in _SELETORES_URL_CARD:
+        try:
+            anchors = card.find_elements(By.CSS_SELECTOR, sel)
+        except Exception:
+            continue
+        for a in anchors:
+            href_raw = a.get_attribute("href") or ""
+            # V2 fazia: split('?')[0].split('#')[0]
+            href = href_raw.split("?", 1)[0].split("#", 1)[0]
+            if (
+                "mercadolivre.com.br" in href
+                and "click1" not in href            # tracking de clique patrocinado
+                and "publicidade" not in href       # produto patrocinado, sem comissão
+                and len(href) > 35                  # URL absurdamente curta = inválida
+            ):
+                return href
+    return None
 
 
 def _achar_titulo(card) -> str:
@@ -614,6 +647,10 @@ def _extrair_produto_unico(driver, url: str) -> dict[str, Any] | None:
     Cascata: JSON-LD Product → OpenGraph meta → CSS direto.
     Retorna None se URL não é página de produto válida.
     """
+    # Limpa a URL ANTES de qualquer coisa — mesma estratégia do V2.
+    # Garante que `url_canonica` que vai pro DB já está sem fragment/query.
+    url = (url or "").split("?", 1)[0].split("#", 1)[0]
+
     item_id = _extrair_item_id(url)
     if not item_id:
         log.warning("ml.por_url.sem_mlb", url=url[:120])
