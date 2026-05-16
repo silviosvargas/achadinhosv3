@@ -633,15 +633,35 @@ async def _upsert_produto(
             produto.preco_orig = item["preco_orig"]
         if item.get("desconto") is not None:
             produto.desconto = item["desconto"]
-        # Comissão — só atualiza se veio (não sobrescreve valor existente com None)
+        # ── Comissão: HIERARQUIA DE CONFIANÇA (Fase 18.4) ────────────
+        # NÃO sobrescreve dado real (ml_barra_afiliados/ml_painel) com
+        # estimativa antiga. Cenário do bug v3.4.4:
+        # - Busca 1: agente capturou 26% via barra → DB tem ml_barra_afiliados=26%
+        # - Busca 2: agente falhou captura → vem com estimativa → servidor
+        #   refina pra categoria_ml_v2=12% → SOBRESCRITO o dado bom com ruim
+        # Fix: só atualiza se nova fonte é >= confiável que a atual.
         if comissao_pct is not None and comissao_pct > 0:
-            if comissao_pct != produto.comissao:
-                produto.comissao = comissao_pct
-                produto.comissao_atualizada_em = agora
-            # Atualiza fonte se mudou (ex: passou de "estimativa" pra "ml_painel")
-            if comissao_fonte and comissao_fonte != produto.comissao_fonte:
-                produto.comissao_fonte = comissao_fonte
-        produto.comissao_validada = comissao_validada
+            confianca_nova   = _confianca_fonte(comissao_fonte)
+            confianca_atual  = _confianca_fonte(produto.comissao_fonte)
+            if confianca_nova >= confianca_atual:
+                if comissao_pct != produto.comissao:
+                    produto.comissao = comissao_pct
+                    produto.comissao_atualizada_em = agora
+                if comissao_fonte and comissao_fonte != produto.comissao_fonte:
+                    produto.comissao_fonte = comissao_fonte
+                # Recalcula validada só quando atualiza
+                produto.comissao_validada = comissao_validada
+            else:
+                # Fonte nova menos confiável que a atual — NÃO sobrescreve.
+                # Mantém comissao + comissao_fonte + comissao_atualizada_em.
+                log.info(
+                    "ingest.comissao_nao_sobrescrita_fonte_menor",
+                    item_id=item_id,
+                    fonte_atual=produto.comissao_fonte,
+                    fonte_nova=comissao_fonte,
+                    pct_atual=produto.comissao,
+                    pct_nova=comissao_pct,
+                )
         # Total vendidos — só atualiza se veio e mudou
         if total_vendidos is not None and total_vendidos > 0:
             tv = int(total_vendidos)
@@ -676,7 +696,8 @@ async def _upsert_produto(
             "is_bestseller":  produto.is_bestseller,
             "is_em_alta":     produto.is_em_alta,
         })
-        produto.nota = info_nota_atualizada["nota"]
+        produto.nota              = info_nota_atualizada["nota"]
+        produto.comissao_validada = info_nota_atualizada["comissao_validada"]
         criou = False
 
     # Auto-classificação por categoria
@@ -714,6 +735,35 @@ def _fonte_default_por_plataforma(plataforma: str) -> str:
     if plat == "shopee":
         return "shopee_api"
     return "estimativa"
+
+
+# Hierarquia de confiança da fonte de comissão (alta → baixa).
+# Index 0 = mais confiável. Usado em `_upsert_produto` pra NÃO sobrescrever
+# dado capturado real (ml_barra_afiliados) com estimativa antiga (categoria/etc).
+#
+# ⚠ LIÇÃO v3.4.4: bug em prod onde produtos rebuscados perdiam a comissão
+# real porque o servidor refinava pra `categoria_ml_v2` quando captura
+# falhava na nova busca, e sobrescrevia o `ml_barra_afiliados` antigo.
+# Documentado em CLAUDE.md armadilha "Hierarquia de comissao_fonte".
+_HIERARQUIA_FONTE_COMISSAO = [
+    "ml_barra_afiliados",   # capturado da barra preta ML (Fase 18.3) — fonte de verdade
+    "ml_painel",            # capturado do painel linkbuilder ML (Fase 18.0)
+    "shopee_api",           # Shopee API direta (Fase 18.0)
+    "amazon_tabela",        # tabela oficial Amazon BR por categoria
+    "categoria_ml_v2",      # estimativa do servidor pela tabela de ~50 categorias
+    "estimativa",           # categoria pai hardcoded no agente (otimista)
+]
+
+
+def _confianca_fonte(fonte: str | None) -> int:
+    """Retorna confiança da fonte (maior = mais confiável). Default 0 (mínima)."""
+    if not fonte:
+        return 0
+    try:
+        # Inverte: index 0 = mais confiável → retorna len - index
+        return len(_HIERARQUIA_FONTE_COMISSAO) - _HIERARQUIA_FONTE_COMISSAO.index(fonte)
+    except ValueError:
+        return 0
 
 
 async def _tem_algum_nicho(db: AsyncSession, *, produto_id: int) -> bool:

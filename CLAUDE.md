@@ -477,6 +477,43 @@ de verdade sobre o comportamento do painel ML afiliados — ele OPERA o
 sistema, não a Claude.
 
 
+### Hierarquia de `comissao_fonte`: NÃO sobrescrever fonte alta com baixa
+
+`busca_service._upsert_produto` aplica os campos vindos do agente quando
+o produto já existe. Bug v3.4.4: o código sobrescrevia `comissao_fonte`
+sem checar a hierarquia de confiança das fontes.
+
+**Hierarquia** (`app/services/busca_service.py:_HIERARQUIA_FONTE_COMISSAO`):
+1. `ml_barra_afiliados` — barra preta ML afiliados (Fase 18.3) — fonte de verdade
+2. `ml_painel`          — painel linkbuilder ML (Fase 18.0)
+3. `shopee_api`         — Shopee API direta
+4. `amazon_tabela`      — tabela oficial Amazon BR por categoria
+5. `categoria_ml_v2`    — tabela do servidor com ~50 categorias
+6. `estimativa`         — categoria pai hardcoded no agente (otimista)
+
+**Cenário do bug**:
+- Busca 1: agente capturou 26% via barra → DB tem `ml_barra_afiliados=26%`
+- Busca 2: produto reaparece em listagem, agente FALHOU captura da barra
+  (sessão expirou, captcha, etc) → vem com `estimativa`
+- Servidor refina pra `categoria_ml_v2=12%` (Calçados)
+- Código antigo: `produto.comissao_fonte = "categoria_ml_v2"` → **SOBRESCRITO**
+  o dado real bom com estimativa antiga ruim
+- UI mostra `🟡 categoria ML 12%` em vez do verdadeiro `✅ ML barra 26%`
+
+**Fix em `_upsert_produto`**: compara `_confianca_fonte(comissao_fonte_nova)`
+com `_confianca_fonte(produto.comissao_fonte)` antes de atualizar. Só
+sobrescreve se nova ≥ atual.
+
+**Regra geral pra outros campos sensíveis**: quando o agente pode mandar
+dados de qualidade variável (captura real vs estimativa), o servidor
+DEVE preservar o melhor dado já no DB. Aplicável também a `total_vendidos`
+(captura real vs proxy estimado) — verificar futuramente.
+
+Captura ML da barra **prefere "GANHOS EXTRAS" sobre "GANHOS" base**: páginas
+com promoção Mais por Mais mostram ambos. Pegar o primeiro match pegava
+o base (errado). Implementado em `_capturar_comissao_da_barra` JS.
+
+
 ### Mudou código do `agente/`? Sempre bump + tag + monitorar
 
 Mudança em `agente/agent/*.py` SEM bump de versão + tag + verificação do

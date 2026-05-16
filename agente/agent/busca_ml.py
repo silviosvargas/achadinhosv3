@@ -801,31 +801,51 @@ def _capturar_comissao_da_barra(driver, url: str) -> float | None:
             time.sleep(2.0)  # aguarda página do produto carregar
 
         # 4-5. Captura "GANHOS [EXTRAS] X%" via regex
+        # ⚠ Lição v3.4.4: PREFERE "GANHOS EXTRAS" sobre "GANHOS" base.
+        # Páginas com promoção Mais por Mais mostram AMBOS na barra:
+        #   "GANHOS 5% | GANHOS EXTRAS 17%"
+        # Pegar o primeiro match pegava o 5% (errado). Pega EXTRAS primeiro.
         pct = driver.execute_script(r"""
-            // Procura primeiro em elementos prováveis (header/banner afiliados)
+            // Helper: procura em seletor, retorna {extras, base} achados
+            function buscar(scopo) {
+                var resultado = {extras: null, base: null};
+                var txt = scopo.textContent || '';
+                // Primeiro tenta achar "GANHOS EXTRAS X%" (mais específico)
+                var mExtras = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+                if (mExtras) {
+                    var nE = parseFloat(mExtras[1].replace(',', '.'));
+                    if (!isNaN(nE) && nE > 0 && nE <= 50) resultado.extras = nE;
+                }
+                // Depois "GANHOS X%" sem EXTRAS (base)
+                var mBase = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+                if (mBase) {
+                    var nB = parseFloat(mBase[1].replace(',', '.'));
+                    if (!isNaN(nB) && nB > 0 && nB <= 50) resultado.base = nB;
+                }
+                return resultado;
+            }
+
+            // Procura em elementos prováveis (header/banner de afiliados)
             var seletores = [
                 'header', '[class*="affiliate"]', '[class*="afiliad"]',
                 '[class*="banner"]', '[id*="banner"]',
             ];
+            var melhor = {extras: null, base: null};
             for (var i = 0; i < seletores.length; i++) {
                 var els = document.querySelectorAll(seletores[i]);
                 for (var j = 0; j < els.length; j++) {
-                    var txt = els[j].textContent || '';
-                    var m = txt.match(/GANHOS\s+(?:EXTRAS\s+)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-                    if (m) {
-                        var n = parseFloat(m[1].replace(',', '.'));
-                        if (!isNaN(n) && n > 0 && n <= 50) return n;
-                    }
+                    var r = buscar(els[j]);
+                    if (r.extras !== null && melhor.extras === null) melhor.extras = r.extras;
+                    if (r.base !== null && melhor.base === null) melhor.base = r.base;
                 }
+                if (melhor.extras !== null) break;  // achou EXTRAS, para
             }
-            // Fallback: body inteiro
-            var txt = document.body.textContent || '';
-            var m = txt.match(/GANHOS\s+(?:EXTRAS\s+)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-            if (m) {
-                var n = parseFloat(m[1].replace(',', '.'));
-                if (!isNaN(n) && n > 0 && n <= 50) return n;
+            // Se nada achado nos seletores, fallback no body inteiro
+            if (melhor.extras === null && melhor.base === null) {
+                melhor = buscar(document.body);
             }
-            return null;
+            // Prefere EXTRAS, cai pra BASE se não tem
+            return melhor.extras !== null ? melhor.extras : melhor.base;
         """)
         if pct is None:
             return None
