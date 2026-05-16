@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 import time
 from urllib.parse import urlparse, urlunparse
 
@@ -38,6 +39,12 @@ URL_LINKBUILDER = "https://www.mercadolivre.com.br/afiliados/linkbuilder"
 LOTE_TAMANHO = 10  # ML aceita ~10 URLs por submissão sem rate limit
 TIMEOUT_PAGINA = 20
 ESPERA_GERACAO = 6  # segundos pra ML processar e renderizar os meli.la
+
+# Lock global: garante 1 Chrome ML rodando por vez. Sem isso, duas tarefas
+# GERAR_LINK chegando próximas (reentrega após reconexão WS, ou clique duplo
+# no botão Regenerar) crashavam com `cannot connect to chrome at 127.0.0.1:XXXX`
+# — undetected-chromedriver não tolera 2 sessões com mesmo `--user-data-dir`.
+_LOCK_CHROME_ML = threading.Lock()
 
 
 def _normalizar_url(url: str) -> str:
@@ -168,26 +175,40 @@ def _gerar_lote_sync(driver: uc.Chrome, urls: list[str]) -> dict[str, str]:
 
 
 def _gerar_todos_sync(cfg: Config, urls: list[str]) -> dict[str, str]:
-    """Loop blocking — abre Chrome, processa lotes, devolve mapping completo."""
+    """Loop blocking — abre Chrome, processa lotes, devolve mapping completo.
+
+    Protegido por `_LOCK_CHROME_ML`: se outra GERAR_LINK estiver rodando,
+    espera ela terminar antes de criar o driver. Evita conflito de
+    `--user-data-dir` que crasha undetected-chromedriver.
+    """
     if not urls:
         return {}
 
-    # Reaproveita o driver setup do busca_ml.py
-    from agent.busca_ml import _criar_driver_ml
-    driver = _criar_driver_ml(cfg)
-    mapa_total: dict[str, str] = {}
-    try:
-        for i in range(0, len(urls), LOTE_TAMANHO):
-            lote = urls[i:i + LOTE_TAMANHO]
-            log.info("linkbuilder_ml.lote",
-                     n=i // LOTE_TAMANHO + 1, total=len(lote))
-            mapa_total.update(_gerar_lote_sync(driver, lote))
-    finally:
+    # Adquire lock — bloqueia até a outra instância terminar.
+    # `acquire(blocking=True)` é o default; usando explícito pra deixar claro.
+    log.info("linkbuilder_ml.aguardando_lock", urls=len(urls))
+    with _LOCK_CHROME_ML:
+        log.info("linkbuilder_ml.lock_adquirido", urls=len(urls))
+        # Reaproveita o driver setup do busca_ml.py
+        from agent.busca_ml import _criar_driver_ml
+        driver = _criar_driver_ml(cfg)
+        mapa_total: dict[str, str] = {}
         try:
-            driver.quit()
-        except Exception:
-            pass
-    return mapa_total
+            for i in range(0, len(urls), LOTE_TAMANHO):
+                lote = urls[i:i + LOTE_TAMANHO]
+                log.info("linkbuilder_ml.lote",
+                         n=i // LOTE_TAMANHO + 1, total=len(lote))
+                mapa_total.update(_gerar_lote_sync(driver, lote))
+        finally:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            # Pequena espera pra o processo Chrome terminar antes do próximo
+            # lock_acquire — undetected-chromedriver demora pra liberar lock
+            # do user-data-dir mesmo depois de `quit()`.
+            time.sleep(1.5)
+        return mapa_total
 
 
 async def gerar_links_em_lote(

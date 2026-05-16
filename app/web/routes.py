@@ -1420,31 +1420,43 @@ async def regenerar_meli_la(
     from app.models import Agente
     from app.services import busca_service
     from app.services.agente_registry import registry
+    from sqlalchemy import update as sa_update
 
-    # Pega URLs canônicas dos produtos ML sem meli.la
+    # 1. Antes de tudo: LIMPA fragment/query das URLs já no DB.
+    # Produtos legados (pré-v3.0.7) foram salvos com `#polycard_client=...`
+    # do scraping ML, que poluía a URL e quebrava match no aplicar_mapping.
+    # Update em batch, antes de coletar a lista de pendentes.
+    produtos_da_org = list((await db.execute(
+        select(Produto.id, Produto.url_canonica).where(
+            Produto.org_id == admin.org_id,
+            Produto.plataforma == "ml",
+            Produto.url_canonica.is_not(None),
+        )
+    )).all())
+    limpos = 0
+    for pid, url in produtos_da_org:
+        url_limpa = busca_service._limpar_url_canonica(url)
+        if url_limpa and url_limpa != url:
+            await db.execute(
+                sa_update(Produto).where(Produto.id == pid).values(url_canonica=url_limpa)
+            )
+            limpos += 1
+    if limpos:
+        await db.commit()
+
+    # 2. Recarrega depois da limpeza
     rows = (await db.execute(
-        select(Produto.url_canonica).where(
+        select(Produto.url_canonica, Produto.url_afiliado).where(
             Produto.org_id == admin.org_id,
             Produto.plataforma == "ml",
             Produto.url_canonica.is_not(None),
         )
     )).all()
+    # Pendente = url_afiliado NÃO contém meli.la
     urls_pendentes = [
-        url for (url,) in rows
-        if url and "meli.la/" not in (url or "")
+        url_c for url_c, url_a in rows
+        if url_c and (not url_a or "meli.la/" not in (url_a or ""))
     ]
-    # Filtra os que JÁ têm meli.la no url_afiliado (extra safety)
-    if urls_pendentes:
-        rows_afiliado = (await db.execute(
-            select(Produto.url_canonica, Produto.url_afiliado).where(
-                Produto.org_id == admin.org_id,
-                Produto.plataforma == "ml",
-                Produto.url_canonica.in_(urls_pendentes),
-            )
-        )).all()
-        ja_meli = {url_c for url_c, url_a in rows_afiliado
-                   if url_a and "meli.la/" in url_a}
-        urls_pendentes = [u for u in urls_pendentes if u not in ja_meli]
 
     if not urls_pendentes:
         return RedirectResponse(
@@ -1452,7 +1464,7 @@ async def regenerar_meli_la(
             status_code=302,
         )
 
-    # Pega agente online da org
+    # 3. Pega agente online da org
     agentes_org = list((await db.execute(
         select(Agente).where(Agente.org_id == admin.org_id, Agente.ativo.is_(True))
     )).scalars().all())
@@ -1467,8 +1479,11 @@ async def regenerar_meli_la(
         db, org_id=admin.org_id, agente_id=agente.id,
         usuario_id=admin.id, urls=urls_pendentes,
     )
+    msg = f"{len(urls_pendentes)}+URLs+enfileiradas+pro+agente"
+    if limpos:
+        msg += f"+(limpei+{limpos}+URLs+com+fragment)"
     return RedirectResponse(
-        url=f"/produtos?mensagem={len(urls_pendentes)}+URLs+enfileiradas+pro+agente+(meli.la+vai+aparecer+em+~1min)",
+        url=f"/produtos?mensagem={msg}",
         status_code=302,
     )
 

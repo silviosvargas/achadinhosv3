@@ -20,6 +20,7 @@ limpa antes do callback chegar).
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,11 @@ from app.models import Produto, Redirect
 log = get_logger(__name__)
 
 
-_RE_MLB = re.compile(r"MLB-?\d{8,15}")
+# Aceita variantes do ID do ML:
+#   MLB1234567890      → produto comum (path /p/MLB...)
+#   MLBU3387021403     → catálogo unificado (path /up/MLBU...) — letra opcional
+#   MLB-1234567890     → formato antigo com hífen
+_RE_MLB = re.compile(r"MLB[A-Z]?-?\d{8,15}")
 
 
 def _extrair_mlb(url: str) -> str | None:
@@ -39,6 +44,14 @@ def _extrair_mlb(url: str) -> str | None:
         return None
     m = _RE_MLB.search(url)
     return m.group(0).replace("-", "") if m else None
+
+
+def _normalizar_url(url: str) -> str:
+    """Tira fragment + query — usado pra match flexível."""
+    if not url:
+        return url
+    parts = urlparse(url)
+    return urlunparse(parts._replace(query="", fragment=""))
 
 
 async def aplicar_mapping(
@@ -70,9 +83,12 @@ async def aplicar_mapping(
             stats["ignorados"] += 1
             continue
 
-        # Match em 2 estratégias:
-        # 1) Exata por url_canonica (cobre o caso normal)
-        # 2) Por MLB ID (LIKE) — cobre fragment/query/encoding divergente
+        # Match em 3 estratégias (cascata):
+        #   1. Exata por url_canonica (caso normal — URL idêntica no DB)
+        #   2. Por URL normalizada (sem fragment/query) via LIKE prefix
+        #   3. Por MLB ID extraído da URL (LIKE %MLBxxx%) — cobre MLBU,
+        #      hífens, encoding divergente. ÚLTIMO recurso porque LIKE
+        #      pode pegar produtos com IDs parcialmente coincidentes.
         produto_id = (await db.execute(
             select(Produto.id).where(
                 Produto.org_id == org_id,
@@ -80,6 +96,20 @@ async def aplicar_mapping(
                 Produto.url_canonica == url_canonica,
             ).limit(1)
         )).scalar_one_or_none()
+
+        if produto_id is None:
+            url_limpa = _normalizar_url(url_canonica)
+            if url_limpa and url_limpa != url_canonica:
+                produto_id = (await db.execute(
+                    select(Produto.id).where(
+                        Produto.org_id == org_id,
+                        Produto.plataforma == "ml",
+                        Produto.url_canonica.like(f"{url_limpa}%"),
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if produto_id is not None:
+                    log.info("afiliado_ml.match_via_url_limpa",
+                             url=url_limpa[:120], produto_id=produto_id)
 
         if produto_id is None:
             mlb_id = _extrair_mlb(url_canonica)
@@ -97,7 +127,7 @@ async def aplicar_mapping(
 
         if produto_id is None:
             log.warning("afiliado_ml.sem_match",
-                        url_canonica=url_canonica[:120], meli_la=meli_la)
+                        url_canonica=url_canonica[:200], meli_la=meli_la)
             stats["sem_match"] += 1
             continue
 

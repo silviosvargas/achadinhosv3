@@ -197,8 +197,19 @@ async def _tentar_entrega(db: AsyncSession, tarefa: Tarefa) -> None:
 
 async def reentregar_pendentes(db: AsyncSession, *, agente_id: int) -> int:
     """
-    Manda pro agente todas as tarefas pendentes ou processando dele.
+    Manda pro agente todas as tarefas PENDENTE dele.
+
     Chamado logo após o agente conectar via WS.
+
+    NÃO re-entrega PROCESSANDO: se uma tarefa estava sendo executada quando
+    o WS caiu, o agente provavelmente terminou (ou está terminando) e o
+    callback vai chegar quando o WS subir de novo. Re-entregar nesse caso
+    causa execução duplicada — observado em prod com `GERAR_LINK` abrindo
+    múltiplas instâncias do Chrome ML simultâneas e crashando com
+    `SessionNotCreatedException: cannot connect to chrome at 127.0.0.1:XXXX`.
+
+    Tarefas legadas presas em PROCESSANDO precisam ser remediadas via
+    /tarefas (UI admin) ou query SQL direta.
 
     Retorna número de tarefas reentregues.
     """
@@ -206,7 +217,7 @@ async def reentregar_pendentes(db: AsyncSession, *, agente_id: int) -> int:
         select(Tarefa)
         .where(
             Tarefa.agente_id == agente_id,
-            Tarefa.status.in_([StatusTarefa.PENDENTE, StatusTarefa.PROCESSANDO]),
+            Tarefa.status == StatusTarefa.PENDENTE,
         )
         .order_by(Tarefa.criado_em)
     )

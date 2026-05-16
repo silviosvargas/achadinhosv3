@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,21 @@ from app.services import linkbuilder
 from app.services.agente_registry import registry
 
 log = get_logger(__name__)
+
+
+def _limpar_url_canonica(url: str | None) -> str | None:
+    """Tira fragment + query (lixo de scraping: `#polycard_client=...`,
+    `?tracking_id=...`). URL canônica ML é estável só com path + host.
+
+    Necessário pra:
+    1) Estabilizar match com `meli.la` mapping no `aplicar_mapping`.
+    2) Não estourar limite de 2000 chars do `url_canonica` no DB.
+    3) Compartilhar URL pro user sem expor tracking interno.
+    """
+    if not url:
+        return url
+    parts = urlparse(url)
+    return urlunparse(parts._replace(query="", fragment=""))
 
 
 class BuscaServiceError(Exception):
@@ -273,10 +289,12 @@ async def ingerir_produtos(
     # nomenclatura na V2). Bug em prod até v3.18 era ler `link_produto` aqui,
     # resultando em lista vazia → GERAR_LINK nunca enfileirada → produtos
     # ficavam sem `meli.la` no banco.
+    # URLs são LIMPAS (fragment/query removidos) — alinhado com o que foi
+    # salvo no DB pelo `_limpar_url_canonica` no _upsert_produto.
     urls_pendentes = await _coletar_urls_sem_meli_la(
         db, org_id=org_id,
         urls_ingeridas=[
-            i.get("url_canonica") for i in produtos_recebidos
+            _limpar_url_canonica(i.get("url_canonica")) for i in produtos_recebidos
             if (i.get("plataforma") or "").lower() == "ml"
             and i.get("url_canonica")
         ],
@@ -397,7 +415,9 @@ async def _upsert_produto(
         )
     )
 
-    url_canonica = item.get("url_canonica")
+    # Limpa fragment/query — scraping ML traz `#polycard_client=...&tracking_id=...`
+    # que polui URL canônica e quebra match com meli.la mapping (Fase 15+).
+    url_canonica = _limpar_url_canonica(item.get("url_canonica"))
     url_afiliado = linkbuilder.gerar_url_afiliado(
         plataforma=plataforma, url_canonica=url_canonica, tag=tag_ml,
     )
