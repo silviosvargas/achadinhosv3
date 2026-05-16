@@ -294,11 +294,57 @@ def _item_pra_produto_v3(
 # Loop principal de busca
 # ============================================================
 
+def _tem_captcha_no_dom(driver: uc.Chrome) -> bool:
+    """Detecta captcha renderizado como MODAL/OVERLAY na página (não como
+    redirect de URL).
+
+    v3.8.7: a Shopee frequentemente exibe o captcha como popup do tipo
+    "slider puzzle" SEM trocar a URL (continua `/offer/product_offer`).
+    A detecção baseada só em URL (`_detectou_login_ou_captcha` clássica)
+    perdia esse caso e a busca prosseguia sem aguardar — exatamente o bug
+    reportado pelo user.
+
+    Estratégia: procura elementos visíveis com seletores específicos da
+    Shopee. Se algum bate E está visível (`offsetParent !== null`), é
+    captcha aberto.
+    """
+    try:
+        return bool(driver.execute_script(r"""
+            var seletores = [
+                'iframe[src*="captcha"]',
+                'iframe[src*="puzzle"]',
+                'iframe[src*="vcode"]',
+                'iframe[src*="verify"]',
+                '[class*="captcha-popup"]',
+                '[class*="verify-popup"]',
+                '[class*="shopee-puzzle"]',
+                '[class*="puzzle-wrapper"]',
+                '[class*="slide-verify"]',
+            ];
+            for (var i = 0; i < seletores.length; i++) {
+                var els = document.querySelectorAll(seletores[i]);
+                for (var j = 0; j < els.length; j++) {
+                    // offsetParent === null => display:none ou detached
+                    if (els[j].offsetParent !== null) return true;
+                }
+            }
+            return false;
+        """))
+    except Exception as e:
+        log.debug("shopee.detectar_captcha_dom_falhou", erro=str(e)[:120])
+        return False
+
+
 def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
     """Detecta se o painel pediu login ou captcha.
 
     Retorna (motivo, instrucao_user) ou None se tudo OK.
     `motivo` vai pros logs; `instrucao_user` é mostrada num banner no Chrome.
+
+    Estratégia em CASCATA:
+    1. URL contém keywords de login/captcha (caso fácil — redirect explícito)
+    2. v3.8.7: DOM tem modal/iframe de captcha visível (caso comum Shopee —
+       captcha renderizado como overlay sem trocar URL)
     """
     url = (driver.current_url or "").lower()
     if "login" in url or "buyer/login" in url:
@@ -312,6 +358,13 @@ def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
             "captcha",
             "🤖 Shopee pediu CAPTCHA. Resolva o desafio nesta janela do Chrome. "
             "Quando voltar pra Ofertas de Produtos, vou continuar.",
+        )
+    # v3.8.7: detecção de captcha como modal/overlay (URL não muda)
+    if _tem_captcha_no_dom(driver):
+        return (
+            "captcha",
+            "🤖 Shopee pediu CAPTCHA (popup nesta página). Resolva o desafio "
+            "nesta janela do Chrome — vou esperar e continuar automaticamente.",
         )
     return None
 
@@ -600,8 +653,43 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
 
                     items_raw = (data.get("data") or {}).get("list") or []
                     if not items_raw:
-                        log.info("shopee.aba_fim", nome=nome_aba, pag=pagina + 1)
-                        break
+                        # v3.8.7: pode ser captcha modal aberto NA PÁGINA (a
+                        # API responde 200 com lista vazia quando o backend
+                        # detecta abuso). Verifica DOM antes de assumir "fim
+                        # da aba" e abandonar.
+                        problema_meio = _detectou_login_ou_captcha(driver)
+                        if problema_meio:
+                            motivo_meio, instrucao_meio = problema_meio
+                            log.warning("shopee.bloqueio_durante_busca",
+                                        pag=pagina + 1, motivo=motivo_meio)
+                            if not _resolver_login_ou_captcha(
+                                driver, motivo_meio, instrucao_meio,
+                            ):
+                                raise RuntimeError(
+                                    f"Shopee {motivo_meio} durante busca (pag {pagina + 1}) "
+                                    "e usuário não resolveu em 3 tentativas."
+                                )
+                            # Retry da mesma página depois de resolver
+                            result = _chamar_api(
+                                driver,
+                                list_type=aba["list_type"],
+                                page_offset=offset,
+                                page_limit=PRODUTOS_POR_PAGINA,
+                                cat=aba.get("cat"),
+                            )
+                            try:
+                                data = json.loads(result["body"])
+                                items_raw = (data.get("data") or {}).get("list") or []
+                            except (json.JSONDecodeError, TypeError):
+                                items_raw = []
+                            if not items_raw:
+                                log.info("shopee.aba_fim_apos_captcha",
+                                         nome=nome_aba, pag=pagina + 1)
+                                break
+                        else:
+                            log.info("shopee.aba_fim",
+                                     nome=nome_aba, pag=pagina + 1)
+                            break
 
                     for item in items_raw:
                         if coletados_aba >= por_aba or len(todos) >= max_produtos:
