@@ -245,7 +245,73 @@ async def ingerir_produtos(
         org_id=org_id, agente_id=agente_id, busca_id=busca_id,
         tarefa_id=tarefa_id, **{k: v for k, v in stats.items() if k != "detalhes"},
     )
+
+    # Fase 15: dispara tarefa pro AGENTE gerar shortlinks `meli.la` oficiais
+    # via scraping do painel ML afiliados. Coleta URLs canônicas dos produtos
+    # ML que AINDA não têm `url_afiliado=meli.la` (pra evitar re-scraping).
+    urls_pendentes = await _coletar_urls_sem_meli_la(
+        db, org_id=org_id,
+        urls_ingeridas=[
+            i.get("link_produto") for i in produtos_recebidos
+            if (i.get("plataforma") or "").lower() == "ml"
+            and i.get("link_produto")
+        ],
+    )
+    if urls_pendentes:
+        await _enfileirar_geracao_links_ml(
+            db, org_id=org_id, agente_id=agente_id,
+            usuario_id=disparador.id if disparador else None,
+            urls=urls_pendentes,
+        )
+
     return stats
+
+
+async def _coletar_urls_sem_meli_la(
+    db: AsyncSession, *, org_id: int, urls_ingeridas: list[str],
+) -> list[str]:
+    """Filtra: só URLs cujo `url_afiliado` no DB AINDA não é `meli.la/...`."""
+    if not urls_ingeridas:
+        return []
+    rows = (await db.execute(
+        select(Produto.url_canonica, Produto.url_afiliado).where(
+            Produto.org_id == org_id,
+            Produto.plataforma == "ml",
+            Produto.url_canonica.in_(urls_ingeridas),
+        )
+    )).all()
+    pendentes: list[str] = []
+    for url_c, url_a in rows:
+        if not url_a or "meli.la/" not in (url_a or ""):
+            pendentes.append(url_c)
+    return pendentes
+
+
+async def _enfileirar_geracao_links_ml(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    agente_id: int,
+    usuario_id: int | None,
+    urls: list[str],
+) -> None:
+    """Cria tarefa `GERAR_LINK` e despacha pro agente via WS."""
+    from app.services.dispatcher import _tentar_entrega
+
+    tarefa = Tarefa(
+        org_id=org_id,
+        tipo=TipoTarefa.GERAR_LINK,
+        agente_id=agente_id,
+        criado_por_usuario_id=usuario_id,
+        status=StatusTarefa.PENDENTE,
+        payload={"urls": urls},
+    )
+    db.add(tarefa)
+    await db.commit()
+    await db.refresh(tarefa)
+    await _tentar_entrega(db, tarefa)
+    log.info("linkbuilder.tarefa_criada",
+             tarefa_id=tarefa.id, agente_id=agente_id, urls=len(urls))
 
 
 async def _resolver_disparador(

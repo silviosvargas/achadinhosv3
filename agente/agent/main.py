@@ -237,6 +237,34 @@ async def main_async(
 
     cliente.on_comando("iniciar_busca_ml", handler_busca_ml)
 
+    # Handler de geração de links de afiliado ML (Fase 15)
+    async def handler_gerar_links_ml(msg: dict) -> dict:
+        """Recebe lista de URLs canônicas, retorna `meli.la/XXX` em lote.
+
+        Body esperado: {"urls": ["https://mercadolivre.com.br/.../p/MLB...", ...]}
+        Resposta: {"mapping": {"url_canonica": "https://meli.la/XXX"}, "total": N}
+
+        Pré-condição: chrome_perfil_ml já fez login no painel ML afiliados
+        (uma vez manual via `python -m agent.login_ml` num path adequado, ou
+        login direto no painel). Sem isso, scraping volta vazio.
+        """
+        from agent.linkbuilder_ml import gerar_links_em_lote
+
+        urls = msg.get("urls") or []
+        if not isinstance(urls, list) or not urls:
+            return {"mapping": {}, "total": 0, "erro": "lista_vazia"}
+
+        if tray:
+            tray.atualizar_status("postando")
+        try:
+            mapping = await gerar_links_em_lote(cfg, urls)
+            return {"mapping": mapping, "total": len(mapping)}
+        finally:
+            if tray:
+                tray.atualizar_status("online")
+
+    cliente.on_comando("gerar_links_afiliado_ml", handler_gerar_links_ml)
+
     if tray:
         tray.atualizar_status("online")
 

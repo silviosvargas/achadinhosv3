@@ -142,6 +142,7 @@ def _resolver_destino(canal: Canal) -> tuple[str, int | None]:
 _TIPO_TAREFA_PARA_COMANDO_WS = {
     TipoTarefa.POSTAR_WHATSAPP:      "postar_whatsapp",
     TipoTarefa.BUSCAR_MERCADO_LIVRE: "iniciar_busca_ml",
+    TipoTarefa.GERAR_LINK:           "gerar_links_afiliado_ml",
 }
 
 
@@ -225,6 +226,17 @@ async def marcar_concluida(
     tarefa.concluido_em = datetime.now(tz=timezone.utc)
     await db.commit()
     log.info("tarefa.concluida", tarefa_id=tarefa_id)
+
+    # Hook por tipo: tarefas com side-effect pós-conclusão.
+    # GERAR_LINK (Fase 15): aplica o mapping retornado pelo linkbuilder
+    # do agente, atualizando `produtos.url_afiliado` com os meli.la oficiais.
+    if tarefa.tipo == TipoTarefa.GERAR_LINK:
+        mapping = (resultado or {}).get("mapping") or {}
+        if mapping:
+            from app.services import afiliado_ml_writer
+            await afiliado_ml_writer.aplicar_mapping(
+                db, org_id=tarefa.org_id, mapping=mapping,
+            )
 
 
 async def marcar_falhou(

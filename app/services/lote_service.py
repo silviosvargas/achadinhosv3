@@ -96,20 +96,27 @@ async def rodar_lote(
     cache_tag: dict[str, str | None] = {}
 
     async def _url_pro_produto(p) -> str:
-        """Calcula URL CURTA (encurtador próprio) que redireciona pra URL
-        do marketplace com tag do disparador.
+        """Resolve a URL final a ser postada pra um produto.
 
-        Pipeline:
-        1. Resolve tag via cascata (user→admin_org→admin_central→env).
-        2. linkbuilder monta URL longa com tag.
-        3. redirect_service cria/atualiza row em `redirects` (1 por produto).
-        4. Retorna URL curta `{PUBLIC_BASE_URL}/r/{slug}` — essa que vai
-           pra postagem.
+        Pipeline com PRIORIDADE (Fase 15):
+        1. **meli.la oficial** se já cacheado em `p.url_afiliado` — usa
+           direto. ML credita comissão de verdade. NÃO passa pelo nosso
+           encurtador (`meli.la` já é shortlink dele).
+        2. Senão, fallback: monta URL longa via linkbuilder (com `?matt_word=`
+           que NÃO é reconhecido como afiliado válido — mas posta mesmo
+           assim) + encurta no nosso `/r/{slug}` pra ficar bonito.
 
-        Fallback: se PUBLIC_BASE_URL não configurado, devolve URL longa
-        direta (degrada graciosamente).
+        Quando a Fase 15 estiver completa (agente gerou meli.la pros 50
+        produtos), o caminho 1 vai dominar. O caminho 2 só serve enquanto
+        o linkbuilder do agente ainda não rodou pra esse produto.
         """
         plat = (p.plataforma or "").lower()
+
+        # Caminho 1 (Fase 15): meli.la oficial gerado pelo agente
+        if plat == "ml" and p.url_afiliado and "meli.la/" in p.url_afiliado:
+            return p.url_afiliado
+
+        # Caminho 2 (fallback): tag via cascata + linkbuilder genérico + nosso /r/
         if plat not in cache_tag:
             cache_tag[plat] = await afiliado_service.tag_com_cascata(
                 db,
@@ -122,15 +129,11 @@ async def rodar_lote(
             url_canonica=p.url_canonica,
             tag=cache_tag[plat],
         ) or p.url_canonica or ""
-
         if not url_longa:
             return ""
-
         base = (settings.public_base_url or "").rstrip("/")
         if not base:
-            # Sem domínio público configurado — usa URL longa mesmo.
             return url_longa
-
         red = await redirect_service.criar_ou_atualizar_pro_produto(
             db, produto_id=p.id, url_destino=url_longa,
         )

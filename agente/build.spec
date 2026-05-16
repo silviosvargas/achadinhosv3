@@ -36,6 +36,7 @@ a = Analysis(
         'agent.ingest_client',
         'agent.chrome',
         'agent.local_server',         # Fase 9.2 — HTTP local
+        'agent.linkbuilder_ml',       # Fase 15 — gera meli.la em lote
         'agent.postador.whatsapp',
         'agent.postador.saude',
         # undetected-chromedriver tem imports dinâmicos
