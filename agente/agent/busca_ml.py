@@ -771,41 +771,40 @@ def _capturar_comissao_da_barra(driver, url: str) -> float | None:
         time.sleep(1.5)
 
         pct = driver.execute_script(r"""
-            // v3.8.3: busca em múltiplas fontes (body + iframes + outerHTML).
-            // Mesma estratégia do busca_padrao_ml.py — barra de afiliados ML
-            // pode estar em iframe / markup com tags entre as palavras.
-            function coletarTextos() {
-                var partes = [];
-                if (document.body) partes.push(document.body.textContent || '');
-                try {
-                    var iframes = document.querySelectorAll('iframe');
-                    for (var k = 0; k < iframes.length; k++) {
-                        try {
-                            var d = iframes[k].contentDocument;
-                            if (d && d.body) partes.push(d.body.textContent || '');
-                        } catch (e) {}
-                    }
-                } catch (e) {}
-                return partes.join('\n');
-            }
-            var txt = coletarTextos();
+            // v3.8.4: usa seletor CSS direto da barra ML.
+            // Estrutura: div#stripe > ... > span.stripe-commission__percentage ("9%")
+            //                              + span.stripe-commission__pillsecond ("EXTRAS")
+            // Detalhes em busca_padrao_ml.py.
             var melhor = {extras: null, base: null};
-            var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-            if (mE) {
-                var nE = parseFloat(mE[1].replace(',', '.'));
-                if (!isNaN(nE) && nE > 0 && nE <= 50) melhor.extras = nE;
+            var pctEl = document.querySelector(
+                'span.stripe-commission__percentage, [class*="stripe-commission__percentage"]'
+            );
+            if (pctEl) {
+                var raw = (pctEl.textContent || '').replace(/[^\d.,]/g, '');
+                var n = parseFloat(raw.replace(',', '.'));
+                if (!isNaN(n) && n > 0 && n <= 50) {
+                    var pillsec = document.querySelector(
+                        'span.stripe-commission__pillsecond, [class*="stripe-commission__pillsecond"]'
+                    );
+                    if (pillsec && /EXTRAS/i.test(pillsec.textContent || '')) {
+                        melhor.extras = n;
+                    } else {
+                        melhor.base = n;
+                    }
+                }
             }
-            var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-            if (mB) {
-                var nB = parseFloat(mB[1].replace(',', '.'));
-                if (!isNaN(nB) && nB > 0 && nB <= 50) melhor.base = nB;
-            }
-            if (melhor.extras === null && document.documentElement) {
-                var html = document.documentElement.outerHTML || '';
-                var mEh = html.match(/GANHOS[\s\S]{0,300}?EXTRAS[\s\S]{0,300}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-                if (mEh) {
-                    var nEh = parseFloat(mEh[1].replace(',', '.'));
-                    if (!isNaN(nEh) && nEh > 0 && nEh <= 50) melhor.extras = nEh;
+            // Fallback regex (classes podem mudar) — \s* aceita zero espaços
+            if (melhor.extras === null && melhor.base === null) {
+                var txt = document.body ? (document.body.textContent || '') : '';
+                var mE = txt.match(/GANHOS\s*EXTRAS\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+                if (mE) {
+                    var nE = parseFloat(mE[1].replace(',', '.'));
+                    if (!isNaN(nE) && nE > 0 && nE <= 50) melhor.extras = nE;
+                }
+                var mB = txt.match(/GANHOS\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+                if (mB) {
+                    var nB = parseFloat(mB[1].replace(',', '.'));
+                    if (!isNaN(nB) && nB > 0 && nB <= 50) melhor.base = nB;
                 }
             }
             return melhor.extras !== null ? melhor.extras : melhor.base;

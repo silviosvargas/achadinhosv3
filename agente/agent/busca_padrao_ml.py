@@ -76,51 +76,56 @@ def _capturar_comissao_e_preco_no_destino(
         busca padrão `padrao_comissao_extra` que filtra só os com bônus.
     """
     dados = driver.execute_script(r"""
-        // v3.8.3: busca em MÚLTIPLAS fontes (body + iframes + outerHTML).
+        // v3.8.4: USA SELETORES CSS ESPECÍFICOS da barra preta de afiliados ML.
         //
-        // v3.8.2 buscava só body.textContent — pegava "GANHOS X%" base
-        // (texto regular da página) mas perdia "GANHOS EXTRAS Y%" da barra
-        // preta de afiliados ML, que é injetada via iframe ou tem markup
-        // peculiar. Diagnóstico do user (v3.8.2): screenshot mostra bem
-        // "GANHOS EXTRAS 9%" no topo mas log mostra extra=None.
-        function coletarTextos() {
-            var partes = [];
-            if (document.body) partes.push(document.body.textContent || '');
-            // Iframes same-origin (security exception em cross-origin → ignora)
-            try {
-                var iframes = document.querySelectorAll('iframe');
-                for (var k = 0; k < iframes.length; k++) {
-                    try {
-                        var d = iframes[k].contentDocument;
-                        if (d && d.body) partes.push(d.body.textContent || '');
-                    } catch (e) { /* cross-origin */ }
-                }
-            } catch (e) {}
-            return partes.join('\n');
-        }
-        var txt = coletarTextos();
+        // Estrutura confirmada via DevTools do user (16/05/2026):
+        //   div#stripe > nav.stripe > div.toolbar > div.toolbar__actions
+        //     > div.stripe-commission
+        //         span.stripe-commission__pillsecond   → "EXTRAS" (só quando tem bônus)
+        //         span.stripe-commission__percentage   → "9%" (valor numérico)
+        //
+        // BUG anterior (v3.8.0-8.3): textContent concatenava sem whitespace
+        // entre os spans → "GANHOSEXTRAS9%" → regex /\s+/ não dava match.
+        //
+        // Solução: ler o número direto do span percentage e detectar bônus
+        // pela presença do span pillsecond com texto "EXTRAS".
         var melhorCom = {extras: null, base: null};
-        var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-        if (mE) {
-            var nE = parseFloat(mE[1].replace(',', '.'));
-            if (!isNaN(nE) && nE > 0 && nE <= 50) melhorCom.extras = nE;
+
+        var percentageEl = document.querySelector(
+            'span.stripe-commission__percentage, [class*="stripe-commission__percentage"]'
+        );
+        if (percentageEl) {
+            var raw = (percentageEl.textContent || '').replace(/[^\d.,]/g, '');
+            var n = parseFloat(raw.replace(',', '.'));
+            if (!isNaN(n) && n > 0 && n <= 50) {
+                // Tem o span "EXTRAS"? → é bônus (GANHOS EXTRAS X%)
+                // Não tem?            → é comissão base (GANHOS X%)
+                var pillsec = document.querySelector(
+                    'span.stripe-commission__pillsecond, [class*="stripe-commission__pillsecond"]'
+                );
+                var ehExtras = pillsec && /EXTRAS/i.test(pillsec.textContent || '');
+                if (ehExtras) {
+                    melhorCom.extras = n;
+                } else {
+                    melhorCom.base = n;
+                }
+            }
         }
-        var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-        if (mB) {
-            var nB = parseFloat(mB[1].replace(',', '.'));
-            if (!isNaN(nB) && nB > 0 && nB <= 50) melhorCom.base = nB;
-        }
-        // Fallback: se extras não achou no body/iframes mas pode estar com
-        // markup peculiar (spans/divs com whitespace exótico), tenta regex
-        // flexível no HTML serializado completo.
-        if (melhorCom.extras === null && document.documentElement) {
-            var html = document.documentElement.outerHTML || '';
-            // Regex flexível: aceita até 300 chars de tags/whitespace entre
-            // GANHOS, EXTRAS e o número.
-            var mEh = html.match(/GANHOS[\s\S]{0,300}?EXTRAS[\s\S]{0,300}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-            if (mEh) {
-                var nEh = parseFloat(mEh[1].replace(',', '.'));
-                if (!isNaN(nEh) && nEh > 0 && nEh <= 50) melhorCom.extras = nEh;
+
+        // Fallback regex (caso ML mude as classes): busca no body inteiro com
+        // \s* (zero ou mais espaços) porque os spans podem estar sem whitespace
+        // entre eles. Restritivo: só roda se seletores não acharam nada.
+        if (melhorCom.extras === null && melhorCom.base === null) {
+            var txt = document.body ? (document.body.textContent || '') : '';
+            var mE = txt.match(/GANHOS\s*EXTRAS\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mE) {
+                var nE = parseFloat(mE[1].replace(',', '.'));
+                if (!isNaN(nE) && nE > 0 && nE <= 50) melhorCom.extras = nE;
+            }
+            var mB = txt.match(/GANHOS\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mB) {
+                var nB = parseFloat(mB[1].replace(',', '.'));
+                if (!isNaN(nB) && nB > 0 && nB <= 50) melhorCom.base = nB;
             }
         }
 
