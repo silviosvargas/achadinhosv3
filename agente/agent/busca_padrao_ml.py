@@ -520,15 +520,20 @@ async def varrer_padrao_completo(
 
 def _processar_categoria_para_extras(
     driver, *, nome_categoria: str, url_categoria: str,
-    candidatos_por_categoria: int, faltam: int,
+    candidatos_por_categoria: int, min_por_categoria: int,
     tarefa_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
     """Igual `_processar_categoria` mas:
     1. Filtra: só mantém produtos com `comissao_extra > 0` (bônus GANHOS EXTRAS).
-    2. Para ao juntar `faltam` produtos válidos.
+    2. Para de iterar candidatos ao atingir `min_por_categoria` produtos com
+       extras OU esgotar a lista de candidatos.
     3. Gera meli.la INCREMENTAL (a cada N) só pros COM extras.
 
-    Returns: lista de produtos com extras, no máximo `faltam`.
+    v3.8.5: regra mudada — antes era `faltam` (alvo decrescente do total),
+    agora é `min_por_categoria` (alvo fixo POR categoria, sem teto global).
+    Pode acabar com 3, 5, 10 ou mais por categoria — depende do que ML tem.
+
+    Returns: lista de produtos com extras encontrados nesta categoria.
     """
     from agent.busca_ml import (
         _extrair_cards_da_pagina,
@@ -540,7 +545,8 @@ def _processar_categoria_para_extras(
 
     log.info("ml.padrao_extra.categoria_iniciada",
              nome=nome_categoria, url=url_categoria,
-             candidatos_alvo=candidatos_por_categoria, faltam=faltam)
+             candidatos_alvo=candidatos_por_categoria,
+             min_por_categoria=min_por_categoria)
 
     try:
         driver.get(url_categoria)
@@ -593,9 +599,10 @@ def _processar_categoria_para_extras(
                      com_extras_ate_aqui=len(com_extras))
             break
 
-        if len(com_extras) >= faltam:
-            log.info("ml.padrao_extra.alvo_atingido",
-                     nome=nome_categoria, total=len(com_extras))
+        if len(com_extras) >= min_por_categoria:
+            log.info("ml.padrao_extra.minimo_atingido",
+                     nome=nome_categoria, total=len(com_extras),
+                     min_por_categoria=min_por_categoria)
             break
 
         url_can = p.get("url_canonica") or ""
@@ -671,7 +678,7 @@ def _processar_categoria_para_extras(
 
         log.info("ml.padrao_extra.captura_com_bonus",
                  n=i, total=len(candidatos),
-                 com_extras=len(com_extras), alvo=faltam,
+                 com_extras=len(com_extras), minimo=min_por_categoria,
                  item_id=p.get("item_id"),
                  comissao=p.get("comissao"),
                  extra=com_extra, preco=p.get("preco"))
@@ -700,16 +707,22 @@ def _processar_categoria_para_extras(
              nome=nome_categoria,
              candidatos=len(candidatos),
              com_extras=len(com_extras),
-             zero=ct_zero, so_base=ct_so_base, com_extra=ct_com_extra)
-    return com_extras[:faltam]
+             zero=ct_zero, so_base=ct_so_base, com_extra=ct_com_extra,
+             min_por_categoria=min_por_categoria,
+             min_atingido=(len(com_extras) >= min_por_categoria))
+    return com_extras
 
 
 def _varrer_padrao_comissao_extra_sync(
     cfg: Config, *, candidatos_por_categoria: int = 30,
-    alvo_total: int = 10, tarefa_id: int | str | None = None,
+    min_por_categoria: int = 3, tarefa_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
-    """Itera CATEGORIAS_PADRAO até juntar `alvo_total` produtos com bônus
-    GANHOS EXTRAS. Para cedo (não passa por todas categorias se já achou N).
+    """Itera TODAS as CATEGORIAS_PADRAO e mantém produtos com bônus
+    GANHOS EXTRAS. Por categoria, busca até atingir `min_por_categoria`
+    produtos com extras (ou esgotar candidatos).
+
+    v3.8.5: regra mudada — antes `alvo_total` global parava cedo, agora
+    visita TODAS as categorias. Sem teto total — depende do que ML oferece.
     """
     from agent.busca_ml import _criar_driver_ml
     from agent.linkbuilder_ml import _LOCK_CHROME_ML
@@ -717,11 +730,13 @@ def _varrer_padrao_comissao_extra_sync(
 
     total_cat = len(CATEGORIAS_PADRAO)
     log.info("ml.padrao_extra.iniciando",
-             categorias=total_cat, alvo_total=alvo_total,
+             categorias=total_cat, min_por_categoria=min_por_categoria,
              candidatos_por_categoria=candidatos_por_categoria,
              tarefa_id=tarefa_id)
-    ws_progresso.reportar(tarefa_id, 0.0,
-                          f"Buscando {alvo_total} produtos com comissão EXTRA…")
+    ws_progresso.reportar(
+        tarefa_id, 0.0,
+        f"Buscando {min_por_categoria}+ por categoria com comissão EXTRA…",
+    )
 
     cancelada = False
     with _LOCK_CHROME_ML:
@@ -739,27 +754,21 @@ def _varrer_padrao_comissao_extra_sync(
                     cancelada = True
                     break
 
-                faltam = alvo_total - len(todos)
-                if faltam <= 0:
-                    log.info("ml.padrao_extra.alvo_global_atingido",
-                             total=len(todos), categorias_visitadas=i-1)
-                    # Reporta 100% explicitamente — pulou as categorias restantes
-                    break
-
                 pct_inicio = ((i - 1) / total_cat) * 100.0
                 ws_progresso.reportar(
                     tarefa_id, pct_inicio,
-                    f"Categoria {i}/{total_cat}: {nome} ({len(todos)}/{alvo_total} já com EXTRAS)",
+                    f"Categoria {i}/{total_cat}: {nome} ({len(todos)} EXTRAS acumulados)",
                 )
                 log.info("ml.padrao_extra.categoria",
-                         n=i, total=total_cat, nome=nome, faltam=faltam)
+                         n=i, total=total_cat, nome=nome,
+                         min_por_categoria=min_por_categoria)
                 try:
                     achados = _processar_categoria_para_extras(
                         driver,
                         nome_categoria=nome,
                         url_categoria=url,
                         candidatos_por_categoria=candidatos_por_categoria,
-                        faltam=faltam,
+                        min_por_categoria=min_por_categoria,
                         tarefa_id=tarefa_id,
                     )
                     todos.extend(achados)
@@ -779,7 +788,7 @@ def _varrer_padrao_comissao_extra_sync(
                 pct_fim = (i / total_cat) * 100.0
                 ws_progresso.reportar(
                     tarefa_id, pct_fim,
-                    f"Categoria {i}/{total_cat} OK — {len(todos)}/{alvo_total} com EXTRAS",
+                    f"Categoria {i}/{total_cat} OK — {len(todos)} EXTRAS acumulados",
                 )
         finally:
             try:
@@ -796,18 +805,19 @@ def _varrer_padrao_comissao_extra_sync(
             f"Concluído — {len(todos)} produtos com comissão EXTRA",
         )
     log.info("ml.padrao_extra.concluido",
-             produtos_finais=len(todos), alvo=alvo_total, cancelada=cancelada)
-    return todos[:alvo_total]
+             produtos_finais=len(todos),
+             min_por_categoria=min_por_categoria, cancelada=cancelada)
+    return todos
 
 
 async def varrer_padrao_comissao_extra(
     cfg: Config, *, candidatos_por_categoria: int = 30,
-    alvo_total: int = 10, tarefa_id: int | str | None = None,
+    min_por_categoria: int = 3, tarefa_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
     """Async wrapper — roda Selenium em thread separada."""
     return await asyncio.to_thread(
         _varrer_padrao_comissao_extra_sync, cfg,
         candidatos_por_categoria=candidatos_por_categoria,
-        alvo_total=alvo_total,
+        min_por_categoria=min_por_categoria,
         tarefa_id=tarefa_id,
     )

@@ -1479,14 +1479,17 @@ async def _coletar_produtos_ml(
             )
         elif tipo_busca == "padrao_comissao_extra":
             # v3.8.0 — busca padrão SÓ produtos com bônus GANHOS EXTRAS
-            # (promoção Mais por Mais ML). Para de buscar ao juntar
-            # `alvo_total` (default 10).
+            # (promoção Mais por Mais ML).
+            # v3.8.5 — regra mudada: visita TODAS as categorias e mantém
+            # pelo menos `min_por_categoria` produtos com extras por categoria
+            # (ou esgota candidatos da categoria). Sem teto global.
+            # Compat: aceita `alvo_total` legado mas prefere `min_por_categoria`.
             from agent.busca_padrao_ml import varrer_padrao_comissao_extra
             candidatos_por_cat = int(msg.get("candidatos_por_categoria", 30))
-            alvo_total         = int(msg.get("alvo_total", 10))
+            min_por_cat        = int(msg.get("min_por_categoria", 3))
             produtos = await varrer_padrao_comissao_extra(
                 cfg, candidatos_por_categoria=candidatos_por_cat,
-                alvo_total=alvo_total,
+                min_por_categoria=min_por_cat,
                 tarefa_id=msg.get("tarefa_id"),
             )
         elif tipo_busca == "mais_vendidos":
