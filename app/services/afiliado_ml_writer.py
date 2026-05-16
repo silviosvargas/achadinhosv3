@@ -154,6 +154,79 @@ async def aplicar_mapping(
     return stats
 
 
+async def aplicar_mapping_comissoes_por_id(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    mapping_por_id: dict[str, float] | dict[int, float],
+) -> dict[str, int]:
+    """Fase 18.3 (v3.4.2) — versão por_id da `aplicar_mapping_comissoes_barra`.
+
+    O agente abre cada `url_afiliado` (meli.la) e devolve mapping
+    indexado pelo `produto_id` (não URL). Match direto pelo PK do DB —
+    mais robusto que match por URL via LIKE.
+
+    JSON do payload converte int keys pra string — esta função aceita ambos.
+    """
+    if not mapping_por_id:
+        return {"produtos_atualizados": 0, "ignorados": 0, "sem_match": 0}
+
+    from datetime import datetime, timezone
+    from app.services.scoring import calcular_nota
+
+    stats = {"produtos_atualizados": 0, "ignorados": 0, "sem_match": 0}
+    agora = datetime.now(tz=timezone.utc)
+
+    for raw_id, comissao_pct in mapping_por_id.items():
+        try:
+            produto_id = int(raw_id)
+            comissao_pct = float(comissao_pct)
+        except (TypeError, ValueError):
+            stats["ignorados"] += 1
+            continue
+        if comissao_pct <= 0:
+            stats["ignorados"] += 1
+            continue
+
+        produto = await db.get(Produto, produto_id)
+        # Confere org_id pra não atualizar produto de outra tenant
+        if produto is None or produto.org_id != org_id:
+            log.warning("afiliado_ml.comissao_id_sem_match",
+                        produto_id=produto_id, org_id=org_id)
+            stats["sem_match"] += 1
+            continue
+
+        antes = produto.comissao
+        produto.comissao               = comissao_pct
+        produto.comissao_fonte         = "ml_barra_afiliados"
+        produto.comissao_atualizada_em = agora
+
+        # Recalcula nota — comissao_validada=True automaticamente pq calcular_nota
+        # chama validar_comissao internamente
+        info_nota = calcular_nota({
+            "plataforma":     produto.plataforma,
+            "preco":          produto.preco,
+            "preco_orig":     produto.preco_orig,
+            "desconto":       produto.desconto,
+            "comissao":       produto.comissao,
+            "total_vendidos": produto.total_vendidos,
+            "is_bestseller":  produto.is_bestseller,
+            "is_em_alta":     produto.is_em_alta,
+        })
+        produto.nota              = info_nota["nota"]
+        produto.comissao_validada = info_nota["comissao_validada"]
+
+        stats["produtos_atualizados"] += 1
+        log.info("afiliado_ml.comissao_por_id_atualizada",
+                 produto_id=produto_id, antes=antes, depois=comissao_pct,
+                 nota_nova=info_nota["nota"])
+
+    await db.commit()
+    log.info("afiliado_ml.mapping_comissoes_por_id_aplicado",
+             org_id=org_id, **stats)
+    return stats
+
+
 async def aplicar_mapping_comissoes_barra(
     db: AsyncSession,
     *,

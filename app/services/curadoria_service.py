@@ -188,50 +188,75 @@ async def disparar_revalidacao_comissoes_via_agente(
     db: AsyncSession,
     *,
     org_id: int,
-    limite: int = 100,
+    limite: int = 50,
 ) -> dict:
-    """Fase 18.3 (v3.4.1) — dispara tarefa pro agente abrir cada produto ML
-    da org e capturar comissão REAL da barra preta de afiliados.
+    """Fase 18.3 (v3.4.2) — dispara tarefa pro agente abrir cada produto
+    DO TOP atual via seu LINK DE AFILIADO (meli.la), capturando a comissão
+    real da barra preta de afiliados ML no destino do redirect.
 
     Estratégia:
-    1. Pega N produtos ML da org cuja `comissao_fonte` NÃO É 'ml_barra_afiliados'
-       (ou seja, produtos que ainda não foram revalidados)
-    2. Cria 1 tarefa `REVALIDAR_COMISSAO_ML` com `urls=[...]`
-    3. Entrega via dispatcher (tenta entregar via WS se agente online)
-    4. Hook em `dispatcher.marcar_concluida` aplica resultado via
-       `afiliado_ml_writer.aplicar_mapping_comissoes_barra`
+    1. Pega os produtos do TOP atual da org (ordenados por nota DESC)
+    2. Filtra ML com `url_afiliado LIKE '%meli.la/%'` (sem link real não dá)
+    3. Filtra os que ainda não têm `comissao_fonte=ml_barra_afiliados`
+       (não revalida o que já foi)
+    4. Cria 1 tarefa `REVALIDAR_COMISSAO_ML` com payload `items=[{produto_id, url_afiliado}]`
+    5. Entrega via dispatcher
+    6. Hook em `marcar_concluida` aplica resultado via
+       `afiliado_ml_writer.aplicar_mapping_comissoes_por_id`
 
-    Custo: agente leva ~2s por URL. Pra 100 URLs = ~3min.
+    Por que `meli.la` em vez da URL canônica:
+    O ML registra como clique afiliado real → barra mostra a comissão
+    correta do programa. URL canônica direta pode mostrar comissão
+    genérica ou nenhuma.
+
+    Por que filtrar pelo TOP:
+    Faz sentido revalidar prioridade nos produtos que vão ser POSTADOS —
+    se não está no TOP, não vai pra grupo, não precisa ter comissão precisa.
+
+    Custo: ~2s por produto. TOP de 50 = ~1.5min.
 
     Returns:
-        {"tarefa_id": N, "urls_enfileiradas": M, "produtos_pendentes": K}
-        ou {"ok": False, "erro": "..."}
+        {"ok": bool, "tarefa_id": N, "items_enfileirados": M, "mensagem": "..."}
     """
-    from app.models import Agente, Produto, StatusTarefa, Tarefa, TipoTarefa
+    from app.models import Agente, StatusTarefa, Tarefa, TipoTarefa
     from app.services import dispatcher
     from app.services.agente_registry import registry
 
-    # Produtos ML da org sem comissão real ainda
-    rows = (await db.execute(
-        select(Produto.url_canonica).where(
-            Produto.org_id == org_id,
-            Produto.plataforma == "ml",
-            Produto.url_canonica.is_not(None),
-            Produto.bloqueado.is_(False),
-            Produto.comissao_fonte != "ml_barra_afiliados",
-        ).limit(limite)
-    )).all()
+    # 1. Pega produtos do TOP atual (sem filtro de nota — pega todos
+    #    pra revalidar o máximo possível)
+    produtos_top = await listar_top(
+        db, org_id=org_id, limite=limite, nota_minima=0,
+        incluir_postados_recentemente=True,
+    )
+    # Fallback admin_org se org do user não tem TOP (catálogo compartilhado)
+    if not produtos_top:
+        from app.core.config import settings as _s
+        if org_id != _s.admin_org_id:
+            produtos_top = await listar_top(
+                db, org_id=_s.admin_org_id, limite=limite, nota_minima=0,
+                incluir_postados_recentemente=True,
+            )
 
-    urls = [u for (u,) in rows if u]
-    if not urls:
+    # 2-3. Filtra ML com meli.la + sem revalidação ainda
+    items: list[dict] = []
+    for p in produtos_top:
+        if p.plataforma != "ml":
+            continue
+        if not p.url_afiliado or "meli.la/" not in p.url_afiliado:
+            continue
+        if p.comissao_fonte == "ml_barra_afiliados":
+            continue  # já revalidado, pula
+        items.append({"produto_id": p.id, "url_afiliado": p.url_afiliado})
+
+    if not items:
         return {
-            "ok":               True,
-            "tarefa_id":        None,
-            "urls_enfileiradas": 0,
-            "mensagem":         "Todos os produtos já tem comissão da barra ML — nada a revalidar",
+            "ok":                True,
+            "tarefa_id":         None,
+            "items_enfileirados": 0,
+            "mensagem":          "Nenhum produto do TOP pra revalidar (ou todos já tem ✅ ML barra, ou não tem meli.la)",
         }
 
-    # Pega 1º agente online da org
+    # 4. Pega 1º agente online da org
     agentes = list((await db.execute(
         select(Agente).where(
             Agente.org_id == org_id, Agente.ativo.is_(True),
@@ -249,7 +274,7 @@ async def disparar_revalidacao_comissoes_via_agente(
         tipo=TipoTarefa.REVALIDAR_COMISSAO_ML,
         status=StatusTarefa.PENDENTE,
         agente_id=agente.id,
-        payload={"urls": urls},
+        payload={"items": items},
     )
     db.add(tarefa)
     await db.commit()
@@ -258,14 +283,14 @@ async def disparar_revalidacao_comissoes_via_agente(
     await dispatcher._tentar_entrega(db, tarefa)
 
     log.info("curadoria.revalidar_via_agente.disparado",
-             org_id=org_id, tarefa_id=tarefa.id, urls=len(urls))
+             org_id=org_id, tarefa_id=tarefa.id, items=len(items))
     return {
-        "ok":               True,
-        "tarefa_id":        tarefa.id,
-        "urls_enfileiradas": len(urls),
-        "mensagem":         (
-            f"Tarefa #{tarefa.id} enfileirada com {len(urls)} produtos. "
-            f"Agente leva ~{len(urls) * 2}s pra processar. "
-            "Recarregue a página em ~{}min".format(max(1, len(urls) // 30))
+        "ok":                True,
+        "tarefa_id":         tarefa.id,
+        "items_enfileirados": len(items),
+        "mensagem":          (
+            f"Tarefa #{tarefa.id} enfileirada com {len(items)} produtos do TOP. "
+            f"Agente leva ~{len(items) * 2}s. Recarregue a página em ~"
+            f"{max(1, len(items) // 30)}min."
         ),
     }

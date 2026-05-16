@@ -259,15 +259,15 @@ async def marcar_concluida(
             await afiliado_ml_writer.aplicar_mapping(
                 db, org_id=tarefa.org_id, mapping=mapping,
             )
-    # REVALIDAR_COMISSAO_ML (Fase 18.3, v3.4.1): agente abriu cada URL,
-    # capturou comissão real da barra de afiliados. Aplica nos produtos
-    # com `comissao_fonte = "ml_barra_afiliados"` + recalcula nota.
+    # REVALIDAR_COMISSAO_ML (Fase 18.3, v3.4.2): agente abriu cada link de
+    # afiliado, capturou comissão real da barra de afiliados ML, retornou
+    # mapping indexado por produto_id. Aplica nos produtos do TOP.
     elif tarefa.tipo == TipoTarefa.REVALIDAR_COMISSAO_ML:
-        mapping_comissoes = (resultado or {}).get("mapping_comissoes") or {}
-        if mapping_comissoes:
+        mapping_por_id = (resultado or {}).get("mapping_por_id") or {}
+        if mapping_por_id:
             from app.services import afiliado_ml_writer
-            await afiliado_ml_writer.aplicar_mapping_comissoes_barra(
-                db, org_id=tarefa.org_id, mapping_comissoes=mapping_comissoes,
+            await afiliado_ml_writer.aplicar_mapping_comissoes_por_id(
+                db, org_id=tarefa.org_id, mapping_por_id=mapping_por_id,
             )
 
 

@@ -849,40 +849,60 @@ def _capturar_comissoes_da_barra_em_lote(
              total=len(alvos), capturados=capturados, falhas=falhas)
 
 
-def _revalidar_comissoes_sync(cfg: Config, urls: list[str]) -> dict[str, float]:
-    """Fase 18.3 (v3.4.1) — abre cada URL ML no driver logado como afiliado
-    e captura comissão da barra preta. Usado pra REVALIDAR produtos antigos
-    no DB sem precisar rebuscar tudo.
+def _revalidar_comissoes_sync(
+    cfg: Config, items: list[dict],
+) -> dict[int, float]:
+    """Fase 18.3 (v3.4.2) — abre o link de afiliado (`meli.la/XXX`) de cada
+    produto do TOP, deixa o ML redirecionar (registra clique afiliado) e
+    captura a comissão da barra preta no destino.
 
-    Retorna mapping `{url_canonica: comissao_pct_float}`. URLs sem captura
-    (sessão expirada, barra ausente, captcha) ficam ausentes do dict —
-    caller (servidor) sabe quais não conseguiu atualizar.
+    Por que `meli.la` em vez da URL canônica:
+    Abrir o `meli.la` registra a sessão como entrada via afiliado real —
+    a barra preta de afiliados aparece com a comissão CORRETA do programa
+    pra aquele produto (incluindo bônus EXTRAS temporários). URL canônica
+    pura mostra comissão genérica (ou nenhuma) dependendo de cookies.
 
-    Reusa `_capturar_comissoes_da_barra_em_lote` que já implementa loop +
-    delay + try/except per-produto. Aqui só precisa estruturar o output.
+    Args:
+        items: lista `[{"produto_id": int, "url_afiliado": "https://meli.la/XXX"}, ...]`
+
+    Returns:
+        Mapping `{produto_id: comissao_pct}` só dos que conseguiu capturar.
+        Match por ID (não URL) — mais robusto pra updates no DB.
     """
-    if not urls:
+    if not items:
         return {}
 
-    log.info("ml.revalidar_comissoes.aguardando_lock", urls=len(urls))
-    # Reusa lock do ML (1 Chrome ML por vez)
+    # Lock global do ML (1 Chrome por vez — compartilha com linkbuilder
+    # e busca normal). Import dentro da função pra evitar circular.
+    from agent.linkbuilder_ml import _LOCK_CHROME_ML
+
+    log.info("ml.revalidar_comissoes.aguardando_lock", items=len(items))
     with _LOCK_CHROME_ML:
-        log.info("ml.revalidar_comissoes.lock_adquirido", urls=len(urls))
+        log.info("ml.revalidar_comissoes.lock_adquirido", items=len(items))
         driver = _criar_driver_ml(cfg)
-        mapping: dict[str, float] = {}
+        mapping: dict[int, float] = {}
+        import random
         try:
-            # Adapta lista de URLs pra formato esperado por
-            # _capturar_comissoes_da_barra_em_lote (que recebe lista de produtos
-            # dicts com `url_canonica`). Cria "produtos" fictícios pra
-            # reaproveitar a função sem duplicar lógica.
-            produtos_ficticios = [{"url_canonica": u, "item_id": u[-15:]} for u in urls]
-            _capturar_comissoes_da_barra_em_lote(
-                driver, produtos_ficticios, log_prefixo="ml.revalidar",
-            )
-            # Extrai resultado: produtos que tiveram comissao_fonte trocada
-            for p in produtos_ficticios:
-                if p.get("comissao_fonte") == "ml_barra_afiliados" and p.get("comissao"):
-                    mapping[p["url_canonica"]] = float(p["comissao"])
+            for i, item in enumerate(items, start=1):
+                produto_id = item.get("produto_id")
+                url_aff    = item.get("url_afiliado") or ""
+                if not produto_id or "meli.la/" not in url_aff:
+                    continue
+
+                # Abre o meli.la — ML redireciona pra mercadolivre.com.br/...
+                # com tag de afiliado. A barra preta aparece nessa página.
+                pct = _capturar_comissao_da_barra(driver, url_aff)
+                if pct is not None and pct > 0:
+                    mapping[int(produto_id)] = float(pct)
+                    log.info("ml.revalidar.ok",
+                             n=i, total=len(items),
+                             produto_id=produto_id, pct=pct)
+                else:
+                    log.info("ml.revalidar.sem_pct",
+                             n=i, total=len(items),
+                             produto_id=produto_id)
+                # Delay anti rate-limit
+                time.sleep(random.uniform(0.4, 0.9))
         finally:
             try:
                 driver.quit()
@@ -893,15 +913,15 @@ def _revalidar_comissoes_sync(cfg: Config, urls: list[str]) -> dict[str, float]:
 
 
 async def revalidar_comissoes_em_lote(
-    cfg: Config, urls: list[str],
-) -> dict[str, float]:
-    """Async wrapper — abre URLs em thread separada."""
-    if not urls:
+    cfg: Config, items: list[dict],
+) -> dict[int, float]:
+    """Async wrapper. `items` = `[{"produto_id", "url_afiliado"}, ...]`."""
+    if not items:
         return {}
-    log.info("ml.revalidar_comissoes.iniciado", total=len(urls))
-    mapa = await asyncio.to_thread(_revalidar_comissoes_sync, cfg, urls)
+    log.info("ml.revalidar_comissoes.iniciado", total=len(items))
+    mapa = await asyncio.to_thread(_revalidar_comissoes_sync, cfg, items)
     log.info("ml.revalidar_comissoes.concluido",
-             pedidos=len(urls), atualizados=len(mapa))
+             pedidos=len(items), atualizados=len(mapa))
     return mapa
 
 
