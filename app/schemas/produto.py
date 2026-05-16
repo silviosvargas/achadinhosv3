@@ -107,7 +107,11 @@ class TemplatePublico(BaseModel):
 # ============================================================
 
 class IngestProdutoItem(BaseModel):
-    """Um produto extraído pelo agente. URL canônica obrigatória (sem tag)."""
+    """Um produto extraído pelo agente. URL canônica obrigatória (sem tag).
+
+    Aceita campos extras (ex: `_personalizado_dono_id`) que o ingest do
+    busca_service consome. Por isso `model_config = {"extra": "allow"}`.
+    """
     plataforma:   str   = Field(default="ml", min_length=2, max_length=20)
     item_id:      str   = Field(min_length=1, max_length=100,
                                 description="MLB12345 etc")
@@ -115,12 +119,20 @@ class IngestProdutoItem(BaseModel):
     preco:        float = Field(ge=0)
     preco_orig:   float | None = Field(default=None, ge=0)
     desconto:     float | None = Field(default=None, ge=0, le=100)
+    comissao:     float | None = Field(default=None, ge=0, le=100,
+                                       description="% de comissão (estimada por categoria)")
     frete_gratis: bool  = False
     categoria:    str | None = Field(default=None, max_length=200,
                                      description="Caminho completo do ML")
     url_canonica: str   = Field(min_length=1, max_length=2000,
                                 description="URL crua, sem tag de afiliado")
+    url_afiliado: str | None = Field(default=None, max_length=2000,
+                                     description="URL com tag JÁ aplicada — meli.la, "
+                                                 "s.shopee.com.br, amzn.to. None = "
+                                                 "servidor calcula fallback.")
     foto_url:     str | None = Field(default=None, max_length=2000)
+
+    model_config = {"extra": "allow"}
 
 
 class IngestLoteRequest(BaseModel):

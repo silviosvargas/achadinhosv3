@@ -1764,14 +1764,10 @@ async def personalizado_postar(
     db:   AsyncSession = Depends(get_db_async),
 ):
     """
-    Posta 1 produto personalizado imediatamente.
-
-    Truque pra forçar o lote_service a pegar ESSE produto: atualiza o
-    `atualizado_em` pra agora (a query `produtos_elegiveis` ordena por
-    `atualizado_em.desc()`). Não é determinístico em casos de empate,
-    mas resolve 99% dos casos práticos.
+    Posta 1 produto personalizado imediatamente (função dedicada — não
+    passa pelo lote_service.rodar_lote que filtra entre todos os elegíveis).
     """
-    from datetime import datetime, timezone
+    from urllib.parse import quote_plus
     from app.services import lote_service
 
     p = await db.get(Produto, produto_id)
@@ -1780,26 +1776,29 @@ async def personalizado_postar(
     if not user.eh_admin and p.criado_por_usuario_id != user.id:
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    # Sobe o produto pro topo da seleção
-    p.atualizado_em = datetime.now(tz=timezone.utc)
-    await db.commit()
-
     try:
-        resultado = await lote_service.rodar_lote(
-            db, org_id=user.org_id, max_produtos=1, usuario=user,
+        resultado = await lote_service.postar_produto_imediato(
+            db,
+            produto_id=produto_id,
+            org_id=user.org_id,
             criado_por_usuario_id=user.id,
         )
-        n = resultado.get("tarefas_criadas", 0)
-        msg = (
-            f"mensagem=Postagem+enfileirada+%28{n}+tarefa%29"
-            if n else "erro=N%C3%A3o+achei+grupo+compat%C3%ADvel+pra+esse+produto"
-        )
     except Exception as e:
-        log.exception("personalizado.postar_falhou", erro=str(e))
-        msg = f"erro=Erro+ao+postar%3A+{str(e)[:80]}"
+        log.exception("personalizado.postar_crashou", erro=str(e))
+        msg = f"erro={quote_plus('Erro ao postar: ' + str(e)[:120])}"
+        return RedirectResponse(
+            url=f"/produtos/personalizados?{msg}", status_code=302,
+        )
+
+    if resultado.get("ok"):
+        msg = (
+            f"mensagem={quote_plus('Postagem enfileirada pro grupo ' + resultado.get('grupo_nome', '?') + ' (tarefa #' + str(resultado.get('tarefa_id')) + ')')}"
+        )
+    else:
+        msg = f"erro={quote_plus(resultado.get('erro', 'erro_desconhecido'))}"
+
     return RedirectResponse(
-        url=f"/produtos/personalizados?{msg}",
-        status_code=302,
+        url=f"/produtos/personalizados?{msg}", status_code=302,
     )
 
 

@@ -198,3 +198,132 @@ async def rodar_lote(
         "tarefas_ids":        tarefas_ids,
         "detalhes":           detalhes,
     }
+
+
+# ============================================================
+# Postagem direta de um produto específico (Fase 17)
+# ============================================================
+
+async def postar_produto_imediato(
+    db: AsyncSession,
+    *,
+    produto_id: int,
+    org_id: int,
+    criado_por_usuario_id: int,
+) -> dict:
+    """
+    Posta UM produto específico em UM grupo compatível, ignorando o
+    algoritmo de seleção em massa do `rodar_lote`.
+
+    Usado pelo botão ⚡ Postar de `/produtos/personalizados/{id}/postar`.
+
+    Critério de escolha do grupo:
+    1. Grupo da org cujos nichos batem com algum nicho do produto
+       (grupo sem nichos = curinga, aceita qualquer)
+    2. Que não recebeu este produto nos últimos 7 dias
+    3. Primeiro que aparecer (sem random — determinístico)
+
+    Returns:
+        {"ok": True, "tarefa_id": N, "grupo_nome": "..."}
+        ou {"ok": False, "erro": "motivo"}
+    """
+    from app.models import Produto, ProdutoNicho
+
+    produto = await db.get(Produto, produto_id)
+    if produto is None or produto.org_id != org_id:
+        return {"ok": False, "erro": "Produto não encontrado nesta organização"}
+    if produto.bloqueado:
+        return {"ok": False, "erro": "Produto está bloqueado"}
+    if not produto.preco or produto.preco <= 0:
+        return {"ok": False, "erro": "Produto sem preço válido"}
+
+    # Nichos do produto
+    nichos_prod = [
+        n for (n,) in (await db.execute(
+            select(ProdutoNicho.nicho_id).where(ProdutoNicho.produto_id == produto_id)
+        )).all()
+    ]
+    if not nichos_prod:
+        return {
+            "ok": False,
+            "erro": "Produto sem nicho — sem nicho não tem como achar grupo compatível",
+        }
+
+    # Grupos compatíveis
+    grupos = await selecao_service.grupos_com_nichos(db, org_id=org_id)
+    if not grupos:
+        return {"ok": False, "erro": "Nenhum grupo cadastrado nesta organização"}
+
+    ja_postados = await selecao_service.chaves_postadas_recentemente(db, org_id=org_id)
+
+    grupo_alvo = None
+    for grupo, nichos_grupo in grupos:
+        if not selecao_service._grupo_aceita(nichos_prod, nichos_grupo):
+            continue
+        if (produto_id, grupo.id) in ja_postados:
+            continue
+        grupo_alvo = grupo
+        break
+
+    if grupo_alvo is None:
+        return {
+            "ok": False,
+            "erro": "Nenhum grupo compatível (nicho não bate OU já postado nos últimos 7 dias)",
+        }
+
+    # Renderiza template
+    template = await templates_service.selecionar_template(
+        db, org_id=org_id, nicho_ids=nichos_prod,
+    )
+
+    # Cache de tag pra _url_pro_produto-like (replica lógica do rodar_lote)
+    plat = (produto.plataforma or "").lower()
+    if plat == "ml" and produto.url_afiliado and "meli.la/" in produto.url_afiliado:
+        url_override = produto.url_afiliado
+    else:
+        from app.services import afiliado_service, linkbuilder, redirect_service
+        tag = await afiliado_service.tag_com_cascata(
+            db, plataforma=plat, usuario_id=criado_por_usuario_id, org_id=org_id,
+        )
+        url_longa = linkbuilder.gerar_url_afiliado(
+            plataforma=plat, url_canonica=produto.url_canonica, tag=tag,
+        ) or produto.url_canonica or ""
+        base = (settings.public_base_url or "").rstrip("/")
+        if url_longa and base:
+            red = await redirect_service.criar_ou_atualizar_pro_produto(
+                db, produto_id=produto.id, url_destino=url_longa,
+            )
+            url_override = f"{base}/r/{red.slug}"
+        else:
+            url_override = url_longa or ""
+
+    if template is None:
+        texto = templates_service.renderizar(
+            templates_service.TEMPLATE_FALLBACK, produto, url_override=url_override,
+        )
+    else:
+        texto = templates_service.renderizar(
+            template, produto, url_override=url_override,
+        )
+        await templates_service.registrar_uso(db, template_id=template.id)
+
+    try:
+        tarefa = await dispatcher.enfileirar_postagem(
+            db, org_id=org_id, grupo_id=grupo_alvo.id,
+            texto=texto, imagem_url=produto.foto_url,
+            produto_id=produto.id,
+            criado_por_usuario_id=criado_por_usuario_id,
+        )
+    except dispatcher.DispatcherError as e:
+        return {"ok": False, "erro": f"Falha enfileirando: {e}"}
+
+    log.info(
+        "lote.postar_imediato",
+        produto_id=produto_id, grupo_id=grupo_alvo.id, tarefa_id=tarefa.id,
+    )
+    return {
+        "ok":         True,
+        "tarefa_id":  tarefa.id,
+        "grupo_id":   grupo_alvo.id,
+        "grupo_nome": grupo_alvo.nome,
+    }
