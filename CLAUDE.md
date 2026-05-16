@@ -144,6 +144,12 @@ python -m agent.main --sem-tray   # roda
 - **3.17.0** — Fase 16.4: busca personalizada por URL/link. Nova `_varrer_produto_unico_sync` em `agente/agent/busca_ml.py` que abre 1 URL de produto ML e extrai dados (nome, preço, foto, categoria) via cascata JSON-LD Product → OpenGraph meta → CSS. Roteamento em `executar_busca` quando `tipo_busca == 'por_url'`. Pipeline GERAR_LINK (Fase 15) gera `meli.la` automaticamente após ingest. Dono do produto segue regra de afiliado: afiliado = privado, admin/usuario = público da org. Bug fix oportuno: `app/workers/scheduler_tasks.py` agora inclui `tipo_busca` + `marketplaces` no payload das buscas agendadas (faltava — Celery beat estava degradando qualquer busca agendada pra `termo_livre`). Release `agente-v3.0.4` publicada.
 - **3.17.1** — Hotfix defensivo no dispatcher: `_tentar_entrega` agora monta msg WS como `{**tarefa.payload, "tipo": comando_ws, "tarefa_id": tarefa.id}` — comando WS sempre vence sobre chaves legadas do payload. Sintoma observado em prod: tarefas LEGADAS (criadas antes do hotfix v3.0.3) ficaram PENDENTE no DB e quando agente reconectou, `reentregar_pendentes` re-despachava com payload velho (`tipo=mais_vendidos`) que sobrescrevia o comando. Agente caía em `ws.tipo_sem_handler`. Mesmo fix em `busca_service._entregar_para_agente`. Loga `tarefa.payload_chave_conflitante` quando detecta caso legado.
 - **3.18.0** — Fase 16.5 (parcial — scrapers ML completos por tipo): refatorou `agente/agent/busca_ml.py` pra ter 1 função dedicada por tipo de busca, todas usando template comum `_varrer_lista_urls_sync` (com helper `_bloqueado_por_login`, `_scroll_lazy_load`). 5 caminhos explícitos: `_varrer_termo_livre_sync` (paginação de listagem), `_varrer_produto_unico_sync` (por URL — Fase 16.4), `_varrer_mais_vendidos_sync` (8 categorias), `_varrer_melhor_comissao_sync` (top 4 categorias por comissão DESC — Roupas/Esportes/Beleza), `_varrer_em_alta_sync` (URL `/ofertas`). `executar_busca` rotea com 5 branches explícitas + fallback. Release `agente-v3.0.5` publicada.
+- **3.18.1** — Fase produtos UI: CRUD individual + apagar em massa. `/produtos` ganha botões por linha: **🔗 Ver produto** (abre `url_afiliado` em nova aba), **✏️ editar** (form pré-preenchido em `/produtos/{id}/editar` — plataforma/item_id readonly), **🗑️ excluir** (com `confirm()` mostrando nome). Header ganha **🗑️ Apagar todos** com confirmação tripla: 2× `confirm()` + 1× `prompt()` exigindo token literal `APAGAR TUDO`; servidor revalida o mesmo token no body (defense in depth). Template `produto_form.html` adapta criação/edição via flag `produto`. CASCADE no DB remove `produto_nichos` + `redirects` automaticamente. Também: endpoint `POST /produtos/regenerar-meli-la` re-enfileira GERAR_LINK pros produtos da org sem `meli.la/` no `url_afiliado` (+ cleanup automático de URLs com fragment legado).
+- **3.18.2** — Linkbuilder: normalização URL no agente + match em 3 níveis no servidor + cache versão 60s. `agente/agent/linkbuilder_ml.py:_normalizar_url(url)` tira fragment/query antes de submeter ao painel ML (mantém URL original como chave do mapping). `app/services/afiliado_ml_writer.py:aplicar_mapping` faz match exato → URL limpa LIKE → MLB ID LIKE, com regex `MLB[A-Z]?-?\d{8,15}` que aceita `MLBU` (catálogo unificado). `/api/v1/agentes/versao-atual` reduziu cache de 5min → 60s + bypass via `?nocache=1`. Release `agente-v3.0.6`.
+- **3.18.3** — 4 fixes baseados em log real do agente. (1) `dispatcher.reentregar_pendentes` filtra só `StatusTarefa.PENDENTE` (não mais PROCESSANDO) — re-entrega após reconexão WS estava causando execução duplicada e crashando o 2º Chrome com `SessionNotCreatedException`. (2) `_LOCK_CHROME_ML = threading.Lock()` no agente serializa criação de driver ML + `time.sleep(1.5)` após `quit()` pra liberar `--user-data-dir`. (3) `_limpar_url_canonica` no `_upsert_produto` salva URL sem `#polycard_client=...` no DB. (4) `/produtos/regenerar-meli-la` faz UPDATE batch limpando URLs antes de enfileirar. Release `agente-v3.0.7`.
+- **3.18.4** — Limpeza URL no momento da extração do card (igual V2). `agente/agent/busca_ml.py:_achar_url` portado 1:1 da V2 (`src/buscar/ml.py:121`): itera múltiplos seletores de anchor (`a.poly-component__title`, etc), limpa URL com `split('?')[0].split('#')[0]`, filtra `click1`/`publicidade` (patrocinados sem comissão) e URLs absurdamente curtas. Mesmo em `_extrair_produto_unico` (busca por_url). Razão: V2 sempre funcionou porque limpava na origem; V3 mantinha URL crua e tentava limpar em N camadas — cada falha gerou bug diferente. Release `agente-v3.0.8`.
+- **3.18.5** — Linkbuilder INLINE no agente (igual V2 — mesmo driver). `_gerar_meli_la_no_driver(driver, produtos, log_prefixo)` recebe driver aberto + lista de produtos, abre painel linkbuilder ML NO MESMO driver, captura `meli.la`, atualiza `produto["url_afiliado"]` in-place. Chamada antes do `finally` que fecha driver em `_varrer_lista_urls_sync` / `_varrer_termo_livre_sync` / `_varrer_produto_unico_sync`. `_upsert_produto` no servidor detecta `item.url_afiliado` como `meli.la` e salva direto (fallback `?matt_word=` só se agente não conseguiu gerar). REMOVIDO o trecho que enfileirava GERAR_LINK pós-ingest — não precisa mais. Vantagens: 1 só Chrome ML por vez, sem race de re-entrega WS, sem callback assíncrono que pode falhar. Release `agente-v3.0.9`.
+- **3.19.0** — **BUG RAIZ encontrado e corrigido** (escondido desde a Fase 15, v3.5.0). `agente/agent/main.py:handler_gerar_links_ml` retornava `{"mapping": ..., "total": ...}` SEM `"ok": True`. O `ws_client._executar_handler` decide `tarefa_concluida` vs `tarefa_falhou` por `resultado.get("ok")`. Sem `ok=True`, SEMPRE caía em `tarefa_falhou` → servidor marcava tarefa FALHOU → `dispatcher.marcar_concluida` nunca chamava `afiliado_ml_writer.aplicar_mapping` → `produtos.url_afiliado` nunca virava `meli.la`. Os 6 fixes anteriores (v3.0.4 → v3.0.9) eram melhorias reais mas nenhum atacava esse bug porque o callback nem chegava. Fix: retornar `{"ok": True, "mapping", "total", "pedidos"}`. Contrato documentado em `docs/contrato_handlers_ws.md`. **Validado em prod com regenerar meli.la — produtos receberam `https://meli.la/XXX` no `url_afiliado`.** Release `agente-v3.0.10` publicada.
 
 ---
 
@@ -190,18 +196,76 @@ Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
 ---
 
+## Armadilhas conhecidas — LEIA antes de mexer
+
+### Handlers WS sempre retornam `ok=True/False`
+
+`agente/agent/ws_client.py:_executar_handler` decide `tarefa_concluida` vs
+`tarefa_falhou` pelo campo `ok` do retorno. **Handler sem `"ok": True`
+é falha silenciosa** — servidor marca FALHOU e nunca chama hooks de
+pós-conclusão (ex: `aplicar_mapping`). Contrato completo + template em
+[docs/contrato_handlers_ws.md](docs/contrato_handlers_ws.md).
+
+Esse bug ficou 5 meses escondido (Fase 15 → v3.0.10) e custou 6 releases
+atacando sintomas. **Sempre teste o callback antes da lógica de domínio**
+quando algo "rodou mas não salvou".
+
+### Chave `tipo` em payload WS
+
+`dispatcher._tentar_entrega` monta msg como
+`{**tarefa.payload, "tipo": comando_ws, "tarefa_id": tarefa.id}`. Chaves
+`tipo`/`tarefa_id` no payload eram sobrescritas pelo comando WS (ordem
+do spread protege agora desde v3.18.1), mas pra não depender disso:
+**nunca use as chaves `tipo`/`tarefa_id` no payload da tarefa**. Use
+`tipo_busca` ou similar.
+
+### URL canônica ML — limpar na origem (no agente)
+
+Cards do ML carregam `#polycard_client=...&tracking_id=...` no fragment +
+query do `href`. Sempre limpar com `split('?')[0].split('#')[0]` no
+momento da extração (`_achar_url`), não em camadas posteriores. V2 fazia
+isso desde sempre — V3 tentou limpar em N camadas e cada falha causou
+bug.
+
+### Variantes do MLB ID
+
+URL ML tem 2 formatos: `/p/MLB1234567890` (catálogo simples) e
+`/up/MLBU3387021403` (catálogo unificado, com letra `U`). Regex pra match
+flexível precisa aceitar `MLB[A-Z]?-?\d{8,15}`.
+
+### `reentregar_pendentes` só re-envia PENDENTE
+
+Tarefa em status `PROCESSANDO`, se WS cair no meio, NÃO deve ser
+re-entregue na reconexão — o agente provavelmente terminou (ou está
+terminando) e o callback chega quando WS subir. Re-entregar duplica
+execução → conflito de Chrome ML (`SessionNotCreatedException`).
+
+### Chrome ML em `--user-data-dir` único — usa lock
+
+`agente/agent/linkbuilder_ml.py:_LOCK_CHROME_ML` (threading.Lock) garante
+1 driver ML por vez no agente. Sem ele, duas GERAR_LINK chegando próximas
+crashavam o 2º Chrome porque o perfil estava bloqueado.
+
+---
+
 ## Próxima fase imediata
 
 **Leia `docs/sessao_continuacao.md` PRIMEIRO — tem tudo consolidado.**
 
-Estado atual: caminho zero-CLI 100% funcional. Agente em v3.0.2.
-Buscas multi-tipo com scraper "mais vendidos" ML (8 categorias) já entregue.
+Estado atual: caminho zero-CLI 100% funcional. Agente em **v3.0.10**.
+Pipeline completo de busca ML + geração `meli.la` + ingest **validado em prod**.
+
+Fases novas entregues nesta sessão (15-16/05/2026):
+- Fase 16.4 — busca por URL/link (v3.0.4)
+- Fase 16.5 parcial — handlers dedicados por tipo (v3.0.5)
+- CRUD produtos UI (v3.18.1)
+- Linkbuilder inline + bug raiz resolvido (v3.0.10)
 
 **Próximas fases na ordem:**
 1. Fase 16.5 — scraper Shopee (API interna retorna `long_link` afiliado pronto)
 2. Fase 17 — curadoria automatizada TOP 50 (Celery beat diário)
 3. Fase 18 — métricas no dashboard (clicks do `/r/{slug}`)
 
-Bugs anotados:
+Bugs anotados (não bloqueiam, vale fixar quando tiver tempo):
 - `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)
 - `ADMIN_PASSWORD` env var no Railway desatualizada (user trocou via `/conta`)

@@ -4,9 +4,19 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-15 (após Fase 16.5 parcial — scrapers ML completos por tipo + v3.0.5)
-**Versão do agente em prod:** `3.0.5` (todos os 5 tipos de busca ML têm handler dedicado: termo_livre, por_url, mais_vendidos, melhor_comissao, em_alta)
+**Última atualização:** 2026-05-16 (após v3.0.10 — BUG RAIZ do `meli.la` resolvido)
+**Versão do agente em prod:** `3.0.10` (pipeline busca + linkbuilder inline + ingest validado em prod)
 **Migration head:** `0010_busca_tipo_mkt`
+
+## 🔥 LEITURA OBRIGATÓRIA antes de mexer em busca/linkbuilder
+
+1. [docs/contrato_handlers_ws.md](contrato_handlers_ws.md) — **handlers WS PRECISAM
+   retornar `"ok": True/False`**. Sem isso, ws_client envia `tarefa_falhou` e
+   servidor nunca chama hooks de pós-conclusão. Bug ficou escondido 5 meses.
+2. [docs/sessao_2026-05-15-16.md](sessao_2026-05-15-16.md) — sessão completa
+   2026-05-15→16 com cada alteração funcional, em ordem cronológica + lições.
+3. Seção "Armadilhas conhecidas" no [CLAUDE.md](../CLAUDE.md) — 5 armadilhas
+   já pisadas e como evitar.
 
 ---
 
@@ -55,6 +65,11 @@ confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
 | Busca termo_livre (paginação) | OK | `_varrer_termo_livre_sync` — listagem ML por palavra-chave |
 | Busca melhor_comissao | OK | Top 4 categorias por comissão DESC (Roupas/Esportes/Beleza) |
 | Busca em_alta | OK | `/ofertas` ML (promoções relâmpago) |
+| Linkbuilder INLINE | OK | meli.la gerado no MESMO driver da busca (igual V2) |
+| `url_afiliado` no DB | OK | `https://meli.la/XXX` salvo desde v3.0.10 (bug raiz resolvido) |
+| CRUD produtos UI | OK | Editar / Excluir individual + Apagar todos (confirm tripla) |
+| Botão Ver produto | OK | Abre `url_afiliado` em nova aba |
+| Botão Regenerar meli.la | OK | Re-enfileira GERAR_LINK pros pendentes |
 | Lote com late binding tag | OK | Recalcula URL na hora da postagem |
 | Badge "agentes online" | OK | Polling 20s, cookie-aware |
 
@@ -95,9 +110,20 @@ confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
 | 29 | [ba876e5](https://github.com/silviosvargas/achadinhosv3/commit/ba876e5) | docs | Consolidação completa pra próxima sessão |
 | 30 | [03f63d1](https://github.com/silviosvargas/achadinhosv3/commit/03f63d1) | hotfix | Conflito chave `tipo` no payload WS → renomeia pra `tipo_busca` + bump v3.0.3 |
 | 31 | [2eb403a](https://github.com/silviosvargas/achadinhosv3/commit/2eb403a) | 16.4 | Fase 16.4 — busca personalizada por URL/link (extrator de produto único ML) + fix scheduler tipo_busca/marketplaces + bump v3.0.4 |
+| 32 | [a0b7d61](https://github.com/silviosvargas/achadinhosv3/commit/a0b7d61) | hotfix | Dispatcher defensivo: tipo/tarefa_id sempre ganham no spread WS |
+| 33 | [9be0771](https://github.com/silviosvargas/achadinhosv3/commit/9be0771) | 16.5 | Fase 16.5 parcial: 1 handler dedicado por tipo de busca ML (v3.0.5) |
+| 34 | [a9052e4](https://github.com/silviosvargas/achadinhosv3/commit/a9052e4) | crud | Produtos: editar + excluir individual + apagar todos (confirm tripla) |
+| 35 | [c9deb55](https://github.com/silviosvargas/achadinhosv3/commit/c9deb55) | ui | Botão "Ver produto" abre link de afiliado em nova aba |
+| 36 | [b81e1f0](https://github.com/silviosvargas/achadinhosv3/commit/b81e1f0) | fix | Campo `link_produto`→`url_canonica` no ingest + endpoint regenerar-meli-la |
+| 37 | [437b55b](https://github.com/silviosvargas/achadinhosv3/commit/437b55b) | fix | Linkbuilder: normaliza URL no agente + match flexível no servidor (v3.0.6) |
+| 38 | [6ce561c](https://github.com/silviosvargas/achadinhosv3/commit/6ce561c) | fix | Cache versao-atual 5min → 60s + bypass via ?nocache=1 |
+| 39 | [6aedcd1](https://github.com/silviosvargas/achadinhosv3/commit/6aedcd1) | fix | 4 fixes do log: dispatcher só PENDENTE, regex MLBU, URL limpa ingest, lock Chrome (v3.0.7) |
+| 40 | [da30287](https://github.com/silviosvargas/achadinhosv3/commit/da30287) | fix | Limpeza URL na extração do card (igual V2) (v3.0.8) |
+| 41 | [d228826](https://github.com/silviosvargas/achadinhosv3/commit/d228826) | feat | Linkbuilder INLINE no agente (igual V2 — mesmo driver) (v3.0.9) |
+| 42 | [1a76992](https://github.com/silviosvargas/achadinhosv3/commit/1a76992) | **fix** | **BUG RAIZ: handler_gerar_links_ml retornava sem `ok=True` (v3.0.10)** |
 
-**Total:** 31 commits + 5 releases publicadas (v3.0.0, v3.0.1, v3.0.2, v3.0.3, v3.0.4).
-**Busca "Mais vendidos" ML validada em prod com a v3.0.3. Busca por URL (v3.0.4) ainda aguarda smoke test.**
+**Total:** 42 commits + 11 releases publicadas (v3.0.0 … v3.0.10).
+**Busca "Mais vendidos" + linkbuilder + `meli.la` no DB validado em prod com v3.0.10.**
 
 ---
 
@@ -271,9 +297,21 @@ Implementado em `agente/agent/busca_ml.py`:
 - Roteamento em `executar_busca` quando `tipo_busca == 'por_url'`
 - Pipeline GERAR_LINK (Fase 15) gera `meli.la` automaticamente após ingest
 - Dono do produto segue regra padrão: afiliado=privado, admin/usuario=público
-- **Bug fix oportuno** no `app/workers/scheduler_tasks.py`: agora inclui
-  `tipo_busca` + `marketplaces` no payload das buscas AGENDADAS (faltava —
-  Celery beat estava degradando qualquer busca agendada pra `termo_livre`)
+
+### ~~Fase 16.5 (parcial) — Handlers ML dedicados~~ ✅ ENTREGUE (v3.0.5+)
+5 funções dedicadas (`mais_vendidos`, `melhor_comissao`, `em_alta`,
+`termo_livre`, `por_url`) usando template comum `_varrer_lista_urls_sync`.
+Refatoração em v3.0.5; linkbuilder INLINE adicionado em v3.0.9.
+
+### ~~CRUD produtos UI~~ ✅ ENTREGUE (v3.18.1)
+Editar/excluir individual + apagar todos com confirmação tripla. Botão
+"Ver produto" abre `url_afiliado` em nova aba. Botão "Regenerar meli.la"
+re-enfileira GERAR_LINK pros pendentes.
+
+### ~~Bug raiz do `meli.la` não salvar~~ ✅ RESOLVIDO (v3.0.10)
+Handler `handler_gerar_links_ml` agora retorna `ok=True` no sucesso.
+Ver [docs/contrato_handlers_ws.md](contrato_handlers_ws.md) e
+[docs/sessao_2026-05-15-16.md](sessao_2026-05-15-16.md).
 
 ### Fase 16.5+ — Scrapers outros marketplaces
 - **Shopee** (mais fácil): API interna `affiliate.shopee.com.br/api/v3/offer/product/list` retorna `long_link` afiliado pronto. Porta de V2 `src/buscar/shopee.py`.
@@ -313,13 +351,18 @@ validar a busca "Mais vendidos" ML end-to-end com sucesso (v3.0.3).
 5. **Aguarde a escolha do user** antes de qualquer ação.
 
 As opções a apresentar (do mais ao menos prioritário):
-- **Fase 16.4** — busca personalizada por URL/link (V2 tem código pra portar)
-- **Fase 16.5** — scraper Shopee (API interna já retorna shortlink afiliado)
+- **Fase 16.5 (Shopee)** — scraper Shopee (API interna já retorna shortlink afiliado)
 - **Fase 17** — curadoria automatizada TOP 50 (Celery beat diário)
 - **Fase 18** — métricas no dashboard (clicks do `/r/{slug}`)
 - **Bug menor**: ajustar `REDIS_URL_OVERRIDE` em `app/core/config.py`
 - **Bug menor**: atualizar `ADMIN_PASSWORD` env var no Railway
 - **Outra coisa que o user trouxer**
+
+Fases já entregues nesta sessão (NÃO repetir):
+- ✅ Fase 16.4 (busca por URL/link, v3.0.4)
+- ✅ Fase 16.5 parcial — handlers ML por tipo (v3.0.5)
+- ✅ CRUD produtos UI (v3.18.1)
+- ✅ Linkbuilder inline + bug raiz `meli.la` (v3.0.10)
 
 ### Prompt sugerido pra primeira mensagem
 > *"Estou continuando o Achadinhos V3. Leia esses 3 arquivos NA ORDEM:*
