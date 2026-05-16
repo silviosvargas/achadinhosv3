@@ -1,24 +1,27 @@
 {% extends "base.html" %}
-{% block titulo %}Rodar lote{% endblock %}
+{% block titulo %}Lote{% endblock %}
+{% block titulo_topbar %}Lote{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Rodar lote agora</h1>
-  <p class="muted">
-    Seleciona produtos elegíveis e enfileira postagens nos grupos compatíveis.
+  <h1>Rodar lote agora ⚡</h1>
+  <p>
+    Seleciona produtos elegíveis, escolhe os grupos compatíveis e enfileira
+    as postagens no pipeline.
   </p>
 </header>
 
-<section class="cards">
+{# ── Métricas do que está disponível ────────────────── #}
+<section class="cards" style="margin-bottom:24px;">
   <div class="card">
     <div class="card-titulo">Produtos elegíveis</div>
     <div class="card-numero">{{ counts.produtos }}</div>
-    <div class="card-sub">não bloqueados</div>
+    <div class="card-sub">não bloqueados, com nicho</div>
   </div>
   <div class="card">
     <div class="card-titulo">Templates ativos</div>
     <div class="card-numero">{{ counts.templates }}</div>
-    <div class="card-sub">a renderizar mensagens</div>
+    <div class="card-sub">renderizam mensagens</div>
   </div>
   <div class="card">
     <div class="card-titulo">Grupos ativos</div>
@@ -27,84 +30,127 @@
   </div>
 </section>
 
-<details class="card-form" open>
-  <summary class="card-form-summary">⚡ Disparar lote</summary>
-  <form method="post" action="/lote/rodar" class="form-inline">
+{# ── Formulário principal — em card com destaque ────── #}
+<section class="card card-destaque" style="padding:24px; margin-bottom:24px;">
+  <h2 style="margin:0 0 4px 0; font-size:16px; display:flex; align-items:center; gap:8px;">
+    <span>⚡</span><span>Disparar lote</span>
+  </h2>
+  <p class="muted small" style="margin:0 0 18px;">
+    Cada produto vai pra UM grupo compatível selecionado por algoritmo (nicho × dedup).
+  </p>
+  <form method="post" action="/lote/rodar"
+        style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; align-items:end;">
     <label>
-      Quantos produtos no lote?
+      <span style="font-size:12px;">Quantos produtos no lote?</span>
       <input type="number" name="max_produtos" value="10" min="1" max="50" required>
-      <span class="muted small">Cada produto vai pra UM grupo compatível.</span>
     </label>
     <label>
-      Filtrar por canal (opcional)
+      <span style="font-size:12px;">Filtrar por canal (opcional)</span>
       <select name="canal_tipo">
-        <option value="">Todos</option>
-        <option value="whatsapp_agente">Apenas WhatsApp</option>
-        <option value="telegram_bot">Apenas Telegram</option>
+        <option value="">Todos os canais</option>
+        <option value="whatsapp_agente">📱 Apenas WhatsApp</option>
+        <option value="telegram_bot">✈️ Apenas Telegram</option>
       </select>
     </label>
-    <button type="submit" class="btn btn-primario">⚡ Rodar agora</button>
+    <div style="display:flex; align-items:end;">
+      <button type="submit" class="btn btn-primario" style="width:100%; height:38px;">
+        <span>⚡</span><span>Rodar agora</span>
+      </button>
+    </div>
   </form>
-</details>
+</section>
 
 {% if resultado %}
-<section class="bloco">
-  <h2>Resultado da última execução</h2>
+{# ── Resultado da última execução ──────────────────── #}
+<section style="margin-bottom:24px;">
+  <h2 style="margin:0 0 12px; font-size:18px;">
+    📊 Resultado da última execução
+  </h2>
 
-  <div class="cards">
+  <div class="cards" style="margin-bottom:16px;">
     <div class="card">
       <div class="card-titulo">Avaliados</div>
       <div class="card-numero">{{ resultado.produtos_avaliados }}</div>
     </div>
     <div class="card card-destaque">
       <div class="card-titulo">Tarefas criadas</div>
-      <div class="card-numero">{{ resultado.tarefas_criadas }}</div>
-      <div class="card-sub">enviadas pro pipeline</div>
+      <div class="card-numero" style="color:var(--primario);">{{ resultado.tarefas_criadas }}</div>
+      <div class="card-sub">enviadas pro pipeline ✓</div>
     </div>
     <div class="card">
-      <div class="card-titulo">Sem grupo compatível</div>
-      <div class="card-numero">{{ resultado.sem_grupo }}</div>
+      <div class="card-titulo">Sem grupo</div>
+      <div class="card-numero" style="color:var(--muted);">{{ resultado.sem_grupo }}</div>
+      <div class="card-sub">nicho sem destino</div>
     </div>
     <div class="card">
       <div class="card-titulo">Sem template</div>
-      <div class="card-numero">{{ resultado.sem_template }}</div>
+      <div class="card-numero" style="color:var(--muted);">{{ resultado.sem_template }}</div>
       <div class="card-sub">usaram fallback</div>
     </div>
     <div class="card">
       <div class="card-titulo">Já postados</div>
-      <div class="card-numero">{{ resultado.ja_postado or 0 }}</div>
-      <div class="card-sub">nos últimos 7 dias</div>
+      <div class="card-numero" style="color:var(--muted);">{{ resultado.ja_postado or 0 }}</div>
+      <div class="card-sub">dedup últimos 7 dias</div>
     </div>
   </div>
 
   {% if resultado.detalhes %}
-  <h3>Detalhes</h3>
-  <ul class="lista-detalhes">
-    {% for d in resultado.detalhes %}
-      <li>{{ d }}</li>
-    {% endfor %}
-  </ul>
+  <details class="card" style="padding:0;">
+    <summary style="padding:14px 18px; cursor:pointer; font-weight:600;
+                    list-style:none; display:flex; align-items:center; gap:8px;">
+      <span>📋</span>
+      <span>Ver detalhes ({{ resultado.detalhes|length }})</span>
+    </summary>
+    <ul style="margin:0; padding:0 18px 18px 36px; font-size:13px;
+               color:var(--texto-2); line-height:1.7;">
+      {% for d in resultado.detalhes %}
+        <li>{{ d }}</li>
+      {% endfor %}
+    </ul>
+  </details>
   {% endif %}
 
   {% if resultado.tarefas_criadas %}
-  <p style="margin-top: 14px;">
+  <p style="margin-top:16px;">
     <a href="/tarefas?status_filtro=pendente" class="btn btn-primario">
-      Ver tarefas criadas →
+      <span>Ver tarefas criadas</span>
+      <span>→</span>
     </a>
   </p>
   {% endif %}
 </section>
 {% endif %}
 
-<section class="bloco" style="margin-top: 28px;">
-  <h2>Como o sistema decide</h2>
-  <ol>
-    <li><strong>Filtra produtos elegíveis</strong> da sua org: não bloqueados, com preço &gt; 0, com pelo menos 1 nicho.</li>
-    <li><strong>Encontra grupos compatíveis</strong>: grupos cujos nichos batem com o nicho do produto. Grupo sem nicho aceita qualquer produto.</li>
-    <li><strong>Aplica dedup</strong>: se o produto já foi postado nesse grupo nos últimos 7 dias, pula.</li>
-    <li><strong>Renderiza template</strong> do nicho do produto (ou fallback se nicho não tiver template).</li>
-    <li><strong>Enfileira tarefa</strong> via dispatcher: WhatsApp vai pro agente local, Telegram vai pro Celery cloud.</li>
+{# ── Explicação do algoritmo ───────────────────────── #}
+<details class="card" style="padding:0;">
+  <summary style="padding:16px 22px; cursor:pointer; font-weight:600;
+                  list-style:none; display:flex; align-items:center; gap:8px;
+                  color:var(--texto-2);">
+    <span>💡</span>
+    <span>Como o sistema decide o que postar onde?</span>
+  </summary>
+  <ol style="margin:0; padding:0 22px 20px 42px; color:var(--texto-2); line-height:1.7;">
+    <li>
+      <strong>Filtra produtos elegíveis</strong> da sua org: não bloqueados,
+      com preço &gt; 0, com pelo menos 1 nicho associado.
+    </li>
+    <li>
+      <strong>Encontra grupos compatíveis</strong>: grupos cujos nichos batem
+      com o nicho do produto. Grupo sem nicho aceita qualquer produto.
+    </li>
+    <li>
+      <strong>Aplica dedup</strong>: se o produto já foi postado nesse grupo
+      nos últimos 7 dias, pula.
+    </li>
+    <li>
+      <strong>Renderiza template</strong> do nicho do produto (ou fallback
+      genérico se o nicho não tiver template).
+    </li>
+    <li>
+      <strong>Enfileira tarefa</strong> via dispatcher: WhatsApp vai pro
+      agente local, Telegram vai pro Celery na cloud.
+    </li>
   </ol>
-</section>
+</details>
 
 {% endblock %}

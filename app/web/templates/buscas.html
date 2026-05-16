@@ -1,25 +1,47 @@
 {% extends "base.html" %}
-{% block titulo %}Buscas ML{% endblock %}
+{% block titulo %}Buscas{% endblock %}
+{% block titulo_topbar %}Buscas{% endblock %}
 {% block conteudo %}
 
-<header class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+<header class="page-header" style="display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;">
   <div>
-    <h1>Buscas Mercado Livre</h1>
-    <p class="muted">Buscas automatizadas que rodam no agente local. Produtos achados entram no catálogo.</p>
+    <h1>Buscas</h1>
+    <p>Configurações de busca que rodam no agente local e alimentam o catálogo.</p>
   </div>
-  <div>
-    <a href="/buscas/nova" class="btn btn-primario">+ Nova busca</a>
+  <div style="display:flex; gap:10px;">
+    <a href="/buscas/nova" class="btn btn-primario">
+      <span>＋</span>
+      <span>Nova busca</span>
+    </a>
   </div>
 </header>
 
-{% if mensagem %}
-<div class="alerta alerta-ok">{{ mensagem }}</div>
-{% endif %}
-{% if erro %}
-<div class="alerta alerta-erro">{{ erro }}</div>
-{% endif %}
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
 
 {% if buscas %}
+
+{# Sumário rápido — quantas / quantas ativas / quantas agendadas #}
+{% set _ativas    = buscas|selectattr('ativo')|list|length %}
+{% set _agendadas = buscas|selectattr('intervalo_minutos')|list|length %}
+<section class="cards" style="margin-bottom:20px;">
+  <div class="card">
+    <div class="card-titulo">Total</div>
+    <div class="card-numero">{{ buscas|length }}</div>
+    <div class="card-sub">configurações</div>
+  </div>
+  <div class="card">
+    <div class="card-titulo">Ativas</div>
+    <div class="card-numero">{{ _ativas }}</div>
+    <div class="card-sub">disponíveis pra rodar</div>
+  </div>
+  <div class="card">
+    <div class="card-titulo">Agendadas</div>
+    <div class="card-numero">{{ _agendadas }}</div>
+    <div class="card-sub">rodam automaticamente</div>
+  </div>
+</section>
+
 <table class="tabela">
   <thead>
     <tr>
@@ -28,7 +50,6 @@
       <th>Agente</th>
       <th>Agendamento</th>
       <th>Última exec.</th>
-      <th>Execuções</th>
       <th>Status</th>
       <th></th>
     </tr>
@@ -36,24 +57,31 @@
   <tbody>
     {% for b in buscas %}
     <tr>
-      <td><strong>{{ b.nome }}</strong></td>
       <td>
-        <code class="small">{{ b.entrada[:80] }}{% if b.entrada|length > 80 %}…{% endif %}</code>
-        <div class="muted small">
-          {% if b.entrada.startswith('http') %}🔗 URL{% else %}🔍 termo{% endif %}
-          · até {{ b.max_paginas }} págs / {{ b.max_produtos }} produtos
+        <strong>{{ b.nome }}</strong>
+        <div class="muted small">#{{ b.id }} · {{ b.execucoes }} execução{{ 'ões' if b.execucoes != 1 else '' }}</div>
+      </td>
+      <td>
+        <code class="small" style="word-break:break-all;">
+          {{ b.entrada[:80] }}{% if b.entrada|length > 80 %}…{% endif %}
+        </code>
+        <div class="muted small" style="margin-top:4px;">
+          {% if b.entrada.startswith('http') %}🔗 URL específica
+          {% elif b.entrada.startswith('[') %}⚙️ tipo automático
+          {% else %}🔍 termo livre{% endif %}
+          · até {{ b.max_paginas }} pág · máx {{ b.max_produtos }} produtos
         </div>
       </td>
       <td>
         {% if b.agente_id %}
           <span class="badge badge-azul">#{{ b.agente_id }}</span>
         {% else %}
-          <span class="muted small">qualquer</span>
+          <span class="muted small">qualquer agente</span>
         {% endif %}
       </td>
       <td>
         {% if b.intervalo_minutos %}
-          a cada {{ b.intervalo_minutos }} min
+          <span class="badge badge-azul">⏱ {{ b.intervalo_minutos }}min</span>
         {% else %}
           <span class="muted small">só manual</span>
         {% endif %}
@@ -65,38 +93,48 @@
           <span class="muted small">nunca</span>
         {% endif %}
       </td>
-      <td>{{ b.execucoes }}</td>
       <td>
         {% if b.ativo %}
-          <span class="badge badge-verde">ativa</span>
+          <span class="badge badge-verde">● ativa</span>
         {% else %}
-          <span class="badge badge-vermelho">inativa</span>
+          <span class="badge badge-cinza">○ inativa</span>
         {% endif %}
       </td>
       <td>
-        <form method="post" action="/buscas/{{ b.id }}/rodar" style="display:inline">
-          <button type="submit" class="btn-link">▶ rodar</button>
-        </form>
-        {% if pode_admin %}
-        ·
-        <form method="post" action="/buscas/{{ b.id }}/excluir" style="display:inline"
-              onsubmit="return confirm('Excluir esta busca?');">
-          <button type="submit" class="btn-link">excluir</button>
-        </form>
-        {% endif %}
+        <div style="display:flex; gap:4px; flex-wrap:wrap;">
+          <form method="post" action="/buscas/{{ b.id }}/rodar" style="display:inline">
+            <button type="submit" class="btn-link" title="Disparar busca agora">▶ rodar</button>
+          </form>
+          {% if pode_admin %}
+          <form method="post" action="/buscas/{{ b.id }}/excluir" style="display:inline"
+                onsubmit="return confirm('Excluir a busca {{ b.nome|tojson }}?\n\nA configuração será removida (produtos já achados permanecem).');">
+            <button type="submit" class="btn-link" style="color:var(--vermelho);"
+                    title="Excluir configuração de busca">🗑 excluir</button>
+          </form>
+          {% endif %}
+        </div>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+
 {% else %}
-<div class="vazio">
-  <p>Nenhuma busca cadastrada.</p>
-  <p class="muted">
-    Crie uma busca pra que o agente local extraia produtos do ML automaticamente.
-    <a href="/buscas/nova">Criar primeira busca</a>.
+
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">🔍</div>
+  <h2 style="margin:0 0 8px 0; font-size:20px; color:var(--texto);">Nenhuma busca cadastrada</h2>
+  <p style="max-width:480px; margin:0 auto 20px;">
+    Crie uma busca pra que o agente local extraia produtos automaticamente do
+    Mercado Livre, Shopee e outros marketplaces — e popule seu catálogo sem
+    trabalho manual.
   </p>
+  <a href="/buscas/nova" class="btn btn-primario">
+    <span>＋</span>
+    <span>Criar primeira busca</span>
+  </a>
 </div>
+
 {% endif %}
 
 {% endblock %}
