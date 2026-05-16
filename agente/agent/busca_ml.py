@@ -662,7 +662,7 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
     entrada      = msg.get("entrada", "")
     max_paginas  = int(msg.get("max_paginas", 3))
     max_produtos = int(msg.get("max_produtos", 50))
-    tipo_busca   = msg.get("tipo", "termo_livre")
+    tipo_busca   = msg.get("tipo_busca", "termo_livre")
 
     log.info("busca.iniciando",
              busca_id=busca_id, tarefa_id=tarefa_id,

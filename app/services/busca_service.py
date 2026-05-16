@@ -108,8 +108,14 @@ async def enfileirar_execucao(
             "max_paginas":   busca.max_paginas,
             "max_produtos":  busca.max_produtos,
             "disparado_por": disparado_por,
-            # Fase 16: agente decide URLs/strategy baseado no tipo
-            "tipo":         getattr(busca, "tipo", "termo_livre"),
+            # Fase 16: agente decide URLs/strategy baseado no tipo_busca.
+            # CHAVE INTENCIONAL "tipo_busca" (não "tipo") — `dispatcher._tentar_entrega`
+            # faz `**tarefa.payload` na hora de montar a mensagem WS, e a chave
+            # de topo do WS já é "tipo" (= comando como "iniciar_busca_ml").
+            # Se chamássemos isso de "tipo" aqui, o spread sobrescreveria o
+            # comando WS — agente receberia tipo="mais_vendidos" e cairia em
+            # `ws.tipo_sem_handler`.
+            "tipo_busca":   getattr(busca, "tipo", "termo_livre"),
             "marketplaces": marketplaces_list,
         },
         criado_por_usuario_id=criado_por_usuario_id,
