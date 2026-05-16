@@ -444,6 +444,88 @@ def _extrair_cards_da_pagina(driver) -> list[dict[str, Any]]:
 # Varredura (síncrona — chamada via to_thread)
 # ============================================================
 
+# Fase 16.3 — mapping categoria → URL "mais vendidos" + comissão média.
+# Portado da V2 (`src/buscar/ml.py:32-41`). Comissões são ESTIMATIVA pra
+# ranqueamento; valor exato vem do painel ML afiliados.
+CATEGORIAS_MAIS_VENDIDOS = [
+    # (categoria_display, url, comissao_estimada)
+    # Display name BATE com mappings em `nicho_categoria_ml` (migration 0007)
+    # pra auto-classificação por nicho funcionar sem mappings adicionais.
+    ("Roupas, Calçados e Acessórios", "https://www.mercadolivre.com.br/mais-vendidos/MLB1430", 14.0),
+    ("Esportes e Fitness",            "https://www.mercadolivre.com.br/mais-vendidos/MLB1276", 12.0),
+    ("Beleza e Cuidado Pessoal",      "https://www.mercadolivre.com.br/mais-vendidos/MLB1246", 12.0),
+    ("Bebês",                          "https://www.mercadolivre.com.br/mais-vendidos/MLB5726", 10.0),
+    ("Casa, Móveis e Decoração",      "https://www.mercadolivre.com.br/mais-vendidos/MLB1574", 10.0),
+    ("Eletrônicos, Áudio e Vídeo",    "https://www.mercadolivre.com.br/mais-vendidos/MLB1051",  8.0),
+    ("Informática",                    "https://www.mercadolivre.com.br/mais-vendidos/MLB1648",  8.0),
+    ("Ferramentas",                    "https://www.mercadolivre.com.br/mais-vendidos/MLB1499",  8.0),
+]
+
+
+def _varrer_mais_vendidos_sync(
+    cfg: Config,
+    *,
+    max_produtos: int,
+) -> list[dict[str, Any]]:
+    """Itera as N categorias de 'mais vendidos' do ML, balanceando produtos.
+
+    Distribui `max_produtos` entre as categorias (round-robin por padrão).
+    Cada categoria contribui no máximo `max_produtos // len(CATEGORIAS) + 2`
+    pra não saturar uma só.
+    """
+    driver = _criar_driver_ml(cfg)
+    todos: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    por_cat = max(3, max_produtos // len(CATEGORIAS_MAIS_VENDIDOS) + 2)
+
+    try:
+        for nome_cat, url_cat, comissao_est in CATEGORIAS_MAIS_VENDIDOS:
+            if len(todos) >= max_produtos:
+                break
+            log.info("ml.mais_vendidos.categoria", categoria=nome_cat, url=url_cat)
+            driver.get(url_cat)
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except TimeoutException:
+                log.warning("ml.mais_vendidos.timeout", categoria=nome_cat)
+                continue
+
+            # Detecta bloqueio/login (mesma lógica de _varrer_sync)
+            url_final = driver.current_url.lower()
+            if any(s in url_final for s in ("/gz/account-verification", "/login", "/jms/mlb/lgz")):
+                raise RuntimeError(
+                    f"ML exige login (categoria {nome_cat} → {url_final[:120]}). "
+                    "Rode `python -m agent.login_ml` uma vez."
+                )
+
+            cards = _extrair_cards_da_pagina(driver)
+            adicionados_cat = 0
+            for c in cards:
+                if len(todos) >= max_produtos or adicionados_cat >= por_cat:
+                    break
+                item_id = c.get("item_id")
+                if not item_id or item_id in vistos:
+                    continue
+                vistos.add(item_id)
+                # Enriquece com categoria + comissão estimada (V2 fazia isso)
+                c["categoria"] = nome_cat
+                c["comissao"] = comissao_est
+                todos.append(c)
+                adicionados_cat += 1
+            log.info("ml.mais_vendidos.categoria_ok",
+                     categoria=nome_cat, extraidos=adicionados_cat, total=len(todos))
+
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    return todos
+
+
 def _varrer_sync(
     cfg: Config,
     *,
@@ -567,6 +649,12 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
     """
     Handler do comando `iniciar_busca_ml`. Retorna dict no formato esperado
     pelo WSClient (`{ok, ...}` → vira `tarefa_concluida` automaticamente).
+
+    Fase 16: roteia pelo `tipo` da busca:
+    - termo_livre / por_url (fallback) → varredura de termo/URL (legado)
+    - mais_vendidos → itera 8 categorias hardcoded
+    - melhor_comissao, em_alta → ainda não implementado; cai em mais_vendidos
+      como aproximação (categorias mais vendidas tendem a ter mais movimento).
     """
     busca_id     = msg.get("busca_id")
     tarefa_id    = msg.get("tarefa_id")
@@ -574,12 +662,35 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
     entrada      = msg.get("entrada", "")
     max_paginas  = int(msg.get("max_paginas", 3))
     max_produtos = int(msg.get("max_produtos", 50))
+    tipo_busca   = msg.get("tipo", "termo_livre")
 
     log.info("busca.iniciando",
              busca_id=busca_id, tarefa_id=tarefa_id,
+             tipo_busca=tipo_busca,
              tipo_entrada=tipo_entrada, entrada=entrada[:80],
              max_paginas=max_paginas, max_produtos=max_produtos)
 
+    # Roteamento por tipo de busca (Fase 16.3+)
+    if tipo_busca in ("mais_vendidos", "melhor_comissao", "em_alta"):
+        try:
+            produtos = await asyncio.to_thread(
+                _varrer_mais_vendidos_sync,
+                cfg,
+                max_produtos=max_produtos,
+            )
+        except RuntimeError as e:
+            log.warning("busca.bloqueada", motivo=str(e)[:200])
+            return {"ok": False, "erro": f"ml_bloqueou: {str(e)[:300]}",
+                    "tentar_de_novo": False}
+        except Exception as e:
+            log.exception("busca.crash_selenium_mais_vendidos", erro=str(e))
+            return {"ok": False, "erro": f"selenium_crash: {type(e).__name__}",
+                    "tentar_de_novo": True}
+        return await _enviar_produtos_e_responder(
+            produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
+        )
+
+    # Caminho legado: termo_livre / por_url / qualquer outra coisa
     try:
         url_inicial = montar_url_inicial(
             tipo_entrada=tipo_entrada, entrada=entrada,
@@ -614,6 +725,19 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
             "tentar_de_novo": True,
         }
 
+    return await _enviar_produtos_e_responder(
+        produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
+    )
+
+
+async def _enviar_produtos_e_responder(
+    produtos: list[dict[str, Any]],
+    *,
+    busca_id: int | None,
+    tarefa_id: int | None,
+    cfg: Config,
+) -> dict[str, Any]:
+    """Envia lote pra servidor e formata resposta padrão pra WS."""
     if not produtos:
         return {
             "ok": True,
@@ -622,7 +746,6 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
             "detalhe": "nenhum produto extraído",
         }
 
-    # Envia lote pra cloud
     try:
         resultado = await enviar_lote(
             cfg,
