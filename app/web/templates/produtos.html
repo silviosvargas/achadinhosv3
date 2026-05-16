@@ -12,6 +12,14 @@
     <a href="/produtos/import-csv" class="btn btn-primario">📥 Importar CSV</a>
     <a href="/produtos/novo" class="btn btn-primario">+ Adicionar produto</a>
     {% if produtos %}
+    <form method="post" action="/produtos/regenerar-meli-la" style="display:inline"
+          onsubmit="return confirm('Re-enfileirar geração de links meli.la pros produtos pendentes?\n\nO agente vai abrir o painel ML afiliados e gerar os shortlinks. Leva ~1min por 50 produtos.');">
+      <button type="submit" class="btn"
+              style="background:#0ea5e9; color:white; border:none;"
+              title="Re-roda o linkbuilder ML pra produtos sem meli.la (depois de fixes de pipeline)">
+        🔗 Regenerar meli.la
+      </button>
+    </form>
     <form method="post" action="/produtos/excluir-todos" style="display:inline"
           onsubmit="return confirmarApagarTudo(this)">
       <input type="hidden" name="confirmacao" value="">

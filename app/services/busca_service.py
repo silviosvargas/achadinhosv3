@@ -269,12 +269,16 @@ async def ingerir_produtos(
     # Fase 15: dispara tarefa pro AGENTE gerar shortlinks `meli.la` oficiais
     # via scraping do painel ML afiliados. Coleta URLs canônicas dos produtos
     # ML que AINDA não têm `url_afiliado=meli.la` (pra evitar re-scraping).
+    # NOTA: agente envia o campo `url_canonica` (não `link_produto` como era
+    # nomenclatura na V2). Bug em prod até v3.18 era ler `link_produto` aqui,
+    # resultando em lista vazia → GERAR_LINK nunca enfileirada → produtos
+    # ficavam sem `meli.la` no banco.
     urls_pendentes = await _coletar_urls_sem_meli_la(
         db, org_id=org_id,
         urls_ingeridas=[
-            i.get("link_produto") for i in produtos_recebidos
+            i.get("url_canonica") for i in produtos_recebidos
             if (i.get("plataforma") or "").lower() == "ml"
-            and i.get("link_produto")
+            and i.get("url_canonica")
         ],
     )
     if urls_pendentes:

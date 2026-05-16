@@ -1405,6 +1405,74 @@ async def excluir_produto(
     return RedirectResponse(url="/produtos", status_code=302)
 
 
+@router.post("/produtos/regenerar-meli-la", response_class=HTMLResponse)
+async def regenerar_meli_la(
+    admin: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """
+    Re-enfileira tarefa GERAR_LINK pros produtos ML da org que ainda não têm
+    `meli.la` salvo. Útil pra catalogar produtos antigos depois do fix do bug
+    de campo `link_produto` → `url_canonica` (pré-v3.18.x).
+
+    Pega o primeiro agente online da org pra processar.
+    """
+    from app.models import Agente
+    from app.services import busca_service
+    from app.services.agente_registry import registry
+
+    # Pega URLs canônicas dos produtos ML sem meli.la
+    rows = (await db.execute(
+        select(Produto.url_canonica).where(
+            Produto.org_id == admin.org_id,
+            Produto.plataforma == "ml",
+            Produto.url_canonica.is_not(None),
+        )
+    )).all()
+    urls_pendentes = [
+        url for (url,) in rows
+        if url and "meli.la/" not in (url or "")
+    ]
+    # Filtra os que JÁ têm meli.la no url_afiliado (extra safety)
+    if urls_pendentes:
+        rows_afiliado = (await db.execute(
+            select(Produto.url_canonica, Produto.url_afiliado).where(
+                Produto.org_id == admin.org_id,
+                Produto.plataforma == "ml",
+                Produto.url_canonica.in_(urls_pendentes),
+            )
+        )).all()
+        ja_meli = {url_c for url_c, url_a in rows_afiliado
+                   if url_a and "meli.la/" in url_a}
+        urls_pendentes = [u for u in urls_pendentes if u not in ja_meli]
+
+    if not urls_pendentes:
+        return RedirectResponse(
+            url="/produtos?mensagem=Nenhum+produto+pendente+(todos+já+têm+meli.la)",
+            status_code=302,
+        )
+
+    # Pega agente online da org
+    agentes_org = list((await db.execute(
+        select(Agente).where(Agente.org_id == admin.org_id, Agente.ativo.is_(True))
+    )).scalars().all())
+    agente = next((a for a in agentes_org if registry.esta_online(a.id)), None)
+    if agente is None:
+        return RedirectResponse(
+            url="/produtos?mensagem=Nenhum+agente+online+(abra+o+AchadinhosAgent+e+tente+de+novo)",
+            status_code=302,
+        )
+
+    await busca_service._enfileirar_geracao_links_ml(
+        db, org_id=admin.org_id, agente_id=agente.id,
+        usuario_id=admin.id, urls=urls_pendentes,
+    )
+    return RedirectResponse(
+        url=f"/produtos?mensagem={len(urls_pendentes)}+URLs+enfileiradas+pro+agente+(meli.la+vai+aparecer+em+~1min)",
+        status_code=302,
+    )
+
+
 @router.post("/produtos/excluir-todos", response_class=HTMLResponse)
 async def excluir_todos_produtos(
     confirmacao: str = Form(...),
