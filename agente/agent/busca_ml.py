@@ -165,6 +165,61 @@ def _primeiro(elem, seletores: list[str]):
     return None
 
 
+def _achar_preco_atual(elem):
+    """Acha (int_el, cents_el) do preço ATUAL — pula o riscado dentro de <s>.
+
+    Bug histórico (anterior a v3.3.1): `_primeiro(card, SELETORES_PRECO_INT)`
+    pegava `.andes-money-amount__fraction` via `find_element`, que retorna o
+    PRIMEIRO match. No ML, quando tem promoção, o DOM coloca:
+
+        <s class="andes-money-amount">              ← preço RISCADO (original)
+            <span class="andes-money-amount__fraction">499</span>
+        </s>
+        <span class="andes-money-amount">           ← preço ATUAL (promocional)
+            <span class="andes-money-amount__fraction">269</span>
+        </span>
+
+    Resultado: pegava 499 como preço atual. UI mostrava produto com 46% OFF
+    como se fosse o preço cheio.
+
+    Fix: XPath excluindo descendentes de `<s>`. Sem `<s>` por perto (produto
+    sem promoção), pega o único `.fraction` que existe.
+    """
+    XPATH_INT = (
+        ".//*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' andes-money-amount__fraction ') and not(ancestor::s)]"
+    )
+    XPATH_CENTS = (
+        ".//*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' andes-money-amount__cents ') and not(ancestor::s)]"
+    )
+    try:
+        ints = elem.find_elements(By.XPATH, XPATH_INT)
+    except Exception:
+        ints = []
+    try:
+        cents = elem.find_elements(By.XPATH, XPATH_CENTS)
+    except Exception:
+        cents = []
+
+    int_el   = ints[0]  if ints  else None
+    cents_el = cents[0] if cents else None
+
+    # Fallback: legado .price-tag-fraction (alguns layouts antigos do ML)
+    if int_el is None:
+        try:
+            int_el = elem.find_element(By.CSS_SELECTOR, ".price-tag-fraction")
+        except NoSuchElementException:
+            pass
+    if cents_el is None:
+        try:
+            cents_el = elem.find_element(By.CSS_SELECTOR, ".price-tag-cents")
+        except NoSuchElementException:
+            pass
+
+    return int_el, cents_el
+
+
 def _texto(elem) -> str:
     return (elem.text or "").strip() if elem else ""
 
@@ -481,10 +536,12 @@ def _extrair_cards_da_pagina(driver) -> list[dict[str, Any]]:
             if not item_id:
                 continue  # sem MLB válido, descarta
 
-            preco = _parse_preco(
-                _primeiro(card, SELETORES_PRECO_INT),
-                _primeiro(card, SELETORES_PRECO_CENTS),
-            )
+            # Fase 18.1 (v3.3.1): preço ATUAL via XPath que EXCLUI <s> (riscado).
+            # Antes: find_element pegava o primeiro .fraction, mas o ML coloca
+            # o riscado ANTES no DOM → produto com promoção mostrava o preço
+            # CHEIO. Bug grave reportado pelo user com Tênis Puma (R$269 → mostrava R$499).
+            preco_int_el, preco_cents_el = _achar_preco_atual(card)
+            preco = _parse_preco(preco_int_el, preco_cents_el)
             if preco is None or preco <= 0:
                 continue
 
@@ -835,6 +892,8 @@ def _extrair_produto_unico(driver, url: str) -> dict[str, Any] | None:
 
     # Fallback preço via CSS — múltiplas estratégias em cascata.
     # Catalog ML usa estrutura diferente de produto único; cobrimos várias.
+    # v3.3.1: cada `preco_box` passa por `_achar_preco_atual` que pula `<s>`
+    # — evita capturar o preço riscado quando o produto tem promoção.
     if preco is None:
         seletores_preco = [
             # PDP padrão (produto único)
@@ -852,18 +911,17 @@ def _extrair_produto_unico(driver, url: str) -> dict[str, Any] | None:
             except Exception:
                 continue
             for preco_box in els:
+                # Pula o próprio elemento se for um <s> (riscado)
                 try:
-                    inteiro_el = preco_box.find_element(
-                        By.CSS_SELECTOR, ".andes-money-amount__fraction",
-                    )
-                except NoSuchElementException:
+                    tag = (preco_box.tag_name or "").lower()
+                except Exception:
+                    tag = ""
+                if tag == "s":
                     continue
-                try:
-                    cents_el = preco_box.find_element(
-                        By.CSS_SELECTOR, ".andes-money-amount__cents",
-                    )
-                except NoSuchElementException:
-                    cents_el = None
+                # _achar_preco_atual exclui descendentes de <s> internamente
+                inteiro_el, cents_el = _achar_preco_atual(preco_box)
+                if inteiro_el is None:
+                    continue
                 preco_candidato = _parse_preco(inteiro_el, cents_el)
                 if preco_candidato and preco_candidato > 0:
                     preco = preco_candidato

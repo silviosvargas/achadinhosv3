@@ -46,6 +46,50 @@ ESPERA_GERACAO = 6  # segundos pra ML processar e renderizar os meli.la
 # — undetected-chromedriver não tolera 2 sessões com mesmo `--user-data-dir`.
 _LOCK_CHROME_ML = threading.Lock()
 
+# Flag de "já salvei debug do painel nesta sessão do agente". Evita poluir
+# o disco quando o user tem o agente rodando o dia todo e a captura de
+# comissão sempre falha (ex: layout do painel ML mudou).
+_DEBUG_PAINEL_JA_SALVO = False
+
+
+def _salvar_debug_painel_uma_vez(driver) -> None:
+    """Salva HTML+screenshot do painel ML linkbuilder pra próxima análise.
+
+    Disparado quando capturamos meli.la mas ZERO comissões — sintoma típico
+    de layout novo do painel que nossos seletores não cobrem mais. User
+    manda os arquivos pra ajustarmos.
+
+    Salva em `%APPDATA%\\Achadinhos\\debug\\ml_linkbuilder_<timestamp>.{html,png}`.
+    """
+    global _DEBUG_PAINEL_JA_SALVO
+    if _DEBUG_PAINEL_JA_SALVO:
+        return
+    try:
+        import os
+        from datetime import datetime as _dt
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        pasta = os.path.join(base, "Achadinhos", "debug")
+        os.makedirs(pasta, exist_ok=True)
+        ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+        prefixo = os.path.join(pasta, f"ml_linkbuilder_{ts}")
+        # HTML do painel
+        try:
+            with open(prefixo + ".html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source or "")
+        except Exception:
+            pass
+        # Screenshot
+        try:
+            driver.save_screenshot(prefixo + ".png")
+        except Exception:
+            pass
+        log.warning("linkbuilder_ml.debug_salvo",
+                    pasta=pasta, prefixo=os.path.basename(prefixo),
+                    motivo="captura sem nenhuma comissão — layout pode ter mudado")
+        _DEBUG_PAINEL_JA_SALVO = True
+    except Exception as e:
+        log.debug("linkbuilder_ml.debug_falhou", erro=str(e)[:120])
+
 
 def _normalizar_url(url: str) -> str:
     """
@@ -136,52 +180,80 @@ def _gerar_lote_sync(driver: uc.Chrome, urls: list[str]) -> dict[str, dict]:
 
         # Captura meli.la + comissão das linhas da tabela de resultados.
         # ML mostra após "Gerar" uma tabela com (URL original, meli.la, comissão%).
-        # Estratégia: itera elementos que provavelmente são "rows" e busca
-        # `https://meli.la/XXX` + `N%` no mesmo container. Sobra fallback pra
-        # extrair só os meli.la (sem comissão) do innerHTML completo.
+        # Estratégia "subir do meli.la": pra CADA elemento que contém meli.la,
+        # sobe pelos pais até achar um que tem N% no texto local (filhos não-meli).
+        # Mais robusto que enumerar seletores possíveis de "row".
         capturas = driver.execute_script(r"""
             var resultado = [];
-            var seletores = [
-                'tr', 'li', '[role="row"]',
-                'div[class*="row"]', 'div[class*="item"]', 'div[class*="card"]',
-            ];
             var visto = new Set();
-            seletores.forEach(function(sel) {
-                document.querySelectorAll(sel).forEach(function(row) {
-                    var html = row.innerHTML || '';
-                    var m_link = html.match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/);
-                    if (!m_link || visto.has(m_link[0])) return;
-                    var texto = row.textContent || '';
-                    var m_pct = texto.match(/(\d+(?:[.,]\d+)?)\s*%/);
-                    var pct = null;
-                    if (m_pct) {
-                        var num = parseFloat(m_pct[1].replace(',', '.'));
-                        if (!isNaN(num) && num > 0 && num < 100) pct = num;
+
+            function acharPctNoEscopo(rootEl) {
+                // Busca N% no texto direto do escopo, sem cair em "outros meli.la"
+                // (irmãos que poderiam contaminar). Limita a 5 níveis de subida.
+                if (!rootEl) return null;
+                var el = rootEl;
+                for (var i = 0; i < 5; i++) {
+                    if (!el || el === document.body) break;
+                    var texto = el.textContent || '';
+                    // Captura percentual razoável: 0.5..50%
+                    var m = texto.match(/(\d{1,2}(?:[.,]\d{1,2})?)\s*%/);
+                    if (m) {
+                        var num = parseFloat(m[1].replace(',', '.'));
+                        if (!isNaN(num) && num > 0 && num < 50) return num;
                     }
-                    visto.add(m_link[0]);
-                    resultado.push({link: m_link[0], comissao_pct: pct});
+                    el = el.parentElement;
+                }
+                return null;
+            }
+
+            // 1. Busca anchors <a href="meli.la/..."> — caso mais comum
+            document.querySelectorAll('a[href*="meli.la/"]').forEach(function(a) {
+                var link = a.href;
+                if (!link || visto.has(link)) return;
+                visto.add(link);
+                resultado.push({link: link, comissao_pct: acharPctNoEscopo(a)});
+            });
+
+            // 2. Busca textos que contém meli.la (não-anchor, ex: copy-to-clipboard)
+            document.querySelectorAll('input[value*="meli.la/"], textarea').forEach(function(el) {
+                var val = el.value || '';
+                var m = val.match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/g);
+                if (!m) return;
+                m.forEach(function(link) {
+                    if (visto.has(link)) return;
+                    visto.add(link);
+                    resultado.push({link: link, comissao_pct: acharPctNoEscopo(el)});
                 });
             });
-            // Fallback: se NENHUMA row foi achada, varre textareas + innerHTML
-            // só pelos meli.la (sem comissão)
+
+            // 3. Walker pra qualquer outro elemento com meli.la em data attribute
+            //    ou title (alguns layouts do ML colocam o link assim)
+            document.querySelectorAll('[data-link*="meli.la/"], [title*="meli.la/"], [data-clipboard-text*="meli.la/"]').forEach(function(el) {
+                var s = el.getAttribute('data-link') || el.getAttribute('title') || el.getAttribute('data-clipboard-text') || '';
+                var m = s.match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/);
+                if (!m || visto.has(m[0])) return;
+                visto.add(m[0]);
+                resultado.push({link: m[0], comissao_pct: acharPctNoEscopo(el)});
+            });
+
+            // 4. FALLBACK absoluto: regex no innerHTML inteiro (só links, SEM comissão)
             if (resultado.length === 0) {
-                var todos_links = [];
-                document.querySelectorAll('textarea').forEach(function(el){
-                    var m = (el.value||'').match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/g);
-                    if(m) todos_links = todos_links.concat(m);
-                });
-                if (todos_links.length === 0) {
-                    var m = document.body.innerHTML.match(
-                        /https?:\/\/meli\.la\/[A-Za-z0-9]+/g
-                    );
-                    if(m) todos_links = todos_links.concat(m);
-                }
-                [...new Set(todos_links)].forEach(function(l) {
+                var todos = document.body.innerHTML.match(
+                    /https?:\/\/meli\.la\/[A-Za-z0-9]+/g
+                ) || [];
+                [...new Set(todos)].forEach(function(l) {
                     resultado.push({link: l, comissao_pct: null});
                 });
             }
+
             return resultado;
         """) or []
+
+        # Debug: se NENHUMA captura veio com comissão, salva um snapshot do
+        # HTML do painel pra análise (o user pode mandar pra ajustarmos os
+        # seletores). Só salva 1× por sessão pra não poluir disco.
+        if capturas and not any(c.get("comissao_pct") for c in capturas):
+            _salvar_debug_painel_uma_vez(driver)
 
         com_comissao = sum(1 for c in capturas if c.get("comissao_pct"))
         log.info("linkbuilder_ml.lote_capturado",
