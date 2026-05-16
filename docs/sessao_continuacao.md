@@ -4,8 +4,8 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-15 (após Fase 16.3 + release v3.0.2)
-**Versão do agente em prod:** `3.0.2` (publicada como GitHub Release)
+**Última atualização:** 2026-05-16 (após hotfix `tipo_busca` + release v3.0.3)
+**Versão do agente em prod:** `3.0.3` (publicada como GitHub Release — **busca "Mais vendidos" validada em prod**)
 **Migration head:** `0010_busca_tipo_mkt`
 
 ---
@@ -18,7 +18,7 @@
 | Postgres | ● Online | Railway add-on, projeto `balanced-ambition` |
 | Redis | ● Online | Railway add-on |
 | Worker (Celery + beat embedded) | ● Online | `--pool=solo`, `railway.worker.json` |
-| Agente desktop `.exe` | Released v3.0.2 | [github releases](https://github.com/silviosvargas/achadinhosv3/releases) |
+| Agente desktop `.exe` | Released v3.0.3 | [github releases](https://github.com/silviosvargas/achadinhosv3/releases) |
 | Signup público | OK | `/signup` cria org + admin com plano free restrito |
 | Onboarding wizard | OK | 4 cards adaptativo por plano |
 | Pareamento zero-CLI | OK | `/agentes/baixar` → `Conectar meu agente` |
@@ -70,8 +70,11 @@
 | 26 | [07bf80d](https://github.com/silviosvargas/achadinhosv3/commit/07bf80d) | 16.1+16.2 | UI multi-marketplace `/buscas/nova` + schema |
 | 27 | [968e614](https://github.com/silviosvargas/achadinhosv3/commit/968e614) | 16.3 | Scraper ML `mais_vendidos` (8 categorias) |
 | 28 | [a8f835a](https://github.com/silviosvargas/achadinhosv3/commit/a8f835a) | release | Bump v3.0.2 + tag |
+| 29 | [ba876e5](https://github.com/silviosvargas/achadinhosv3/commit/ba876e5) | docs | Consolidação completa pra próxima sessão |
+| 30 | [03f63d1](https://github.com/silviosvargas/achadinhosv3/commit/03f63d1) | hotfix | Conflito chave `tipo` no payload WS → renomeia pra `tipo_busca` + bump v3.0.3 |
 
-**Total:** 28 commits + 3 releases (v3.0.0, v3.0.1, v3.0.2).
+**Total:** 30 commits + 4 releases (v3.0.0, v3.0.1, v3.0.2, v3.0.3).
+**Busca "Mais vendidos" ML validada em prod com a v3.0.3.**
 
 ---
 
@@ -274,11 +277,16 @@ servidor:
 > 2. docs/sessao_continuacao.md (estado atual + tudo entregue + próximas fases)
 > 3. docs/decisoes.md (ADRs, especialmente ADR-009 sobre Fase 9)
 >
-> O agente está em v3.0.2, release publicada no GitHub. Pipeline completo
+> O agente está em v3.0.3, release publicada no GitHub. Pipeline completo
 > funciona: signup → onboarding → instalar `.exe` → conectar → busca → lote.
+> A busca tipo "Mais vendidos" ML (8 categorias hardcoded) foi validada
+> em prod — funciona end-to-end com 50 produtos importados, auto-classificados
+> por nicho, com shortlinks `meli.la` gerados pelo agente.
 >
 > Próximo passo planejado é Fase 16.4 — busca personalizada por URL/link.
-> A V2 (em `D:\ACHADINHOSV2 - FUNCIONAL\`) tem código pra portar.
+> A V2 (em `D:\ACHADINHOSV2 - FUNCIONAL\`) tem código pra portar
+> (`src/buscar_palavra/extrator_link.py` faz detecção de plataforma por
+> domínio + extração de dados).
 >
 > Aguarde minha confirmação antes de implementar qualquer coisa."*
 
@@ -286,10 +294,11 @@ servidor:
 1. **Não tente login admin com `IzT9V7c5J6dp7Eft7lwD`** — user trocou pela UI `/conta`. Pede a nova se precisar fazer smoke test.
 2. **Railway API token está em env var `RAILWAY_API_TOKEN`** quando precisar mexer em prod (`7fcbeb71-...`). Token de longa duração, válido por meses.
 3. **Agente já tá pareado** (HP_SILVIO, agente_id=1). Não rode `agent.setup` de novo — apaga config dele.
-4. **`.exe` em prod é v3.0.2** mas o user pode ainda estar com v3.0.0/3.0.1 instalado. Sempre confere via `/api/v1/agentes/versao-atual` se em dúvida.
+4. **`.exe` em prod é v3.0.3** mas o user pode ainda estar com versão antiga instalada. Sempre confere via `/api/v1/agentes/versao-atual` se em dúvida.
 5. **Worktree atual**: `D:\ACHADINHOSV3\.claude\worktrees\youthful-mendel-0e879a\` — branch `claude/youthful-mendel-0e879a`. Push vai pra `main` direto (mapeamento `:main`).
 6. **Pareamento exige sessão ML logada no painel afiliados** pra linkbuilder funcionar. Se scraping volta vazio, é sessão expirada — user precisa relogar.
 7. **Permissões liberadas** em `.claude/settings.json` — pode rodar comandos sem prompts pra `railway *`, `python -m agent.*`, `git *`, `curl *` pra hosts do projeto, `docker run --rm postgres:18`, etc.
+8. **⚠️ Cuidado com chave `tipo` em payload WS** (lição aprendida — hotfix v3.0.3): `dispatcher._tentar_entrega` monta msg via `{"tipo": comando_ws, **tarefa.payload}`. Se a busca/tarefa tiver um campo `tipo` no payload, o spread `**` SOBRESCREVE o comando WS de cima. Resultado: agente recebe tipo errado e cai em `ws.tipo_sem_handler`. Solução: usar `tipo_busca` (ou qualquer chave que não seja `tipo`) dentro do payload. Vale pra qualquer feature nova que enfileire tarefa.
 
 ### Arquivos importantes pra ler em ordem
 1. `CLAUDE.md` — overview + fases marcadas
