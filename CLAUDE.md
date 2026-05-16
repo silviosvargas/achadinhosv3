@@ -132,6 +132,14 @@ python -m agent.main --sem-tray   # roda
 - **3.11.10** — UPSERT em `criar_agente`: pareamento re-entry (mesmo PC, mesmo user, mesmo nome) **reutiliza** o agente existente em vez de duplicar — só gera token novo. Migration 0006 cria índice único partial `(org_id, usuario_id, nome) WHERE ativo=true` pra blindar a invariante a nível de DB.
 - **3.11.11** — UX bugs do dashboard: `usuario_atual` agora aceita JWT via **cookie HttpOnly** (não só Bearer header) — resolve badge "🟢/🔴 N online" no header que ficava cinza "status?". Página `/agentes/baixar` ganhou botão `⬇ Baixar agente` prominente quando agente offline; setup dev movido pra `<details>` recolhido com summary "Sou desenvolvedor". Nova rota `GET /agentes/instalador` que redireciona pro último GitHub Release (fallback HTML "em breve" se não tem release).
 - **3.11.12** — **Primeira release oficial do agente**: tag `agente-v3.0.0` disparou o workflow `release-agente` (Fase 9.5), que em ~2.5min buildou via PyInstaller, gerou installer via Inno Setup e publicou no GitHub Releases. Asset: `AchadinhosAgent-Setup-3.0.0.exe` ~33 MB em [github.com/silviosvargas/achadinhosv3/releases/tag/agente-v3.0.0](https://github.com/silviosvargas/achadinhosv3/releases/tag/agente-v3.0.0). `/agentes/instalador` confirmado em prod redirecionando 302 direto pro arquivo. **Caminho zero-CLI ponta-a-ponta agora 100% funcional pro user final.**
+- **3.12.0** — Backfill mappings categoria_ml→nicho (migration 0007, 21 entries) + cascata tag ML estendida pra admin org central + página `/conta` com troca de senha via UI.
+- **3.13.0** — Fase 13: tabela `usuarios_afiliados` (1 row por user × marketplace), 6 marketplaces suportados (ML, Shopee, Amazon, Magalu, AliExpress, TikTok). Substituiu `usuarios.afiliado_ml` + drop dos campos vestigiais `usuario_ml`/`senha_ml_cifrada` (migration 0008). UI nova `/usuarios/{id}/afiliados` com tabela + botão "+ Adicionar marketplace". Cascata genérica em `afiliado_service.tag_com_cascata(plataforma, usuario_id, org_id)`.
+- **3.14.0** — Fase 14: encurtador próprio `/r/{slug}` (migration 0009 tabela `redirects`). Lote chama `redirect_service.criar_ou_atualizar_pro_produto` antes de postar, retorna shortlink `achadinhos.maisseguidores.ia.br/r/XXX`. Click incrementa `total_clicks`, faz 302 pra URL com tag de afiliado. **Late binding** da tag no lote (`lote_service._url_pro_produto` recalcula URL a cada postagem, não usa `produto.url_afiliado` congelado).
+- **3.15.0** — Fase 15: linkbuilder ML real via scraping do painel oficial. `agente/agent/linkbuilder_ml.py` abre `chrome_perfil_ml` (sessão logada em afiliados ML), navega pra `mercadolivre.com.br/afiliados/linkbuilder`, cola URLs em lotes de 10, captura `meli.la/XXX` via regex. Servidor enfileira `TipoTarefa.GERAR_LINK` após `ingerir_produtos`; agente devolve mapping; `afiliado_ml_writer.aplicar_mapping` atualiza `produtos.url_afiliado` + `redirects.url_destino`. Lote prioriza `meli.la` sobre fallback `?matt_word=`. ML credita comissão de verdade.
+- **3.15.1** — Detecção de versão do agente: endpoint `GET /api/v1/agentes/versao-atual` (cache 5min consulta GitHub releases) + JS no `/agentes/baixar` compara semver com `/ping` local. Se desatualizado, mostra status "⚠ atualização disponível: vX.Y.Z" + botão amarelo "⬆ Atualizar agente".
+- **3.15.2** — Release `agente-v3.0.1` publicada (inclui Fase 15 + detecção de update).
+- **3.16.0** — Fase 16.1+16.2: UI nova `/buscas/nova` com dropdown "tipo de busca" (`termo_livre`/`por_url`/`mais_vendidos`/`melhor_comissao`/`em_alta`) + checkbox 6 marketplaces. Schema (migration 0010) adiciona `tipo` + `marketplaces` (JSON array) em `buscas_ml`. Backend route POST aceita `tipo` + `marketplaces[]` e converte pra entrada compatível.
+- **3.16.3** — Fase 16.3: scraper "mais vendidos" ML (8 categorias hardcoded da V2). `agente/agent/busca_ml.py` ganha `_varrer_mais_vendidos_sync` que itera Roupas/Esportes/Beleza/Bebês/Casa/Eletrônicos/Informática/Ferramentas. Display names casam com `nicho_categoria_ml` (auto-classificação funciona). Roteamento em `executar_busca` por `msg.tipo`. Release `agente-v3.0.2` publicada (`AchadinhosAgent-Setup-3.0.2.exe` 31.8 MB).
 
 ---
 
@@ -180,12 +188,17 @@ Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
 ## Próxima fase imediata
 
-**Ver `docs/sessao_continuacao.md` pra checklist completo.**
+**Leia `docs/sessao_continuacao.md` PRIMEIRO — tem tudo consolidado.**
 
-Resumo curto:
-1. ✅ Worker no Railway (combinado com beat embedded) — feito 2026-05-15
-2. ✅ Agente local reapontado pra prod (HP_SILVIO conectado via WSS) — feito 2026-05-15
-3. ✅ Signup público + onboarding validados em prod — feito 2026-05-15 (parcial; Telegram ficou)
-4. **Próximo: Fase 9.1 — build PyInstaller** do agente (ADR-009 detalha plano completo
-   da Fase 9 expandida em 9.1-9.8: zero-CLI install via Inno Setup, ponte
-   browser↔agente, botão "Conectar meu WhatsApp" no dashboard)
+Estado atual: caminho zero-CLI 100% funcional. Agente em v3.0.2.
+Buscas multi-tipo com scraper "mais vendidos" ML (8 categorias) já entregue.
+
+**Próximas fases na ordem:**
+1. Fase 16.4 — busca por URL/link (1 produto específico, gera afiliado na hora)
+2. Fase 16.5 — scraper Shopee (API interna retorna `long_link` afiliado pronto)
+3. Fase 17 — curadoria automatizada TOP 50 (Celery beat diário)
+4. Fase 18 — métricas no dashboard (clicks do `/r/{slug}`)
+
+Bugs anotados:
+- `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)
+- `ADMIN_PASSWORD` env var no Railway desatualizada (user trocou via `/conta`)

@@ -1,278 +1,377 @@
-# Continuação da sessão Claude — onde paramos
+# Continuação da sessão Claude — Achadinhos V3
 
-> Este arquivo é a **ponte entre sessões do Claude**. Quando uma sessão acaba
-> (limite de contexto), você abre uma nova e diz: *"Lê CLAUDE.md e
-> docs/sessao_continuacao.md, estado deve estar lá"* — Claude pega de onde
-> parou.
+> **Este arquivo é a fonte de verdade entre sessões.** Quando uma sessão acaba,
+> abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
+> Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
----
-
-## Estado em 2026-05-15 (terceira sessão — worker + agente conectado + plano Fase 9)
-
-### O que está NO AR
-
-✅ **https://achadinhos.maisseguidores.ia.br** — API + dashboard de produção
-- HTTPS válido, signup funciona, login do admin funciona, dashboard responsivo
-- Plano: Railway **Free** ($5 grátis/mês trial — atingiu limite de services,
-  por isso worker+beat foram combinados num único service)
-- Postgres + Redis como add-ons no projeto Railway `balanced-ambition`
-- Cloudflare na frente (proxy DESLIGADO/cinza pra Railway validar — pode reativar laranja depois)
-
-✅ **`worker` service no Railway** — Celery worker **+ beat embedded**
-- StartCommand: `celery -A app.workers.celery_app worker --beat --pool=solo --loglevel=info`
-  (definido em `railway.worker.json`, ativado via setting `railwayConfigFile`)
-- Variables: 26 vars (25 copiadas do `acadinhosv3` + `REDIS_URL_OVERRIDE=${{Redis.REDIS_URL}}`)
-- Sem healthcheck (worker não tem HTTP), sem preDeploy (api faz migrations)
-- Por que combinado: Free plan limita services. Beat embedded é OK — restart do
-  worker reseta schedule, mas crontab "todo minuto" se recupera em ≤60s.
-- Por que `--pool=solo`: Free plan tem pouca RAM; prefork c/ 48 workers (default)
-  estourava memória e matava o worker em loop.
-- Por que `REDIS_URL_OVERRIDE` em vez de `REDIS_URL`: a app só lê env var
-  `REDIS_URL_OVERRIDE` (`app/core/config.py:64`); `REDIS_URL` "puro" fica ignorado
-  e a app cai no fallback `redis://redis:6379/0` (hostname dev) que não existe em
-  prod. **TODO menor**: api tem o mesmo bug mas ainda não manifesta porque só usa
-  Redis em pub/sub de WebSocket (lazy, sem agente conectado ainda).
-- Criado via Railway CLI (`railway add --service worker`) + GraphQL API
-  (variableCollectionUpsert + serviceConnect + serviceInstanceUpdate com
-  `railwayConfigFile`)
-
-✅ **Agente local conectado em prod via WSS**
-- PC do dev (`HP_SILVIO`) tem `agent/main` apontando pra
-  `wss://achadinhos.maisseguidores.ia.br/api/v1/ws/agente`.
-- Config em `%APPDATA%\Achadinhos\config.json` (já reapontado pra prod).
-- Org_id=1 (Achadinhos), user `SILVIOVARGAS`, agente_id=1.
-- Servidor confirma `agente.conectado total_online=1` nos logs.
-
-✅ **Fase 9.1 — build PyInstaller validado** (2026-05-15)
-- `agente/build.spec` rodou sem ajustes — todas as deps detectadas (selenium,
-  undetected-chromedriver, pystray, pyautogui, websockets, structlog).
-- Artefato: `agente/dist/AchadinhosAgent.exe` ~ **30 MB**.
-- Smoke test do `.exe`: leu config salva, conectou no WSS de prod em **1.2s**
-  (`agent.iniciando` → `ws.conectando` → `ws.conectado`). Servidor confirmou
-  via logs (`agente.conectado total_online=1`). Comportamento idêntico ao
-  `python -m agent.main`.
-- Comando de build: `cd agente && pyinstaller --noconfirm --clean build.spec`.
-- `dist/` e `build/` ignorados via `agente/.gitignore`.
-
-✅ **Fase 9.2 — HTTP local server no agente** (2026-05-15)
-- `agente/agent/local_server.py` — aiohttp em `127.0.0.1:5577` (fallback 5578, 5579).
-- Roda em paralelo ao WS via `asyncio.gather` no `main.py`.
-- Endpoints `/ping`, `/status` ativos. CORS pra prod + localhost.
-- Deps: `aiohttp>=3.10`, `undetected-chromedriver>=3.5` (esta faltava no pyproject).
-- TODO menor: hookar WSClient ↔ LocalServer pra `ws_conectado` refletir real.
-
-✅ **Fase 9.3 — Pareamento via JWT (zero-CLI)** (2026-05-15)
-- `POST /pair` agora **real**: recebe `{jwt, servidor_api}`, chama
-  `POST /api/v1/agentes/registrar-self` no servidor, salva token + ws_url
-  em `%APPDATA%\Achadinhos\config.json`, retorna `{ok, agente_id, agente_nome, servidor_ws}`.
-- **`main.py` refatorado pra rodar SEM token**:
-  - `montar_config()` retorna `None` quando não tem cfg (antes era `sys.exit(1)`).
-  - `main_async()` aceita `cfg: Config | None`. Se `None`, sobe só `LocalServer` e aguarda
-    evento `cfg_disponivel` setado pelo callback `on_paired` quando `/pair` chega.
-  - Após /pair, cria WSClient com cfg novo e roda normal.
-- **Re-pareamento durante runtime** (cfg já existia): config nova é salva,
-  mas WS atual fica com token velho — log warning pede restart. Reconnect
-  dinâmico fica pra fase futura (complicado).
-- **Erros tratados**: 400 (body inválido), 401 (JWT rejeitado pelo server),
-  502 (server offline / payload inesperado).
-- **Validação end-to-end em prod**:
-  1. Apagado `config.json` → agente subiu em modo `aguardando_pareamento_via_dashboard`
-  2. `/ping` retornou `agente_id: null`, `/status` retornou `configurado: false`
-  3. Login admin via API → JWT
-  4. `POST /pair` → 200 `{agente_id: 2, agente_nome: "DESKTOP-326KJ6C"}`
-  5. Agente logou `pair.ok → agent.pareado_inicial → ws.conectando → ws.conectado` (~1s total)
-  6. Config restaurada + agentes de teste (id=2, 3) deletados do DB
-- **Limitação encontrada (problema do servidor, anotar)**: `registrar-self` SEMPRE
-  cria entrada nova em vez de UPDATE. Re-pareamento gera lixo — N entradas pro
-  mesmo `(usuario_id, nome_PC)`. Fix futuro: índice único partial em agentes
-  por `(org_id, usuario_id, nome)` OU endpoint dedicado `registrar-ou-atualizar`.
-
-✅ **Agente movido pra monorepo** (2026-05-15)
-- Source ficava em `D:\achadinhos-agent\` (pasta solta, sem git).
-- Agora em `agente/` no mesmo repo do servidor (`silviosvargas/achadinhosv3`).
-- O `D:\achadinhos-agent\` original ainda existe (com `.venv`, `dist`, `build`)
-  — pode ser deletado quando o user validar que a versão monorepo roda igual.
-- Pra rodar a versão monorepo, user precisa recriar venv:
-  ```powershell
-  cd D:\ACHADINHOSV3\agente
-  python -m venv .venv
-  .venv\Scripts\activate
-  pip install -e .
-  ```
-
-✅ **Signup público + wizard onboarding** validados em prod
-- Smoke test parcial executado em 2026-05-15: criada conta `Teste Prod` em
-  janela anônima, /onboarding renderizou os 4 cards (config ML, baixar
-  agente, cadastrar canal, criar grupo). Conta de teste deletada do DB no
-  fim (cascade limpo todas as FKs).
-
-### O que NÃO está no ar / pendente
-
-⚠️ **Telegram não testado end-to-end** — falta criar bot via @BotFather e
-testar fluxo template → canal → grupo → lote → postagem. Pulado por escolha
-do user na sessão de 2026-05-15.
-
-⚠️ **Cloudflare proxy** está em DNS only (cinza). Pode ligar laranja pra ter
-cache + DDoS. SSL mode deve ser **Full** (não Strict, não Flexible) quando ligar.
-
-⚠️ **Fluxo de instalação do agente pro user final ainda é CLI** (Python + venv
-+ 3 comandos). Inviável pra user comum. Resolvido pela Fase 9 (ver roadmap).
+**Última atualização:** 2026-05-15 (após Fase 16.3 + release v3.0.2)
+**Versão do agente em prod:** `3.0.2` (publicada como GitHub Release)
+**Migration head:** `0010_busca_tipo_mkt`
 
 ---
 
-## Checklist pra próxima sessão (ordem sugerida)
+## ⚡ Estado atual — o que TÁ FUNCIONANDO em produção
 
-### 1️⃣ Acionar o GitHub Actions release-agente uma vez (passo manual)
-
-**Toda a Fase 9 (9.1–9.8) está pronta** — código + UX + status. O que
-falta pra um user comum baixar de verdade é o `.exe` instalável publicado:
-
-1. Abre https://github.com/silviosvargas/achadinhosv3/actions
-2. Workflow `release-agente` → "Run workflow" → branch `main` → Run
-3. Acompanha o build (~3-5 min)
-4. Ao terminar, baixa o artifact `AchadinhosAgent-Setup-3.0.0.exe`
-5. Testa no PC: double-click no installer → wizard Next-Next-Install →
-   o agente vira atalho no Menu Iniciar e (opt-in) inicia com Windows
-
-Pra liberar release oficial pra terceiros, criar tag `agente-v3.0.0`
-(mesmo workflow dispara, mas dessa vez cria GitHub Release com o `.exe`
-anexado).
-
-### 2️⃣ Próximas melhorias menores (sem pressa)
-
-- **Fix do "registrar-self cria duplicata"**: hoje cada chamada cria nova
-  entrada em `agentes`. Adicionar índice único partial em
-  `(org_id, usuario_id, nome)` (onde `ativo=true`), OU criar endpoint
-  `registrar-ou-atualizar` que faz UPSERT.
-- **Bug menor REDIS_URL_OVERRIDE**: `app/core/config.py` só lê
-  `REDIS_URL_OVERRIDE`, não `REDIS_URL` direto. Workaround setado no
-  worker; api funciona por acaso (lazy use). Ajustar pra aceitar ambas
-  as env vars (chip de task já flageado).
-- **Fase 9.7 — auto-update do `.exe`**: agente checa GitHub releases ao
-  subir, baixa nova versão se houver. Importante a médio prazo.
-
-### O QUE FALTA EXTERNO PRA FAZER (sem código)
-
-- **Acionar GitHub Actions** uma vez pra validar que o pipeline funciona:
-  Actions → `release-agente` → Run workflow (manual `workflow_dispatch`).
-  Ou criar tag `agente-v3.0.0` pra gerar release oficial.
-
-### 2️⃣ Telegram smoke test (paralelo, quando tiver bot)
-
-Quando tiver bot @BotFather + grupo de teste:
-- Cria canal Telegram no dashboard (com token do bot)
-- Cria grupo apontando pro canal
-- Cria template simples
-- Cria produto manual via /produtos/novo
-- Roda lote → confere postagem no grupo
-
-Valida que worker Celery processa `postar_telegram` em prod.
-
-### 3️⃣ Cloudflare proxy ON (independente)
-
-Quando tudo estiver estável:
-1. Cloudflare → DNS → CNAME `achadinhos`
-2. Clica no ícone cinza pra virar laranja (Proxied)
-3. SSL/TLS → Overview → modo **Full** (não Strict, não Flexible)
-4. Testa de novo. Se quebrar (502), volta pra cinza.
+| Componente | Status | URL/Detalhe |
+|---|---|---|
+| API + dashboard | ● Online | https://achadinhos.maisseguidores.ia.br |
+| Postgres | ● Online | Railway add-on, projeto `balanced-ambition` |
+| Redis | ● Online | Railway add-on |
+| Worker (Celery + beat embedded) | ● Online | `--pool=solo`, `railway.worker.json` |
+| Agente desktop `.exe` | Released v3.0.2 | [github releases](https://github.com/silviosvargas/achadinhosv3/releases) |
+| Signup público | OK | `/signup` cria org + admin com plano free restrito |
+| Onboarding wizard | OK | 4 cards adaptativo por plano |
+| Pareamento zero-CLI | OK | `/agentes/baixar` → `Conectar meu agente` |
+| URL protocol `achadinhos://` | OK | Registrado pelo installer |
+| Auto-start no Windows | OK | Run key, agente sobe com Windows |
+| Auto-detecção de atualização | OK | Badge amarelo + botão "⬆ Atualizar" |
+| Multi-afiliados por user | OK | `/usuarios/{id}/afiliados`, 6 marketplaces na UI |
+| Catálogo compartilhado | OK | Plano free vê produtos do admin Achadinhos |
+| Página de planos | OK | `/planos` com CTAs de upgrade |
+| Trocar senha via UI | OK | `/conta` |
+| Encurtador `/r/{slug}` | OK | Redirect 302 com cache + click counter |
+| Linkbuilder ML real | OK | Scraping painel ML afiliados gera `meli.la` |
+| Buscas multi-tipo UI | OK | `/buscas/nova` com dropdown tipo + checkbox marketplaces |
+| Scraper "mais vendidos" ML | OK | 8 categorias hardcoded da V2 |
+| Lote com late binding tag | OK | Recalcula URL na hora da postagem |
+| Badge "agentes online" | OK | Polling 20s, cookie-aware |
 
 ---
 
-## Roadmap futuro
+## 📜 Tudo que foi entregue nessa sessão (cronológico)
 
-### Fase 9 — Botão "Conectar meu WhatsApp" (ADR-009)
+| # | Commit | Fase | O que entrega |
+|---|---|---|---|
+| 1 | [7826dcb](https://github.com/silviosvargas/achadinhosv3/commit/7826dcb) | Setup | `.claude/settings.json` com allow rules largas pra fluxo contínuo |
+| 2 | [c4a7457](https://github.com/silviosvargas/achadinhosv3/commit/c4a7457) | 9.4 | Botão "Conectar meu agente" + JS combo HTTP/protocol/download |
+| 3 | [05c82c1](https://github.com/silviosvargas/achadinhosv3/commit/05c82c1) | fix | Ordem de rotas: `/download` antes de `/{agente_id}` |
+| 4 | [6e9741c](https://github.com/silviosvargas/achadinhosv3/commit/6e9741c) | 9.5 | Inno Setup installer + GitHub Actions workflow |
+| 5 | [e1e94c6](https://github.com/silviosvargas/achadinhosv3/commit/e1e94c6) | 9.6 | URL protocol handler + single-instance handoff |
+| 6 | [b67016b](https://github.com/silviosvargas/achadinhosv3/commit/b67016b) | 9.x | Ação real `/abrir-tudo` (`webbrowser.open()`) |
+| 7 | [0460407](https://github.com/silviosvargas/achadinhosv3/commit/0460407) | 9.8 | Badge "Agentes online" no header |
+| 8 | [3c4786a](https://github.com/silviosvargas/achadinhosv3/commit/3c4786a) | docs | Marca Fase 9 completa |
+| 9 | [80255c9](https://github.com/silviosvargas/achadinhosv3/commit/80255c9) | 9.9 | Signup free restrito (flags em `planos`, gates server-side) |
+| 10 | [849ecef](https://github.com/silviosvargas/achadinhosv3/commit/849ecef) | 11 | Página `/planos` + CTAs upgrade |
+| 11 | [369e4ba](https://github.com/silviosvargas/achadinhosv3/commit/369e4ba) | extra | Catálogo compartilhado (free vê produtos do admin) |
+| 12 | [3283e64](https://github.com/silviosvargas/achadinhosv3/commit/3283e64) | fix | `Usuario.organizacao` com `lazy="joined"` (resolve `MissingGreenlet`) |
+| 13 | [21405cf](https://github.com/silviosvargas/achadinhosv3/commit/21405cf) | fix | UPSERT em `criar_agente` + índice único partial |
+| 14 | [7d8ef0f](https://github.com/silviosvargas/achadinhosv3/commit/7d8ef0f) | fix | Migration revision id ≤ 32 chars |
+| 15 | [1b65166](https://github.com/silviosvargas/achadinhosv3/commit/1b65166) | hotfix UX | Cookie auth no `usuario_atual` + UI revamp de `/agentes/baixar` |
+| 16 | [a1e8a4b](https://github.com/silviosvargas/achadinhosv3/commit/a1e8a4b) | release | Primeira release oficial v3.0.0 |
+| 17 | [185dca7](https://github.com/silviosvargas/achadinhosv3/commit/185dca7) | fix lote | Seed mappings categoria_ml→nicho + backfill |
+| 18 | [a0b233b](https://github.com/silviosvargas/achadinhosv3/commit/a0b233b) | fix | Cascata tag ML estendida pra admin org central |
+| 19 | [b708a35](https://github.com/silviosvargas/achadinhosv3/commit/b708a35) | conta | Página `/conta` trocar senha |
+| 20 | [8991dba](https://github.com/silviosvargas/achadinhosv3/commit/8991dba) | 13 | `usuarios_afiliados` (multi-marketplace) + UI nova |
+| 21 | [cdebcbc](https://github.com/silviosvargas/achadinhosv3/commit/cdebcbc) | fix lote | Late binding da tag (recalcula URL na postagem) |
+| 22 | [a15ec64](https://github.com/silviosvargas/achadinhosv3/commit/a15ec64) | 14 | Encurtador próprio `/r/{slug}` |
+| 23 | [8f1907f](https://github.com/silviosvargas/achadinhosv3/commit/8f1907f) | 15 | Linkbuilder ML real (scraping painel afiliados → `meli.la`) |
+| 24 | [6b757c5](https://github.com/silviosvargas/achadinhosv3/commit/6b757c5) | extra | Detecção agente desatualizado + botão Atualizar |
+| 25 | [f97f963](https://github.com/silviosvargas/achadinhosv3/commit/f97f963) | release | Bump v3.0.1 + tag (release publicada) |
+| 26 | [07bf80d](https://github.com/silviosvargas/achadinhosv3/commit/07bf80d) | 16.1+16.2 | UI multi-marketplace `/buscas/nova` + schema |
+| 27 | [968e614](https://github.com/silviosvargas/achadinhosv3/commit/968e614) | 16.3 | Scraper ML `mais_vendidos` (8 categorias) |
+| 28 | [a8f835a](https://github.com/silviosvargas/achadinhosv3/commit/a8f835a) | release | Bump v3.0.2 + tag |
 
-Quebra do roadmap original "Build `.exe` (1 sessão)" no plano completo:
-
-| Sub-fase | Descrição | Tempo |
-|----------|-----------|-------|
-| ✅ **9.1** | Build PyInstaller funcionando (`.exe` standalone) — **feita 2026-05-15** | — |
-| ✅ **9.2** | HTTP local server no agente (`/ping`, `/status` ativos) — **feita 2026-05-15** | — |
-| ✅ **9.3** | Pareamento via JWT (`/pair` real + main.py roda sem token) — **feita 2026-05-15** | — |
-| ✅ **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→download placeholder) — **feita 2026-05-15** | — |
-| ✅ **9.5** | Inno Setup installer (registry handler + auto-start) + GitHub Actions CI — **feita 2026-05-15** | — |
-| ✅ **9.6** | URL protocol handler (`--uri` parse + single-instance handoff + `processar_uri()`) — **feita 2026-05-15** | — |
-| ✅ **9.x** | Ação real do `/abrir-tudo` (`webbrowser.open()` no browser default) + JS no dashboard que chama após pair — **feita 2026-05-15** | — |
-| ✅ **9.8** | Badge "Agentes online" no header (GET `/api/v1/agentes/status` + polling 20s) — **feita 2026-05-15** | — |
-| ✅ **9.9** | Signup free restrito (flags em `planos`, gates server-side, UI condicional) — **feita 2026-05-15** | — |
-| **9.3** | Pareamento via JWT (substituí setup CLI pelo endpoint `/pair`) | 1 sessão |
-| **9.4** | Botão "Conectar" no dashboard (UX combo HTTP→protocol→download) | 1 sessão |
-| **9.5** | Inno Setup installer (registry handler + auto-start) | 1-2 sessões |
-| **9.6** | URL protocol handler no agente (`achadinhos://` → HTTP local) | 0.5 sessão |
-| **9.7** | (opcional) Auto-update do `.exe` via GitHub releases | 1 sessão |
-| **9.8** | Status do agente no dashboard + UX de offline (crítico pro cenário "controle remoto via celular") | 0.5 sessão |
-
-### Outras fases
-
-| Fase | Descrição | Tempo estimado |
-|------|-----------|---------------|
-| **8** | Shopee + Amazon (estender padrão do ML) | 2 sessões |
-| **10** | Email transacional (welcome, recuperar senha — SMTP) | 1 sessão |
-| **11** | Página de upgrade de plano (free→pro→business, sem billing real) | 1 sessão |
-| **12** | Métricas/analytics no dashboard (postagens/dia, top produtos) | 1 sessão |
-| **13** | Tests pytest pra Fases 4b/5/6 | 1-2 sessões |
-
----
-
-## Como abrir nova sessão e retomar
-
-1. Abre nova conversa Claude Code no diretório `D:\ACHADINHOSV3`
-2. Primeira mensagem ao Claude:
-
-   > *"Estou continuando o Achadinhos V3. Lê CLAUDE.md, docs/sessao_continuacao.md
-   > e docs/decisoes.md (ADR-009 sobre Fase 9). A Fase 9 toda está fechada;
-   > falta acionar o GitHub Actions release-agente manualmente, e atacar
-   > melhorias pendentes (fix duplicata em registrar-self, fix REDIS_URL no
-   > config.py). Próximo grande passo: Fase 10 (email) ou outra."*
-
-3. Claude vai ler os 2 arquivos e pegar o contexto completo. Sem precisar
-   re-explicar arquitetura, decisões ou estado.
+**Total:** 28 commits + 3 releases (v3.0.0, v3.0.1, v3.0.2).
 
 ---
 
-## Arquivos importantes pra Claude ler em ordem
+## 🗄️ Modelos de dados críticos (schema)
 
-1. `CLAUDE.md` — visão geral, fases, URLs prod
-2. `docs/sessao_continuacao.md` — este arquivo (checklist próxima sessão)
-3. `docs/deploy_railway.md` — guia detalhado de deploy
-4. `docs/decisoes.md` — ADRs (decisões arquiteturais)
-5. `docs/protocolo_agente.md` — contrato WS cloud↔agente
+### Multi-tenancy
+- `organizacoes` — 1 por signup público, contém `plano_id` (FK), `slug`, `nome`
+- `planos` — 3 entries fixas: `free` (id=1), `pro` (id=2), `business` (id=3)
+  - Flags: `pode_cadastrar_afiliado`, `pode_criar_buscas`, `pode_criar_produto_proprio` (Fase 9.9)
+  - Free = todas false. Pro/Business = todas true.
+- `usuarios` — `org_id` FK, `papel` ∈ {admin, usuario, super, afiliado}. Quem cria org via signup vira `admin` da própria org.
+- **`settings.admin_org_id = 1`** (env var override `ADMIN_ORG_ID`) — org "Achadinhos" cujo catálogo é compartilhado pra plano free.
+
+### Afiliados (Fase 13)
+- `usuarios_afiliados (id, usuario_id, plataforma, tag, UNIQUE(user, plat))`
+- Plataformas suportadas: `ml`, `shopee`, `amazon`, `magalu`, `aliexpress`, `tiktok` (em `app/core/marketplaces.py`)
+- Hoje só `ml` tem scraper ativo; resto é "em prep" na UI
+- **`usuarios.afiliado_ml` (legacy)** ainda existe pra dual-read (vai sumir em migration futura)
+
+### Produtos
+- `produtos (id, org_id, plataforma, item_id, nome, preco, categoria, url_canonica, url_afiliado, comissao, ...)`
+- `produto_nichos (produto_id, nicho_id)` — auto-classificado no ingest via `nicho_categoria_ml`
+- Visibilidade ADR-008: `usuario_dono_id IS NULL` = público da org; `NOT NULL` = privado de afiliado
+
+### Buscas (Fase 16)
+- `buscas_ml` (apesar do nome, agora é multi-marketplace via campo `marketplaces`)
+- Novos campos: `tipo` (`termo_livre`/`por_url`/`mais_vendidos`/`melhor_comissao`/`em_alta`), `marketplaces` (JSON array)
+
+### Encurtador (Fase 14)
+- `redirects (id, slug UNIQUE, produto_id UNIQUE FK, url_destino, total_clicks, ...)`
+- 1 row por produto. URL atualiza quando tag/meli.la muda; slug fica.
+
+### Pareamento + tarefas
+- `agentes (org_id, usuario_id, nome)` — índice único partial `(org_id, usuario_id, nome) WHERE ativo=true`
+- `tarefas` — `tipo` ∈ `TipoTarefa` enum (`POSTAR_WHATSAPP`, `BUSCAR_MERCADO_LIVRE`, `GERAR_LINK`, etc.)
 
 ---
 
-## Comandos úteis pra dev local
+## 🔄 Fluxos críticos (resumo)
 
-```powershell
-# Subir
-docker compose up -d
-docker compose ps              # confirma healthy
+### 1. Signup → onboarding → primeiro post
 
-# Logs
-docker compose logs -f api
-docker compose logs -f worker
-
-# Migrations
-docker compose exec api alembic upgrade head
-
-# Criar admin
-docker compose exec api python -m scripts.criar_admin
-
-# Reset total (apaga volumes!)
-docker compose down -v
+```
+/signup → cria org nova + user admin (plano free)
+   ↓ redirect /onboarding
+4 cards: afiliado (escondido se free) / agente / canal / grupo
+   ↓ /agentes/baixar
+JS detecta /ping em 127.0.0.1:5577
+   ├─ Não rodando: botão "Baixar agente" → /agentes/instalador → 302 GitHub release
+   ├─ Rodando sem token: botão "Conectar" → POST /pair com JWT da sessão
+   └─ Rodando pareado: botão "Abrir minhas plataformas" → POST /abrir-tudo
+       → webbrowser.open(WhatsApp Web, ML)
+   ↓
+/lote → "Rodar agora"
+   ↓ produtos_elegiveis (cataloga admin + own org se free)
+   ↓ pra cada combinação produto×grupo:
+       _url_pro_produto: prioriza p.url_afiliado=meli.la se existe;
+                          senão linkbuilder genérico + /r/{slug}
+   ↓ enfileira tarefa POSTAR_WHATSAPP
+   ↓ agente recebe via WS, posta no grupo
 ```
 
-## Comandos úteis pra git/deploy
+### 2. Cascata da tag de afiliado (Fase 13/15)
 
+`afiliado_service.tag_com_cascata(plataforma, usuario_id, org_id)`:
+
+1. `usuarios_afiliados WHERE usuario_id AND plataforma` (+ dual-read `usuarios.afiliado_ml` se ml)
+2. Tag do admin da org do user (mesmo lookup, recursivo)
+3. Tag do admin da org `settings.admin_org_id` (org Achadinhos)
+4. `settings.{plat}_affiliate_id` (env var global)
+5. None → linkbuilder devolve URL canônica crua
+
+### 3. Linkbuilder ML real (Fase 15)
+
+```
+busca_service.ingerir_produtos termina
+   ↓ filtra produtos ML que ainda não têm url_afiliado=meli.la
+   ↓ cria Tarefa(GERAR_LINK, payload={urls: [...]}, agente_id=...)
+   ↓ dispatcher manda comando WS "gerar_links_afiliado_ml"
+agente recebe:
+   ↓ linkbuilder_ml.gerar_links_em_lote() abre Chrome ML (perfil persistente)
+   ↓ navega pra mercadolivre.com.br/afiliados/linkbuilder
+   ↓ cola URLs em lotes de 10, captura meli.la/XXX via regex
+   ↓ retorna {ok: true, mapping: {url_canonica: meli.la}}
+servidor recebe tarefa_concluida:
+   ↓ afiliado_ml_writer.aplicar_mapping atualiza produtos.url_afiliado + redirects.url_destino
+```
+
+### 4. Busca "Mais vendidos" (Fase 16.3)
+
+```
+/buscas/nova com tipo=mais_vendidos, marketplaces=[ml]
+   ↓ POST /buscas/nova salva BuscaML(tipo, marketplaces='["ml"]')
+   ↓ "▶ Rodar" enfileira Tarefa(BUSCAR_MERCADO_LIVRE, payload={tipo, marketplaces, ...})
+agente recebe:
+   ↓ executar_busca roteia por msg.tipo
+   ↓ _varrer_mais_vendidos_sync itera 8 categorias hardcoded
+       (Roupas, Esportes, Beleza, Bebês, Casa, Eletrônicos, Informática, Ferramentas)
+   ↓ extrai cards (reusa _extrair_cards_da_pagina)
+   ↓ enriquece com categoria + comissão estimada
+   ↓ POST /api/v1/produtos/ingest
+servidor:
+   ↓ upsert produtos
+   ↓ auto-classifica nicho via nicho_categoria_ml (mappings da Fase 9.9)
+   ↓ enfileira tarefa GERAR_LINK (Fase 15) pra gerar meli.la
+```
+
+---
+
+## 🔧 Configurações persistentes (não perder)
+
+### Railway prod (projeto `balanced-ambition`)
+
+| Var | Valor / origem |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (private) |
+| `REDIS_URL_OVERRIDE` | `${{Redis.REDIS_URL}}` (note: usa `_OVERRIDE`, não `REDIS_URL` direto) |
+| `JWT_SECRET` | `CErhxiY2Ui45JacD...` (no gerenciador de senhas) |
+| `CREDENCIAIS_SECRET_KEY` | `piogTQGMY8VjdFbsy...` |
+| `ADMIN_LOGIN` | `admin` |
+| `ADMIN_PASSWORD` | `IzT9V7c5J6dp7Eft7lwD` ⚠️ **DESATUALIZADO** — user trocou via `/conta` na sessão atual. Atualizar quando puder. |
+| `PUBLIC_BASE_URL` | `https://achadinhos.maisseguidores.ia.br` |
+| `ADMIN_ORG_ID` | (default 1, não precisa setar) |
+
+### DNS Cloudflare
+- CNAME `achadinhos` → `jv7fcipn.up.railway.app` (DNS only/cinza)
+- TXT `_railway-verify.achadinhos` = `railway-verify=ddf75203a7563d...`
+- **Proxy laranja não ativado** (deixa cinza pra não complicar SSL)
+
+### Worker no Railway
+- `railway.worker.json` (no repo) com `--pool=solo` (RAM low Free plan)
+- Beat embedded (`--beat` flag) — sem beat service separado
+- Schedule: `agendar_buscas_devidas` crontab "*/1 * * * *"
+
+### Agente local — paths importantes
+- Config: `%APPDATA%\Achadinhos\config.json` (token JWT + servidor_ws)
+- Chrome perfil WhatsApp: `%APPDATA%\Achadinhos\chrome_perfil`
+- Chrome perfil ML (dedicado): `%APPDATA%\Achadinhos\chrome_perfil_ml`
+- Token de admin Railway (CLI): `RAILWAY_API_TOKEN` env var (`7fcbeb71-e1a6-4a7b-bcfd-8b7de440826c`)
+
+### GitHub Actions
+- Workflow `release-agente` disparado por tag `agente-v*` (push) ou `workflow_dispatch`
+- Roda em `windows-latest`, PyInstaller + Inno Setup
+- Asset publicado: `AchadinhosAgent-Setup-X.Y.Z.exe`
+
+---
+
+## ⚠️ Limitações conhecidas (não bater a cabeça em vão)
+
+### Cosméticas
+- URL postada pelo lote ainda inclui fragment `#polycard_client=...` do scraping ML (lixo). Não afeta funcionalidade.
+- Backfill da Fase 7 (mappings categoria_ml→nicho na org admin) cobre só ~21 categorias raiz comuns. Categorias menos comuns ficam sem nicho.
+
+### Bugs anotados mas não corrigidos
+- **`REDIS_URL_OVERRIDE` vs `REDIS_URL`**: `app/core/config.py:64` só lê `REDIS_URL_OVERRIDE`. Worker tá certo, api funciona por sorte (lazy WS). Ajustar pra aceitar ambas.
+- **Senha admin no Railway Variables**: foi trocada via `/conta` mas `ADMIN_PASSWORD` env var ficou com valor antigo. Cosmético (só usado em CREATE inicial).
+
+### Limitações estruturais
+- **ML afiliados não tem API pública** pra gerar shortlinks → scraping é a única forma (Fase 15). Frágil a mudanças no HTML.
+- **Outros marketplaces (Shopee, Amazon, Magalu, AliExpress, TikTok)**: UI tem checkbox mas backend só ML tem scraper. Próxima rodada implementa.
+- **Build do `.exe` no PyInstaller**: roda só no Windows runner. Mac/Linux ficam pra futuro.
+
+---
+
+## 🎯 Próximas fases planejadas (em ordem)
+
+### Fase 16.4 — Busca personalizada (`por_url`)
+**O que falta:** quando user cola URL de produto específico, agente abre, extrai dados (nome, preço, foto, categoria), gera afiliado ML, salva como produto privado.
+- V2 tem: `src/buscar_palavra/extrator_link.py` (com detecção de plataforma por domínio)
+- Local: criar função `_buscar_por_url_sync(driver, url)` em `agente/agent/busca_ml.py`
+- Rotear em `executar_busca` quando `tipo == 'por_url'`
+
+### Fase 16.5+ — Scrapers outros marketplaces
+- **Shopee** (mais fácil): API interna `affiliate.shopee.com.br/api/v3/offer/product/list` retorna `long_link` afiliado pronto. Porta de V2 `src/buscar/shopee.py`.
+- **Amazon**: SiteStripe (lento, 1 ASIN por vez) OU PA-API (precisa credenciais). Porta de V2 `src/buscar/amazon.py`.
+- **Magalu, AliExpress, TikTok**: ainda menos infraestrutura. Provavelmente só scraping + tag em query param. Roadmap futuro.
+
+### Fase 17 — Curadoria automatizada TOP 50
+- Celery beat task diária roda buscas em todos marketplaces
+- `curadoria_service.ranquear()` calcula score = `(preço × comissão%) × peso_vendas × peso_em_alta`
+- Top 50 viram destaque no `/dashboard`
+- V2 tem: `src/super_produtos/ranqueador.py` pra portar
+
+### Fase 18 — Métricas no dashboard
+- Page `/metrics` com gráficos: clicks por produto (do encurtador), postagens/dia, conversão
+- Tem dados base no `redirects.total_clicks` (Fase 14) e `postagens` table
+
+### Pendentes menores
+- Smoke test e2e Telegram (precisa user criar bot @BotFather)
+- Cloudflare proxy ON (SSL mode Full)
+- Limpar fragment `#polycard_client=...` do scraping ML
+
+---
+
+## 🚀 Como começar a próxima sessão
+
+### Prompt sugerido pra primeira mensagem
+> *"Estou continuando o Achadinhos V3. Leia esses 3 arquivos NA ORDEM:
+> 1. CLAUDE.md (overview e fases entregues)
+> 2. docs/sessao_continuacao.md (estado atual + tudo entregue + próximas fases)
+> 3. docs/decisoes.md (ADRs, especialmente ADR-009 sobre Fase 9)
+>
+> O agente está em v3.0.2, release publicada no GitHub. Pipeline completo
+> funciona: signup → onboarding → instalar `.exe` → conectar → busca → lote.
+>
+> Próximo passo planejado é Fase 16.4 — busca personalizada por URL/link.
+> A V2 (em `D:\ACHADINHOSV2 - FUNCIONAL\`) tem código pra portar.
+>
+> Aguarde minha confirmação antes de implementar qualquer coisa."*
+
+### Coisas que próxima Claude PRECISA saber
+1. **Não tente login admin com `IzT9V7c5J6dp7Eft7lwD`** — user trocou pela UI `/conta`. Pede a nova se precisar fazer smoke test.
+2. **Railway API token está em env var `RAILWAY_API_TOKEN`** quando precisar mexer em prod (`7fcbeb71-...`). Token de longa duração, válido por meses.
+3. **Agente já tá pareado** (HP_SILVIO, agente_id=1). Não rode `agent.setup` de novo — apaga config dele.
+4. **`.exe` em prod é v3.0.2** mas o user pode ainda estar com v3.0.0/3.0.1 instalado. Sempre confere via `/api/v1/agentes/versao-atual` se em dúvida.
+5. **Worktree atual**: `D:\ACHADINHOSV3\.claude\worktrees\youthful-mendel-0e879a\` — branch `claude/youthful-mendel-0e879a`. Push vai pra `main` direto (mapeamento `:main`).
+6. **Pareamento exige sessão ML logada no painel afiliados** pra linkbuilder funcionar. Se scraping volta vazio, é sessão expirada — user precisa relogar.
+7. **Permissões liberadas** em `.claude/settings.json` — pode rodar comandos sem prompts pra `railway *`, `python -m agent.*`, `git *`, `curl *` pra hosts do projeto, `docker run --rm postgres:18`, etc.
+
+### Arquivos importantes pra ler em ordem
+1. `CLAUDE.md` — overview + fases marcadas
+2. `docs/sessao_continuacao.md` — este arquivo
+3. `docs/decisoes.md` — ADRs (especialmente ADR-009 sobre Fase 9)
+4. `docs/protocolo_agente.md` — contrato WS cloud↔agente
+5. `app/services/lote_service.py` — entender pipeline lote (entrega final)
+6. `agente/agent/busca_ml.py` — scraper ML (Fase 16.3 adicionou)
+
+### Comandos úteis pra dev local
 ```powershell
-# Status
+# Servidor (Railway redeploy automático via push pra main)
 git status
 git log --oneline -10
+git push origin claude/youthful-mendel-0e879a:main   # NOTA: empurra worktree pra main
 
-# Push (auto-deploy Railway)
-git add .
-git commit -m "msg"
-git push
+# Agente local em modo dev
+cd D:\ACHADINHOSV3\agente
+.venv\Scripts\activate
+python -m agent.main --sem-tray
 
-# Ver último deploy
-# https://railway.app → projeto → service → Deployments
+# Build .exe local
+cd D:\ACHADINHOSV3\agente
+.venv\Scripts\activate
+pyinstaller --noconfirm --clean build.spec
+# → dist/AchadinhosAgent.exe (~30 MB)
+
+# Rodar release nova (bump + tag + GitHub Actions builda)
+# 1. Editar versão em 3 arquivos:
+#    - agente/agent/local_server.py    → VERSAO_AGENTE = "X.Y.Z"
+#    - agente/pyproject.toml           → version = "X.Y.Z"
+#    - agente/installer.iss            → MyAppVersion "X.Y.Z"
+# 2. Commit + tag + push:
+git commit -am "chore(agente): bump X.Y.W → X.Y.Z"
+git push origin claude/youthful-mendel-0e879a:main
+git tag -a agente-vX.Y.Z -m "..."
+git push origin agente-vX.Y.Z
+# 3. GitHub Actions roda em ~3min, publica release com installer
 ```
+
+### Comandos pra acessar DB de prod (via Railway TCP proxy)
+```bash
+# Pegar URL pública do Postgres via GraphQL Railway
+curl -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ variables(projectId:\"79493ebd-19bf-4466-a295-330a0d0c0a86\",environmentId:\"a9e2eb06-e881-4664-973b-fbd816ef65c3\",sid:\"cedfcff3-c832-4db9-8829-b5fecef0fc1d\") }"}'
+# Resposta tem DATABASE_PUBLIC_URL
+
+# psql via Docker (não precisa instalar psql)
+docker run --rm postgres:18 psql "$DATABASE_PUBLIC_URL" -c "SELECT ..."
+```
+
+---
+
+## 🗂️ Arquitetura — arquivos críticos por feature
+
+| Feature | Arquivos |
+|---|---|
+| Pareamento | `agente/agent/main.py`, `agente/agent/local_server.py` |
+| URL protocol | `agente/agent/main.py` (`_handoff_uri_pra_instancia_rodando`) |
+| Linkbuilder ML | `agente/agent/linkbuilder_ml.py`, `app/services/afiliado_ml_writer.py` |
+| Cascata afiliado | `app/services/afiliado_service.py` (`tag_com_cascata`) |
+| Lote | `app/services/lote_service.py` (`_url_pro_produto`) |
+| Encurtador | `app/web/routes.py` (`/r/{slug}`), `app/services/redirect_service.py` |
+| Busca multi-tipo | `agente/agent/busca_ml.py` (`executar_busca`, `_varrer_mais_vendidos_sync`) |
+| UI buscas | `app/web/templates/busca_form.html` |
+| Afiliados UI | `app/web/templates/usuario_afiliados.html` |
+| Onboarding | `app/web/templates/onboarding.html` |
+| Marketplaces const | `app/core/marketplaces.py` |
+| Status agente | `app/api/v1/endpoints/agentes.py` (`/status`, `/versao-atual`) |
+| Permissions Claude | `.claude/settings.json` (rules largas pra fluxo contínuo) |
+
+---
+
+## 🎯 Foco recomendado pra próxima sessão
+
+Em ordem de prioridade:
+
+1. **Fase 16.4 — busca por URL** (rápido, alto valor): admin cola link, sistema importa 1 produto + gera afiliado. ~1 sessão.
+2. **Scraper Shopee** (Fase 16.5a): a V2 já tem código com API interna que retorna `long_link` pronto. Mais fácil que ML. ~1 sessão.
+3. **Fase 17 curadoria automatizada**: Celery beat diário que mantém top 50 sempre frescos. ~1-2 sessões.
+4. **Limpar bug `REDIS_URL_OVERRIDE`** (fix técnico): ~15 min.
+
+Tudo o que está em "Próximas fases planejadas" acima é executável — V2 tem código pra portar quando preciso (`D:\ACHADINHOSV2 - FUNCIONAL\`).
