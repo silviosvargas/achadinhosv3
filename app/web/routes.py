@@ -1812,7 +1812,7 @@ async def nova_busca_form(
 _TIPOS_BUSCA_VALIDOS = {
     "termo_livre", "por_url", "mais_vendidos", "melhor_comissao", "em_alta",
 }
-_MARKETPLACES_SUPORTADOS = {"ml", "shopee"}  # Fase 16.5: Shopee via API interna
+_MARKETPLACES_SUPORTADOS = {"ml", "shopee", "amazon"}  # Fase 16.6: + Amazon via scraping + SiteStripe
 
 
 @router.post("/buscas/nova", response_class=HTMLResponse)

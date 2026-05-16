@@ -1060,11 +1060,28 @@ async def _coletar_produtos_shopee(
     return produtos, None
 
 
-# Roteamento marketplace → coletor. Centralizado pra adicionar Amazon/Magalu
+async def _coletar_produtos_amazon(
+    msg: dict[str, Any], cfg: Config,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Coleta produtos da Amazon via scraping bestsellers + SiteStripe (Fase 16.6)."""
+    max_produtos = int(msg.get("max_produtos", 50))
+    try:
+        from agent.busca_amazon import buscar_amazon
+        produtos = await buscar_amazon(cfg, max_produtos=max_produtos)
+    except RuntimeError as e:
+        return [], f"amazon_bloqueou: {str(e)[:300]}"
+    except Exception as e:
+        log.exception("busca_amazon.crash", erro=str(e))
+        return [], f"amazon_crash: {type(e).__name__}: {str(e)[:200]}"
+    return produtos, None
+
+
+# Roteamento marketplace → coletor. Centralizado pra adicionar Magalu/AliExpress
 # etc no futuro só precisar registrar aqui + criar o módulo.
 _COLETORES_POR_MARKETPLACE = {
     "ml":     _coletar_produtos_ml,
     "shopee": _coletar_produtos_shopee,
+    "amazon": _coletar_produtos_amazon,
 }
 
 

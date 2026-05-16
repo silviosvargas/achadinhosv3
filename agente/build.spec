@@ -35,6 +35,7 @@ a = Analysis(
         'agent.avisos',               # Fase 16.5 — avisos pro dashboard via WS
         'agent.busca_ml',
         'agent.busca_shopee',         # Fase 16.5 — Shopee via API interna
+        'agent.busca_amazon',         # Fase 16.6 — Amazon bestsellers + SiteStripe
         'agent.ingest_client',
         'agent.chrome',
         'agent.local_server',         # Fase 9.2 — HTTP local

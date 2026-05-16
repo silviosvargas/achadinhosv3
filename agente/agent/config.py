@@ -58,6 +58,11 @@ class Config:
         return str(_config_dir() / "chrome_perfil_shopee")
 
     @property
+    def chrome_perfil_amazon(self) -> str:
+        """Perfil Chrome dedicado pra sessão Amazon Associates (SiteStripe)."""
+        return str(_config_dir() / "chrome_perfil_amazon")
+
+    @property
     def servidor_api(self) -> str:
         """
         Deriva URL da API REST a partir do servidor_ws.
