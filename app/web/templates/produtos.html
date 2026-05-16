@@ -39,18 +39,19 @@
 {% endif %}
 
 <details class="filtros-card" {% if filtros_ativos %}open{% endif %}
-         style="margin:16px 0 18px; border:1px solid #e5e7eb; border-radius:10px;
-                background:#f9fafb;">
-  <summary style="cursor:pointer; padding:12px 16px; font-weight:600;
+         style="margin:16px 0 18px; border:1px solid var(--border, #e5e7eb);
+                border-radius:10px; background:var(--bg-card, #f9fafb);
+                overflow:hidden;">
+  <summary style="cursor:pointer; padding:14px 18px; font-weight:600;
                   display:flex; align-items:center; gap:10px;
-                  user-select:none;">
-    🔍 Filtros
+                  user-select:none; list-style:none;">
+    <span>🔍 Filtros</span>
     {% if filtros_ativos %}
       <span class="badge badge-azul" style="font-size:11px;">ativos</span>
     {% endif %}
     <span class="muted small" style="margin-left:auto; font-weight:400;">
       {% if total_count > mostrados %}
-        Mostrando <strong>{{ mostrados }}</strong> de <strong>{{ total_count }}</strong> produtos
+        Mostrando <strong>{{ mostrados }}</strong> de <strong>{{ total_count }}</strong>
       {% else %}
         <strong>{{ total_count }}</strong> produto{{ 's' if total_count != 1 else '' }}
       {% endif %}
@@ -58,17 +59,17 @@
   </summary>
 
   <form method="get" action="/produtos"
-        style="padding:4px 16px 16px; display:grid;
-               grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
-               gap:12px;">
+        style="padding:0 18px 18px; display:grid;
+               grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));
+               gap:14px; align-items:end;">
     <label style="grid-column: 1 / -1;">
-      <span class="muted small">Nome do produto</span>
+      <span>Nome do produto</span>
       <input type="text" name="busca" placeholder="ex: fone bluetooth"
              value="{{ filtro_busca }}" autocomplete="off">
     </label>
 
     <label>
-      <span class="muted small">Plataforma</span>
+      <span>Plataforma</span>
       <select name="plataforma">
         <option value="">Todas</option>
         <option value="ml"         {% if filtro_plataforma == 'ml' %}selected{% endif %}>🛒 Mercado Livre</option>
@@ -80,7 +81,7 @@
     </label>
 
     <label>
-      <span class="muted small">Nicho</span>
+      <span>Nicho</span>
       <select name="nicho_id">
         <option value="">Todos</option>
         {% for n in nichos %}
@@ -92,7 +93,7 @@
     </label>
 
     <label>
-      <span class="muted small">Status</span>
+      <span>Status</span>
       <select name="bloqueado">
         <option value="">Todos</option>
         <option value="0" {% if filtro_bloqueado == 0 %}selected{% endif %}>✅ Ativos</option>
@@ -101,7 +102,7 @@
     </label>
 
     <label>
-      <span class="muted small">Link de afiliado</span>
+      <span>Link de afiliado</span>
       <select name="afiliado">
         <option value="">Qualquer</option>
         <option value="meli"     {% if filtro_afiliado == 'meli' %}selected{% endif %}>🔗 Tem meli.la</option>
@@ -110,7 +111,7 @@
     </label>
 
     <label>
-      <span class="muted small">Limite</span>
+      <span>Limite</span>
       <select name="limite">
         <option value="50"  {% if filtro_limite == 50 %}selected{% endif %}>50</option>
         <option value="100" {% if filtro_limite == 100 %}selected{% endif %}>100</option>
@@ -120,10 +121,13 @@
     </label>
 
     <div style="grid-column: 1 / -1; display:flex; gap:10px;
-                justify-content:flex-end; flex-wrap:wrap; margin-top:4px;">
+                justify-content:flex-end; flex-wrap:wrap;
+                padding-top:6px; border-top:1px solid var(--border, #e5e7eb);
+                margin-top:4px;">
       {% if filtros_ativos %}
       <a href="/produtos" class="btn"
-         style="background:white; border:1px solid #d1d5db; color:#374151;">
+         style="background:transparent; border:1px solid var(--border, #d1d5db);
+                color:var(--muted, #6b7280);">
         ✕ Limpar filtros
       </a>
       {% endif %}
