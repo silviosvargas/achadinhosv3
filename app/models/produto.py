@@ -98,6 +98,11 @@ class Produto(Base, TimestampMixin):
     preco_orig:   Mapped[float | None] = mapped_column(Float, default=None)
     desconto:     Mapped[float | None] = mapped_column(Float, default=None)
     comissao:     Mapped[float | None] = mapped_column(Float, default=None)
+    # % do bônus "GANHOS EXTRAS" capturado da barra preta de afiliados ML.
+    # NULL = produto sem bônus EXTRAS (comissão = base só).
+    # Quando preenchido, `comissao` já reflete o valor com extras incluído.
+    # Usado pela busca padrão `ml_comissao_extra` pra filtrar só os bonificados.
+    comissao_extra: Mapped[float | None] = mapped_column(Float, default=None)
     frete_gratis: Mapped[bool]  = mapped_column(Boolean, default=False)
 
     # URL canônica (sem tag de afiliado). Tag é da org (em ConfigOrg, futuro).

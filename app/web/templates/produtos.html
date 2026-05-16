@@ -113,6 +113,14 @@
       </select>
     </label>
 
+    <label>
+      <span>Comissão EXTRA</span>
+      <select name="extras">
+        <option value="">Todos</option>
+        <option value="1" {% if filtro_extras == '1' %}selected{% endif %}>🎁 Só com bônus EXTRAS</option>
+      </select>
+    </label>
+
     {# Comissão: faixa min..max em % #}
     <label>
       <span>Comissão (%)</span>
@@ -222,6 +230,12 @@
           {% set _emoji, _lbl = _fontes_curtas.get(p.comissao_fonte or 'estimativa', ('⚪', p.comissao_fonte or 'estimativa')) %}
           <strong>{{ "%.1f"|format(p.comissao) }}%</strong>
           {% if p.comissao_validada %}<span title="dentro do range esperado">✓</span>{% endif %}
+          {% if p.comissao_extra and p.comissao_extra > 0 %}
+            <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #f59e0b; font-size:10px; padding:1px 6px; border-radius:4px; margin-left:4px;"
+                  title="Bônus GANHOS EXTRAS — promoção Mais por Mais ML">
+              🎁 +{{ "%.1f"|format(p.comissao_extra) }}% extra
+            </span>
+          {% endif %}
           <div class="muted small" title="{{ _lbl }}">
             {{ _emoji }} {{ _lbl }}
           </div>

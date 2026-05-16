@@ -1171,6 +1171,7 @@ async def lista_produtos(
     comissao_max: str | None = None,
     preco_min:    str | None = None,    # R$, ex: "50"
     preco_max:    str | None = None,
+    extras:       str | None = None,    # "1" → só com comissao_extra; "" / None → todos
 ):
     nicho_id_int = _query_int(nicho_id)
     bloqueado_int = _query_int(bloqueado)
@@ -1227,6 +1228,12 @@ async def lista_produtos(
     if preco_max_f is not None:
         base = base.where(Produto.preco <= preco_max_f)
 
+    # Só com bônus GANHOS EXTRAS (capturado da barra preta ML)
+    if extras == "1":
+        base = base.where(
+            Produto.comissao_extra.is_not(None), Produto.comissao_extra > 0,
+        )
+
     # Contagem total (sem limit) pra UI mostrar "X de N"
     from sqlalchemy import func as sa_func, select as sa_select
     total_count = (await db.execute(
@@ -1264,6 +1271,7 @@ async def lista_produtos(
         afiliado,
         comissao_min_f is not None, comissao_max_f is not None,
         preco_min_f is not None,    preco_max_f is not None,
+        extras == "1",
     ])
 
     return templates.TemplateResponse(
@@ -1283,6 +1291,7 @@ async def lista_produtos(
             "filtro_comissao_max": comissao_max_f if comissao_max_f is not None else "",
             "filtro_preco_min":    preco_min_f    if preco_min_f    is not None else "",
             "filtro_preco_max":    preco_max_f    if preco_max_f    is not None else "",
+            "filtro_extras":       "1" if extras == "1" else "",
             "filtros_ativos": filtros_ativos,
             "total_count": int(total_count or 0),
             "mostrados": len(produtos),

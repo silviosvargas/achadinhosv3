@@ -538,6 +538,7 @@ async def _upsert_produto(
     #   is_bestseller   — True se veio de busca tipo mais_vendidos/bestsellers
     #   is_em_alta      — True se veio de /ofertas ML ou API Shopee ofertas
     comissao_pct   = item.get("comissao")
+    comissao_extra = item.get("comissao_extra")  # None = sem bônus GANHOS EXTRAS
     comissao_fonte = (item.get("comissao_fonte") or "").strip() or _fonte_default_por_plataforma(plataforma)
     total_vendidos = item.get("total_vendidos")
     is_bestseller  = bool(item.get("is_bestseller"))
@@ -599,6 +600,7 @@ async def _upsert_produto(
             preco_orig=item.get("preco_orig"),
             desconto=item.get("desconto"),
             comissao=comissao_pct,
+            comissao_extra=comissao_extra,
             frete_gratis=bool(item.get("frete_gratis")),
             url_canonica=url_canonica,
             url_afiliado=url_afiliado,
@@ -651,6 +653,10 @@ async def _upsert_produto(
                     produto.comissao_fonte = comissao_fonte
                 # Recalcula validada só quando atualiza
                 produto.comissao_validada = comissao_validada
+                # comissao_extra acompanha o update da comissão: se a nova
+                # captura tem fonte ≥ a atual, sobrescreve (inclusive pra None
+                # = produto perdeu o bônus EXTRAS desde a última varredura).
+                produto.comissao_extra = comissao_extra
             else:
                 # Fonte nova menos confiável que a atual — NÃO sobrescreve.
                 # Mantém comissao + comissao_fonte + comissao_atualizada_em.

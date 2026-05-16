@@ -73,6 +73,10 @@ async def disparar(
         "slug_padrao":  slug,
         "disparado_por": criado_por_usuario_id,
     }
+    # Busca padrão com alvo de N produtos (filtra/stop-early). Quando definido,
+    # agente lê esse campo e para ao juntar N produtos válidos.
+    if "alvo_total" in busca:
+        payload["alvo_total"] = busca["alvo_total"]
 
     tarefa = Tarefa(
         org_id=org_id,

@@ -51,6 +51,7 @@ class ProdutoPublico(BaseModel):
     preco_orig:   float | None
     desconto:     float | None
     comissao:     float | None
+    comissao_extra: float | None = None
     frete_gratis: bool
     url_canonica: str | None
     url_afiliado: str | None
@@ -124,7 +125,11 @@ class IngestProdutoItem(BaseModel):
     preco_orig:   float | None = Field(default=None, ge=0)
     desconto:     float | None = Field(default=None, ge=0, le=100)
     comissao:     float | None = Field(default=None, ge=0, le=100,
-                                       description="% de comissão real ou estimada")
+                                       description="% de comissão EFETIVA (extras se houver, base se não)")
+    comissao_extra: float | None = Field(
+        default=None, ge=0, le=100,
+        description="% do bônus 'GANHOS EXTRAS' (Mais por Mais ML). None = sem bônus.",
+    )
     frete_gratis: bool  = False
     categoria:    str | None = Field(default=None, max_length=200,
                                      description="Caminho completo do ML")
