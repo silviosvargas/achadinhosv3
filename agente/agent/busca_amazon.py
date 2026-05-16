@@ -125,6 +125,41 @@ def _detectou_bloqueio(driver: uc.Chrome) -> tuple[str, str] | None:
     return None
 
 
+def _verificar_login_amazon(driver: uc.Chrome) -> tuple[str, str] | None:
+    """
+    Confere se o user está logado em Amazon Associates ANTES de começar a busca.
+
+    Visita uma página de Associates (account-home) que SÓ carrega se logado;
+    se não tem cookie, redireciona pra /ap/signin. Mais confiável que abrir
+    bestsellers (acessível sem login).
+
+    Retorna (motivo, instrucao_user) se NÃO logado, None se OK.
+    """
+    try:
+        # Página de home do programa Associates BR — só acessível logado
+        driver.get("https://associados.amazon.com.br/home")
+        time.sleep(3)
+    except Exception as e:
+        log.warning("amazon.verificar_login_falhou", erro=str(e)[:120])
+        return ("erro_rede", "⚠ Não consegui acessar Amazon — verifique conexão.")
+
+    problema = _detectou_bloqueio(driver)
+    if problema:
+        return problema
+
+    # Sanity adicional: verifica se conseguiu chegar em alguma URL de Associates
+    # ou bestsellers logado. Se foi parar em um signin custom, ainda pega.
+    url = (driver.current_url or "").lower()
+    if "signin" in url or "/ap/signin" in url:
+        return (
+            "login_expirado",
+            "🔐 Faça login na sua conta Amazon Associates aqui. Vou esperar.",
+        )
+
+    log.info("amazon.login_confirmado", url=url[:200])
+    return None
+
+
 # ============================================================
 # Banner Chrome + aviso dashboard (reutiliza estratégia do Shopee)
 # ============================================================
@@ -170,99 +205,106 @@ def _remover_banner(driver: uc.Chrome) -> None:
         pass
 
 
-CAPTCHA_ESPERA_FIXA_SEG = 30
-CAPTCHA_MAX_TENTATIVAS  = 3
-LOGIN_TIMEOUT_SEG       = 300
+ESPERA_FIXA_SEG = 30
+MAX_TENTATIVAS  = 3
 
 
-def _aguardar_login(driver: uc.Chrome, *, mensagem: str) -> bool:
-    """Polling até URL voltar pra bestsellers ou timeout 5min."""
+def _aguardar_com_retry(
+    driver: uc.Chrome,
+    *,
+    tipo_aviso: str,
+    mensagem: str,
+    url_revalidacao: str = URL_BESTSELLERS,
+) -> bool:
+    """
+    Estratégia ÚNICA pra captcha + login: 30s fixos × até 3 tentativas.
+
+    Pra cada tentativa:
+    1. Mostra banner amarelo no Chrome com a instrução
+    2. Publica aviso no dashboard (toast persistente)
+    3. Espera 30s FIXOS (independente do que user fizer — porque captcha às
+       vezes abre nova janela e polling falha; e pra login dá tempo de logar)
+    4. Recarrega URL de validação
+    5. Verifica se desbloqueou — se sim, retorna True
+    6. Se não, próxima tentativa
+
+    Retorna True se desbloqueou em até 3 tentativas, False senão.
+    """
     from agent import avisos
 
-    log.warning("amazon.precisa_login", url=(driver.current_url or "")[:200])
-    _mostrar_banner(driver, mensagem)
-    avisos.publicar(
-        "login_expirado", mensagem,
-        detalhe="Abra o Chrome do agente e logue na sua conta Amazon Associates.",
-        marketplace="amazon", ttl_seg=LOGIN_TIMEOUT_SEG + 30,
-    )
+    log.warning("amazon.aguardando_intervencao",
+                tipo=tipo_aviso, url_atual=(driver.current_url or "")[:200])
 
-    inicio = time.time()
     try:
-        while time.time() - inicio < LOGIN_TIMEOUT_SEG:
-            time.sleep(5)
+        for tentativa in range(1, MAX_TENTATIVAS + 1):
+            msg_tentativa = (
+                f"{mensagem}\n\nTentativa {tentativa}/{MAX_TENTATIVAS} — "
+                f"aguardando {ESPERA_FIXA_SEG}s para você resolver..."
+            )
+            log.warning(f"amazon.{tipo_aviso}.tentativa",
+                        tentativa=tentativa, max=MAX_TENTATIVAS,
+                        espera_seg=ESPERA_FIXA_SEG)
+
+            _mostrar_banner(driver, msg_tentativa)
+            avisos.publicar(
+                tipo_aviso, mensagem,
+                detalhe=f"Tentativa {tentativa}/{MAX_TENTATIVAS} — "
+                        f"aguardando {ESPERA_FIXA_SEG}s. "
+                        f"Após o login/resolução, vou re-testar automaticamente.",
+                marketplace="amazon", ttl_seg=ESPERA_FIXA_SEG + 30,
+            )
+
+            # Espera fixa de 30s — não polling, pra captcha em nova aba/janela
+            time.sleep(ESPERA_FIXA_SEG)
+
+            # Revalida acessando a URL de teste
             try:
-                url_atual = (driver.current_url or "").lower()
-            except Exception:
-                return False
-            if "bestsellers" in url_atual or "/gp/" in url_atual:
-                log.info("amazon.user_logou",
-                         duracao=int(time.time() - inicio))
+                driver.get(url_revalidacao)
+                time.sleep(3)
+            except Exception as e:
+                log.warning(f"amazon.{tipo_aviso}.revalidacao_falhou",
+                            erro=str(e)[:120])
+                continue
+
+            problema = _detectou_bloqueio(driver)
+            if problema is None:
+                # Pra login_expirado: confirma com verificação dupla via /home
+                if tipo_aviso == "login_expirado":
+                    verif = _verificar_login_amazon(driver)
+                    if verif is None:
+                        log.info("amazon.login_confirmado_apos_tentativa",
+                                 tentativa=tentativa)
+                        _remover_banner(driver)
+                        return True
+                    # Ainda não logou — segue pra próxima tentativa
+                    log.info(f"amazon.{tipo_aviso}.persiste", tentativa=tentativa)
+                    continue
+                log.info(f"amazon.{tipo_aviso}.resolvido", tentativa=tentativa)
                 _remover_banner(driver)
-                time.sleep(2)
                 return True
-            if not any(s in url_atual for s in _SINAIS_BLOQUEIO):
-                try:
-                    driver.get(URL_BESTSELLERS)
-                    time.sleep(3)
-                except Exception:
-                    pass
-                return True
-        log.warning("amazon.timeout_aguardando_login")
+
+            # Se mudou de problema (login → captcha ou vice-versa), continua
+            # tentando com a mesma estratégia
+            log.info(f"amazon.{tipo_aviso}.persiste",
+                     tentativa=tentativa, problema_atual=problema[0])
+
+        log.warning(f"amazon.{tipo_aviso}.esgotou_tentativas",
+                    tentativas=MAX_TENTATIVAS)
         return False
     finally:
         avisos.limpar(marketplace="amazon")
 
 
-def _aguardar_captcha(driver: uc.Chrome, *, mensagem: str) -> bool:
-    """30s fixos × até 3 tentativas (igual Shopee)."""
-    from agent import avisos
-
-    for tentativa in range(1, CAPTCHA_MAX_TENTATIVAS + 1):
-        msg_tentativa = (
-            f"{mensagem}\n\nTentativa {tentativa}/{CAPTCHA_MAX_TENTATIVAS} — "
-            f"aguardando {CAPTCHA_ESPERA_FIXA_SEG}s..."
-        )
-        log.warning("amazon.captcha_tentativa",
-                    tentativa=tentativa, max=CAPTCHA_MAX_TENTATIVAS)
-        _mostrar_banner(driver, msg_tentativa)
-        avisos.publicar(
-            "captcha", mensagem,
-            detalhe=f"Tentativa {tentativa}/{CAPTCHA_MAX_TENTATIVAS}",
-            marketplace="amazon", ttl_seg=CAPTCHA_ESPERA_FIXA_SEG + 30,
-        )
-
-        time.sleep(CAPTCHA_ESPERA_FIXA_SEG)
-
-        try:
-            driver.get(URL_BESTSELLERS)
-            time.sleep(3)
-        except Exception as e:
-            log.warning("amazon.captcha_recarga_falhou", erro=str(e)[:120])
-            continue
-
-        problema = _detectou_bloqueio(driver)
-        if problema is None:
-            log.info("amazon.captcha_resolvido", tentativa=tentativa)
-            _remover_banner(driver)
-            avisos.limpar(marketplace="amazon")
-            return True
-        if problema[0] == "login_expirado":
-            avisos.limpar(marketplace="amazon")
-            return False
-        log.info("amazon.captcha_persiste", tentativa=tentativa)
-
-    log.warning("amazon.captcha_esgotou_tentativas")
-    avisos.limpar(marketplace="amazon")
-    return False
-
-
 def _resolver_bloqueio(
     driver: uc.Chrome, motivo: str, mensagem: str,
 ) -> bool:
-    if motivo == "captcha":
-        return _aguardar_captcha(driver, mensagem=mensagem)
-    return _aguardar_login(driver, mensagem=mensagem)
+    """Encaminha pro retry padronizado. Captcha e login compartilham estratégia."""
+    return _aguardar_com_retry(
+        driver,
+        tipo_aviso=motivo,
+        mensagem=mensagem,
+        url_revalidacao=URL_BESTSELLERS,
+    )
 
 
 # ============================================================
@@ -524,7 +566,22 @@ def _varrer_sync(
         vistos_asin: set[str] = set()
 
         try:
-            # 1. Carrega bestsellers (autentica via cookies salvos)
+            # 1. PRIMEIRO: verifica se está logado em Amazon Associates.
+            # SiteStripe só renderiza se logado; sem login, geramos só fallback.
+            # Estratégia: tenta /home do Associates (página protegida) → se
+            # redireciona pra signin, pede login com banner + 30s × 3 retry.
+            log.info("amazon.verificando_login")
+            problema_login = _verificar_login_amazon(driver)
+            if problema_login:
+                motivo, msg = problema_login
+                if not _resolver_bloqueio(driver, motivo, msg):
+                    raise RuntimeError(
+                        f"Amazon {motivo} — usuário não resolveu em "
+                        f"{MAX_TENTATIVAS} tentativas de {ESPERA_FIXA_SEG}s. "
+                        "Rode `python -m agent.login_amazon` pra logar manualmente."
+                    )
+
+            # 2. Carrega bestsellers (autentica via cookies salvos)
             driver.get(URL_BESTSELLERS)
             time.sleep(3)
             problema = _detectou_bloqueio(driver)
