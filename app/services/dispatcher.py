@@ -162,10 +162,20 @@ async def _tentar_entrega(db: AsyncSession, tarefa: Tarefa) -> None:
         log.warning("tarefa.sem_comando_ws", tarefa_id=tarefa.id, tipo=tarefa.tipo)
         return
 
+    # Defesa contra payload legado/bugado que tenha chave "tipo" ou "tarefa_id":
+    # spread vem PRIMEIRO; comando WS e tarefa_id sobrescrevem por último. Sem
+    # isso, tarefa antiga (pré-hotfix v3.0.3) cai em `ws.tipo_sem_handler` quando
+    # `reentregar_pendentes` re-despacha. Loga warning pra rastrear casos legados.
+    if isinstance(tarefa.payload, dict) and (
+        "tipo" in tarefa.payload or "tarefa_id" in tarefa.payload
+    ):
+        log.warning("tarefa.payload_chave_conflitante",
+                    tarefa_id=tarefa.id,
+                    chaves=[k for k in ("tipo", "tarefa_id") if k in tarefa.payload])
     payload = {
+        **(tarefa.payload or {}),
         "tipo":      comando,
         "tarefa_id": tarefa.id,
-        **tarefa.payload,
     }
 
     enviado = await registry.enviar_para(tarefa.agente_id, payload)

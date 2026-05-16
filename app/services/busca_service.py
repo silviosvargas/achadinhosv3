@@ -149,10 +149,12 @@ async def _entregar_para_agente(
     db: AsyncSession, tarefa: Tarefa, *, agente_id: int,
 ) -> None:
     """Envia comando `iniciar_busca_ml` via WS."""
+    # Spread PRIMEIRO; tipo/tarefa_id sobrescrevem por último. Defesa contra
+    # tarefa legada com "tipo" no payload (mesmo motivo do dispatcher).
     payload = {
+        **(tarefa.payload or {}),
         "tipo":         "iniciar_busca_ml",
         "tarefa_id":    tarefa.id,
-        **tarefa.payload,
     }
     enviado = await registry.enviar_para(agente_id, payload)
     if enviado:
