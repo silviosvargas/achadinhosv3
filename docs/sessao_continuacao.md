@@ -10,6 +10,24 @@
 
 ---
 
+## 🛑 LEIA ANTES DE TUDO (instrução pra Claude de nova sessão)
+
+**Sistema 100% funcional. NÃO mexa em nada ao abrir esta sessão.**
+
+Sua primeira tarefa é:
+1. Ler este documento inteiro + `CLAUDE.md` + `docs/decisoes.md`
+2. Apresentar pro user um **menu de opções** de continuação (ver seção "Foco recomendado" no fim deste doc)
+3. **Aguardar a escolha do user** antes de qualquer ação
+
+❌ NÃO rode comandos · NÃO edite código · NÃO faça smoke tests · NÃO crie arquivos
+✅ Apenas leia, sintetize, apresente opções, aguarde
+
+A última ação validada foi a busca "Mais vendidos" ML rodando em prod com sucesso
+(50 produtos importados, classificados por nicho, com `meli.la` gerados). User
+confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
+
+---
+
 ## ⚡ Estado atual — o que TÁ FUNCIONANDO em produção
 
 | Componente | Status | URL/Detalhe |
@@ -271,24 +289,41 @@ servidor:
 
 ## 🚀 Como começar a próxima sessão
 
+### ⛔ NÃO MEXER EM NADA AO INICIAR A PRÓXIMA SESSÃO
+
+**O sistema está 100% funcional em prod.** A última coisa que o user fez foi
+validar a busca "Mais vendidos" ML end-to-end com sucesso (v3.0.3).
+
+**Regras pra primeira interação da nova sessão:**
+
+1. Leia os 3 arquivos (CLAUDE.md, este, docs/decisoes.md) pra absorver contexto.
+2. **NÃO** rode comandos, **NÃO** crie arquivos, **NÃO** edite código.
+3. **NÃO** sugira "vou verificar X" ou "deixa eu testar Y" — nada disso é necessário.
+4. **Apresente as opções** de continuação como menu, pra user escolher por onde seguir.
+5. **Aguarde a escolha do user** antes de qualquer ação.
+
+As opções a apresentar (do mais ao menos prioritário):
+- **Fase 16.4** — busca personalizada por URL/link (V2 tem código pra portar)
+- **Fase 16.5** — scraper Shopee (API interna já retorna shortlink afiliado)
+- **Fase 17** — curadoria automatizada TOP 50 (Celery beat diário)
+- **Fase 18** — métricas no dashboard (clicks do `/r/{slug}`)
+- **Bug menor**: ajustar `REDIS_URL_OVERRIDE` em `app/core/config.py`
+- **Bug menor**: atualizar `ADMIN_PASSWORD` env var no Railway
+- **Outra coisa que o user trouxer**
+
 ### Prompt sugerido pra primeira mensagem
-> *"Estou continuando o Achadinhos V3. Leia esses 3 arquivos NA ORDEM:
-> 1. CLAUDE.md (overview e fases entregues)
-> 2. docs/sessao_continuacao.md (estado atual + tudo entregue + próximas fases)
-> 3. docs/decisoes.md (ADRs, especialmente ADR-009 sobre Fase 9)
+> *"Estou continuando o Achadinhos V3. Leia esses 3 arquivos NA ORDEM:*
+> *1. CLAUDE.md (overview e fases entregues)*
+> *2. docs/sessao_continuacao.md (estado atual + próximas fases)*
+> *3. docs/decisoes.md (ADRs)*
 >
-> O agente está em v3.0.3, release publicada no GitHub. Pipeline completo
-> funciona: signup → onboarding → instalar `.exe` → conectar → busca → lote.
-> A busca tipo "Mais vendidos" ML (8 categorias hardcoded) foi validada
-> em prod — funciona end-to-end com 50 produtos importados, auto-classificados
-> por nicho, com shortlinks `meli.la` gerados pelo agente.
+> ***IMPORTANTE: tudo está funcionando. NÃO mexa em nada, NÃO rode comandos,*
+> *NÃO sugira testes. Apenas leia os arquivos e me apresente as opções de*
+> *continuação como menu pra eu escolher.***
 >
-> Próximo passo planejado é Fase 16.4 — busca personalizada por URL/link.
-> A V2 (em `D:\ACHADINHOSV2 - FUNCIONAL\`) tem código pra portar
-> (`src/buscar_palavra/extrator_link.py` faz detecção de plataforma por
-> domínio + extração de dados).
->
-> Aguarde minha confirmação antes de implementar qualquer coisa."*
+> *Última coisa validada em prod: busca "Mais vendidos" ML com 50 produtos*
+> *importados + `meli.la` gerado + auto-classificação por nicho. Agente*
+> *em v3.0.3."*
 
 ### Coisas que próxima Claude PRECISA saber
 1. **Não tente login admin com `IzT9V7c5J6dp7Eft7lwD`** — user trocou pela UI `/conta`. Pede a nova se precisar fazer smoke test.
