@@ -53,6 +53,11 @@ class Config:
         return str(_config_dir() / "chrome_perfil_ml")
 
     @property
+    def chrome_perfil_shopee(self) -> str:
+        """Perfil Chrome dedicado pra sessão do painel afiliados Shopee."""
+        return str(_config_dir() / "chrome_perfil_shopee")
+
+    @property
     def servidor_api(self) -> str:
         """
         Deriva URL da API REST a partir do servidor_ws.

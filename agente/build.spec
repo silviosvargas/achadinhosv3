@@ -33,6 +33,7 @@ a = Analysis(
         'PIL._tkinter_finder',
         # Módulos do próprio agente que podem não ser detectados via import estático
         'agent.busca_ml',
+        'agent.busca_shopee',         # Fase 16.5 — Shopee via API interna
         'agent.ingest_client',
         'agent.chrome',
         'agent.local_server',         # Fase 9.2 — HTTP local

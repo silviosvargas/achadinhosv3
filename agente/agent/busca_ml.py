@@ -985,81 +985,49 @@ _varrer_sync = _varrer_termo_livre_sync
 # Handler async — chamado pelo WSClient
 # ============================================================
 
-async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
-    """
-    Handler do comando `iniciar_busca_ml`. Retorna dict no formato esperado
-    pelo WSClient (`{ok, ...}` → vira `tarefa_concluida` automaticamente).
+async def _coletar_produtos_ml(
+    msg: dict[str, Any], cfg: Config,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Coleta produtos do ML conforme `tipo_busca`. Retorna (produtos, erro).
 
-    Roteamento explícito por `tipo_busca` (Fase 16.5):
-      - `termo_livre`     → varre listagem ML por termo (paginação `_From=N`)
-      - `por_url`         → extrai 1 produto da URL específica (Fase 16.4)
-      - `mais_vendidos`   → itera 8 categorias hardcoded
-      - `melhor_comissao` → top categorias por comissão (Roupas, Esportes…)
-      - `em_alta`         → /ofertas (promoções relâmpago)
-
-    Fallback: tipo desconhecido cai em termo_livre se entrada for texto.
+    Quando `erro` não é None, o caller deve PARAR o pipeline desse marketplace.
+    `produtos=[]` SEM erro = ok mas vazio (sem produtos).
     """
-    busca_id     = msg.get("busca_id")
-    tarefa_id    = msg.get("tarefa_id")
     tipo_entrada = msg.get("tipo_entrada", "termo")
     entrada      = msg.get("entrada", "") or ""
     max_paginas  = int(msg.get("max_paginas", 3))
     max_produtos = int(msg.get("max_produtos", 50))
     tipo_busca   = msg.get("tipo_busca", "termo_livre")
 
-    log.info("busca.iniciando",
-             busca_id=busca_id, tarefa_id=tarefa_id,
-             tipo_busca=tipo_busca,
-             tipo_entrada=tipo_entrada, entrada=entrada[:80],
-             max_paginas=max_paginas, max_produtos=max_produtos)
-
-    def _resposta_bloqueado(e: Exception) -> dict[str, Any]:
-        log.warning("busca.bloqueada", tipo_busca=tipo_busca, motivo=str(e)[:200])
-        return {"ok": False, "erro": f"ml_bloqueou: {str(e)[:300]}",
-                "tentar_de_novo": False}
-
-    def _resposta_crash(e: Exception, etapa: str) -> dict[str, Any]:
-        log.exception(f"busca.crash_selenium.{etapa}", erro=str(e))
-        return {"ok": False,
-                "erro": f"selenium_crash: {type(e).__name__}: {str(e)[:200]}",
-                "tentar_de_novo": True}
-
     try:
         if tipo_busca == "mais_vendidos":
             produtos = await asyncio.to_thread(
                 _varrer_mais_vendidos_sync, cfg, max_produtos=max_produtos,
             )
-
         elif tipo_busca == "melhor_comissao":
             produtos = await asyncio.to_thread(
                 _varrer_melhor_comissao_sync, cfg, max_produtos=max_produtos,
             )
-
         elif tipo_busca == "em_alta":
             produtos = await asyncio.to_thread(
                 _varrer_em_alta_sync, cfg, max_produtos=max_produtos,
             )
-
         elif tipo_busca == "por_url":
             if not entrada.lower().startswith(("http://", "https://")):
-                return {"ok": False, "erro": "por_url exige URL com http(s)://",
-                        "tentar_de_novo": False}
+                return [], "por_url exige URL com http(s)://"
             produtos = await asyncio.to_thread(
                 _varrer_produto_unico_sync, cfg, url=entrada,
             )
-
         else:
             # termo_livre — também é fallback pra tipo desconhecido
             if not entrada.strip():
-                return {"ok": False, "erro": "termo_livre exige texto na entrada",
-                        "tentar_de_novo": False}
+                return [], "termo_livre exige texto na entrada"
             try:
                 url_inicial = montar_url_inicial(
                     tipo_entrada=tipo_entrada, entrada=entrada,
                 )
             except ValueError as e:
-                return {"ok": False, "erro": f"entrada_invalida: {e}",
-                        "tentar_de_novo": False}
+                return [], f"entrada_invalida: {e}"
             produtos = await asyncio.to_thread(
                 _varrer_termo_livre_sync,
                 cfg,
@@ -1067,15 +1035,103 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
                 max_paginas=max_paginas,
                 max_produtos=max_produtos,
             )
-
     except RuntimeError as e:
-        return _resposta_bloqueado(e)
+        return [], f"ml_bloqueou: {str(e)[:300]}"
     except Exception as e:
-        return _resposta_crash(e, tipo_busca)
+        log.exception("busca_ml.crash_selenium", erro=str(e))
+        return [], f"ml_crash: {type(e).__name__}: {str(e)[:200]}"
 
-    return await _enviar_produtos_e_responder(
-        produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
+    return produtos, None
+
+
+async def _coletar_produtos_shopee(
+    msg: dict[str, Any], cfg: Config,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Coleta produtos da Shopee via API interna (Fase 16.5)."""
+    max_produtos = int(msg.get("max_produtos", 50))
+    try:
+        from agent.busca_shopee import buscar_shopee
+        produtos = await buscar_shopee(cfg, max_produtos=max_produtos)
+    except RuntimeError as e:
+        return [], f"shopee_bloqueou: {str(e)[:300]}"
+    except Exception as e:
+        log.exception("busca_shopee.crash", erro=str(e))
+        return [], f"shopee_crash: {type(e).__name__}: {str(e)[:200]}"
+    return produtos, None
+
+
+# Roteamento marketplace → coletor. Centralizado pra adicionar Amazon/Magalu
+# etc no futuro só precisar registrar aqui + criar o módulo.
+_COLETORES_POR_MARKETPLACE = {
+    "ml":     _coletar_produtos_ml,
+    "shopee": _coletar_produtos_shopee,
+}
+
+
+async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
+    """
+    Handler do comando `iniciar_busca_ml`. Retorna dict no formato esperado
+    pelo WSClient (`{ok, ...}` → vira `tarefa_concluida`).
+
+    Orquestra MÚLTIPLOS marketplaces (Fase 16.5):
+    - `msg["marketplaces"]` lista de slugs (ex: `["ml", "shopee"]`)
+    - pra cada marketplace, chama o coletor dedicado
+    - acumula produtos + envia tudo num único ingest
+
+    Por marketplace, roteamento por `tipo_busca`:
+      - ML: termo_livre | por_url | mais_vendidos | melhor_comissao | em_alta
+      - Shopee: ignora tipo_busca, usa list_type=2 (melhor performance)
+
+    Fallback: `marketplaces` ausente/inválido → assume `["ml"]`.
+    """
+    busca_id     = msg.get("busca_id")
+    tarefa_id    = msg.get("tarefa_id")
+    tipo_busca   = msg.get("tipo_busca", "termo_livre")
+    marketplaces = msg.get("marketplaces") or ["ml"]
+    if not isinstance(marketplaces, list) or not marketplaces:
+        marketplaces = ["ml"]
+
+    log.info("busca.iniciando",
+             busca_id=busca_id, tarefa_id=tarefa_id,
+             tipo_busca=tipo_busca, marketplaces=marketplaces,
+             entrada=(msg.get("entrada") or "")[:80])
+
+    todos_produtos: list[dict[str, Any]] = []
+    erros_por_mkt: dict[str, str] = {}
+
+    for mkt in marketplaces:
+        coletor = _COLETORES_POR_MARKETPLACE.get(mkt)
+        if coletor is None:
+            log.warning("busca.marketplace_nao_suportado", marketplace=mkt)
+            erros_por_mkt[mkt] = "marketplace_nao_implementado"
+            continue
+
+        log.info("busca.marketplace_iniciado", marketplace=mkt)
+        produtos, erro = await coletor(msg, cfg)
+        if erro:
+            log.warning("busca.marketplace_erro", marketplace=mkt, erro=erro[:200])
+            erros_por_mkt[mkt] = erro
+            continue
+        log.info("busca.marketplace_ok", marketplace=mkt, extraidos=len(produtos))
+        todos_produtos.extend(produtos)
+
+    # Se NENHUM marketplace funcionou, retorna erro
+    if not todos_produtos and erros_por_mkt:
+        return {
+            "ok": False,
+            "erro": "todos_marketplaces_falharam: " + "; ".join(
+                f"{m}={e[:100]}" for m, e in erros_por_mkt.items()
+            ),
+            "tentar_de_novo": False,
+        }
+
+    # Senão, envia tudo (mesmo com falhas parciais — o que deu certo vai)
+    resposta = await _enviar_produtos_e_responder(
+        todos_produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
     )
+    if erros_por_mkt:
+        resposta["marketplaces_com_erro"] = erros_por_mkt
+    return resposta
 
 
 async def _enviar_produtos_e_responder(
