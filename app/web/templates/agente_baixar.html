@@ -28,6 +28,12 @@
        style="display: none; padding: 12px 20px; font-weight: 600;">
       ⬇ Baixar agente
     </a>
+    <a id="btn-atualizar"
+       href="/agentes/instalador"
+       class="btn btn-primario"
+       style="display: none; padding: 12px 20px; font-weight: 600; background: #f59e0b;">
+      ⬆ Atualizar agente
+    </a>
     <button id="btn-conectar" type="button" class="btn btn-primario"
             style="display: none; padding: 12px 20px; font-weight: 600;">
       Conectar meu agente
@@ -133,6 +139,7 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
   const elStatus = document.getElementById('conectar-status');
   const elMsg = document.getElementById('conectar-mensagem');
   const elBtnBaixar = document.getElementById('btn-baixar');
+  const elBtnAtualizar = document.getElementById('btn-atualizar');
   const elBtnConectar = document.getElementById('btn-conectar');
   const elBtnVerificar = document.getElementById('btn-verificar');
   const elBtnAbrir = document.getElementById('btn-abrir-plataformas');
@@ -147,6 +154,7 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
   }
   function esconderTodosOsBotoes() {
     elBtnBaixar.style.display = 'none';
+    elBtnAtualizar.style.display = 'none';
     elBtnConectar.style.display = 'none';
     elBtnVerificar.style.display = 'none';
     elBtnAbrir.style.display = 'none';
@@ -155,6 +163,30 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
     el.style.display = 'inline-block';
     el.disabled = false;
     if (handler) el.onclick = handler;
+  }
+
+  // Compara semver "3.0.0" vs "3.0.1" → -1, 0, 1
+  function compararVersoes(a, b) {
+    const pa = (a || '0.0.0').split('.').map(n => parseInt(n, 10) || 0);
+    const pb = (b || '0.0.0').split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < 3; i++) {
+      if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+      if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+    }
+    return 0;
+  }
+
+  async function buscarVersaoAtual() {
+    try {
+      const r = await fetch('/api/v1/agentes/versao-atual', {
+        credentials: 'include',
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.versao || null;
+    } catch (e) {
+      return null;
+    }
   }
 
   async function fetchComTimeout(url, opts) {
@@ -295,18 +327,36 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
     }
 
     if (agente.agente_id) {
-      // Pareado e ativo
-      setStatus(
-        `<strong>✓ Agente já conectado</strong> · ID ${agente.agente_id} · ` +
-        `<span class="muted">versão ${agente.versao}, porta ${agente.porta}</span>`,
-      );
+      // Pareado e ativo — confere se versão tá atualizada
+      const versaoAtual = await buscarVersaoAtual();
+      const desatualizado = versaoAtual && compararVersoes(agente.versao, versaoAtual) < 0;
+
+      let statusHtml = `<strong>✓ Agente já conectado</strong> · ID ${agente.agente_id} · ` +
+        `<span class="muted">versão ${agente.versao}, porta ${agente.porta}</span>`;
+      if (desatualizado) {
+        statusHtml += ` <span style="color:#b45309; font-weight:600;">` +
+          `⚠ atualização disponível: ${versaoAtual}</span>`;
+      }
+      setStatus(statusHtml);
+
       esconderTodosOsBotoes();
-      mostrarBotao(elBtnAbrir, () => fluxoAbrirPlataformas(agente.porta));
-      setMsg(
-        `Tudo pronto. Use o botão acima pra abrir WhatsApp Web + marketplaces, ` +
-        `ou vá direto pro <a href="/dashboard">dashboard</a> / <a href="/lote">Lote</a>.`,
-        'info',
-      );
+      if (desatualizado) {
+        mostrarBotao(elBtnAtualizar);  // <a href="/agentes/instalador">
+        mostrarBotao(elBtnAbrir, () => fluxoAbrirPlataformas(agente.porta));
+        setMsg(
+          `Seu agente está rodando, mas tem uma versão nova disponível ` +
+          `(${versaoAtual}). Clique em "⬆ Atualizar agente" pra baixar o ` +
+          `installer novo. Depois de atualizar, ele preserva a configuração.`,
+          'info',
+        );
+      } else {
+        mostrarBotao(elBtnAbrir, () => fluxoAbrirPlataformas(agente.porta));
+        setMsg(
+          `Tudo pronto. Use o botão acima pra abrir WhatsApp Web + marketplaces, ` +
+          `ou vá direto pro <a href="/dashboard">dashboard</a> / <a href="/lote">Lote</a>.`,
+          'info',
+        );
+      }
       return;
     }
 

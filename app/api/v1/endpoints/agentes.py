@@ -50,6 +50,67 @@ async def criar(
     )
 
 
+# Cache de 5min pra metadata da última release do agente (versão + URL).
+# Evita bater no GitHub API a cada poll do dashboard.
+_VERSAO_CACHE: dict[str, str | float | None] = {
+    "versao": None, "url_download": None, "ate": 0.0,
+}
+_VERSAO_TTL_S = 300
+
+
+@router.get("/versao-atual")
+async def versao_agente_atual(_: Usuario = Depends(usuario_atual)) -> dict:
+    """Retorna metadata da última release publicada do agente desktop.
+
+    Usado pelo dashboard pra detectar se o agente instalado do user está
+    desatualizado. Compara `versao` retornada aqui com a versão que o agente
+    local reporta em `/ping` (campo `versao`).
+
+    Cache local de 5min — evita bater na API do GitHub a cada poll.
+    Retorna `{versao: null, url_download: null}` se não houver release ou
+    se a consulta ao GitHub falhar — caller deve tratar como "ignora".
+    """
+    import time
+    import httpx
+
+    agora = time.time()
+    if _VERSAO_CACHE["versao"] and isinstance(_VERSAO_CACHE["ate"], float) and agora < _VERSAO_CACHE["ate"]:
+        return {
+            "versao":       _VERSAO_CACHE["versao"],
+            "url_download": _VERSAO_CACHE["url_download"],
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as cli:
+            r = await cli.get(
+                "https://api.github.com/repos/silviosvargas/achadinhosv3/releases/latest",
+                headers={"Accept": "application/vnd.github+json"},
+            )
+        if r.status_code == 200:
+            data = r.json()
+            # Tag vem como "agente-vX.Y.Z" — extrai só "X.Y.Z"
+            tag = data.get("tag_name", "") or ""
+            versao = tag.split("agente-v", 1)[-1] if "agente-v" in tag else tag
+            versao = (versao or "").lstrip("v").strip()
+
+            url_dl = None
+            for asset in data.get("assets", []) or []:
+                nome = asset.get("name", "").lower()
+                if nome.endswith(".exe") and "achadinhosagent" in nome:
+                    url_dl = asset.get("browser_download_url")
+                    break
+
+            if versao and url_dl:
+                _VERSAO_CACHE["versao"] = versao
+                _VERSAO_CACHE["url_download"] = url_dl
+                _VERSAO_CACHE["ate"] = agora + _VERSAO_TTL_S
+                return {"versao": versao, "url_download": url_dl}
+    except (httpx.HTTPError, ValueError, KeyError):
+        pass
+
+    return {"versao": None, "url_download": None}
+
+
 @router.get("/download")
 async def download_instalador(_: Usuario = Depends(usuario_atual)) -> dict:
     """
