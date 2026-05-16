@@ -186,6 +186,14 @@ def _item_pra_produto_v3(
         long_link  = (item.get("long_link") or "").strip()
         link_prod  = (item.get("product_link") or "").strip()
 
+        # Diagnóstico: se a API não devolveu long_link, é provável que o
+        # afiliado não tem tag configurada pra essa categoria/produto, ou
+        # algum erro de scope. Sem long_link, servidor cai em fallback
+        # `?utm_source=...` que NÃO rende comissão real.
+        if not long_link:
+            log.debug("shopee.sem_long_link",
+                      item_id=item_id, link_prod=link_prod[:80])
+
         # Comissão = melhor entre as 3 taxas
         comissao = max(
             _parse_pct(item.get("seller_commission_rate", "0%")),

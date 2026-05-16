@@ -218,16 +218,24 @@ async def ingerir_produtos(
     disparador, dono_id = await _resolver_disparador(
         db, org_id=org_id, tarefa_id=tarefa_id, busca_id=busca_id,
     )
-    # Cascata de fallback pra tag de afiliado ML (Fase 13 — multi-marketplace).
-    # Toda lógica de cascata mora em afiliado_service. Aqui só consultamos.
+    # Cascata de fallback pra tag de afiliado por plataforma (Fase 13).
+    # Coleta tags pra TODAS as plataformas que aparecem no lote — usadas
+    # pra validar que `url_afiliado` do agente contém a tag do admin
+    # (senão é link de OUTRA pessoa e a comissão vai pra ela, não pra gente).
     from app.services import afiliado_service
 
-    tag_ml = await afiliado_service.tag_com_cascata(
-        db,
-        plataforma="ml",
-        usuario_id=disparador.id if disparador else None,
-        org_id=org_id,
-    )
+    plataformas_no_lote = {
+        (i.get("plataforma") or "ml").lower() for i in produtos_recebidos
+    }
+    tags_por_plataforma: dict[str, str | None] = {}
+    for plat in plataformas_no_lote:
+        tags_por_plataforma[plat] = await afiliado_service.tag_com_cascata(
+            db,
+            plataforma=plat,
+            usuario_id=disparador.id if disparador else None,
+            org_id=org_id,
+        )
+    tag_ml = tags_por_plataforma.get("ml")   # retrocompat: ainda passamos `tag_ml`
 
     # 2. Carrega mapping categoria → nicho da org (1 query)
     mapping_rows = (await db.execute(
@@ -244,6 +252,7 @@ async def ingerir_produtos(
                 org_id=org_id,
                 dono_id=dono_id,
                 tag_ml=tag_ml,
+                tags_por_plataforma=tags_por_plataforma,
                 item=item,
                 mapping_categoria=mapping,
             )
@@ -366,12 +375,33 @@ async def _resolver_disparador(
     return user, dono_id
 
 
+def _url_afiliado_contem_tag(url: str | None, tag: str | None) -> bool:
+    """
+    True se a URL de afiliado contém a tag esperada (substring case-insensitive).
+
+    Usado pra validar que o `url_afiliado` enviado pelo agente realmente
+    bate com o ID de afiliado configurado no admin — senão a comissão vai
+    pra OUTRA pessoa (o user que estava logado no Chrome do agente quando
+    o linkbuilder rodou).
+
+    Sem tag configurada (None/vazia) → retorna False (cai pro fallback).
+    Sem URL → False.
+    """
+    if not url or not tag:
+        return False
+    tag_norm = tag.strip().lower()
+    if not tag_norm:
+        return False
+    return tag_norm in url.lower()
+
+
 async def _upsert_produto(
     db: AsyncSession,
     *,
     org_id: int,
     dono_id: int | None,
     tag_ml: str | None,
+    tags_por_plataforma: dict[str, str | None] | None = None,
     item: dict[str, Any],
     mapping_categoria: dict[str, int],
 ) -> tuple[bool, bool]:
@@ -402,16 +432,50 @@ async def _upsert_produto(
     # que polui URL canônica e quebra match com meli.la mapping (Fase 15+).
     url_canonica = _limpar_url_canonica(item.get("url_canonica"))
 
-    # Agente v3.0.9+ envia `url_afiliado` JÁ COMO `meli.la/XXX` (linkbuilder
-    # rodado inline no mesmo driver da busca, igual V2). Quando vier, salva
-    # direto. Senão usa fallback genérico `?matt_word=...` do linkbuilder.
+    # Decide url_afiliado:
+    # 1. Agente mandou `url_afiliado` JÁ COM TAG (caso normal):
+    #    - ML: linkbuilder inline gera `meli.la/XXX` antes do ingest
+    #    - Shopee: API afiliados retorna `long_link` (s.shopee.com.br/...)
+    # 2. VALIDA que `url_afiliado` realmente contém a tag do admin
+    #    (senão a comissão vai pra OUTRA pessoa — o user que estava
+    #    logado no Chrome do agente). Sem tag válida → fallback.
+    # 3. Não veio nada / igual à canônica / tag não bate → fallback
+    #    `?matt_word=...&utm_source=...` do linkbuilder do servidor.
+    tag_esperada = (tags_por_plataforma or {}).get(plataforma)
     url_afiliado_agente = (item.get("url_afiliado") or "").strip() or None
-    if url_afiliado_agente and "meli.la/" in url_afiliado_agente:
+
+    aceita_url_agente = (
+        url_afiliado_agente is not None
+        and url_afiliado_agente != url_canonica
+        and (
+            # Shorteners oficiais — confiamos sem validar tag porque a
+            # redirect interna do ML/Shopee aplica a tag implícita.
+            "meli.la/" in url_afiliado_agente
+            or "s.shopee.com.br/" in url_afiliado_agente
+            or "shp.ee/" in url_afiliado_agente
+            or "amzn.to/" in url_afiliado_agente
+            # URL de marketplace com tag visível na query — valida substring
+            or _url_afiliado_contem_tag(url_afiliado_agente, tag_esperada)
+        )
+    )
+
+    if aceita_url_agente:
         url_afiliado = url_afiliado_agente
+        log.debug("ingest.url_afiliado_do_agente",
+                  plataforma=plataforma, item_id=item_id,
+                  url_afiliado=url_afiliado_agente[:120])
     else:
         url_afiliado = linkbuilder.gerar_url_afiliado(
-            plataforma=plataforma, url_canonica=url_canonica, tag=tag_ml,
+            plataforma=plataforma, url_canonica=url_canonica, tag=tag_esperada,
         )
+        if url_afiliado_agente:
+            motivo = "tag_nao_bate" if url_afiliado_agente != url_canonica else "igual_a_canonica"
+        else:
+            motivo = "agente_nao_enviou"
+        log.info("ingest.url_afiliado_fallback",
+                 plataforma=plataforma, item_id=item_id,
+                 motivo=motivo, tag_esperada=tag_esperada,
+                 url_afiliado_agente=(url_afiliado_agente or "")[:120])
 
     if existente is None:
         produto = Produto(
@@ -447,14 +511,12 @@ async def _upsert_produto(
         produto.frete_gratis = bool(item.get("frete_gratis", produto.frete_gratis))
         if url_canonica:
             produto.url_canonica = url_canonica
-            # Atualiza url_afiliado se: já tinha meli.la (preserva), OU
-            # se o agente mandou meli.la novo, OU fallback se não tem nada melhor.
-            if "meli.la/" in (produto.url_afiliado or ""):
-                # Mantém meli.la antigo se agente não mandou novo
-                if url_afiliado_agente and "meli.la/" in url_afiliado_agente:
-                    produto.url_afiliado = url_afiliado_agente
-            else:
-                produto.url_afiliado = url_afiliado
+            # Regra de atualização do url_afiliado:
+            # - Se o agente mandou link VÁLIDO (passou na validação acima):
+            #   sobrescreve o que tinha no DB.
+            # - Senão, recalcula o fallback com a tag atual do admin
+            #   (em caso de o admin ter trocado de afiliado no meio).
+            produto.url_afiliado = url_afiliado
         if item.get("foto_url"):
             produto.foto_url = item["foto_url"]
         criou = False
