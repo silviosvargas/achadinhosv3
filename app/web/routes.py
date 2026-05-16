@@ -1935,17 +1935,24 @@ async def personalizado_postar_todos(
 async def pagina_curadoria_top(
     request: Request,
     nota_min: float = 30.0,
+    limite:   int   = 30,
     user: Usuario = Depends(exigir_login),
     db:   AsyncSession = Depends(get_db_async),
 ):
     """Página completa do TOP por nota.
 
     Lê `produtos.nota` direto — sem snapshot, sem beat task. Always live.
+    A query já filtra produtos postados nos últimos 7 dias
+    (`JANELA_DEDUP_DIAS`), então recarregar a página = atualizar com produtos
+    "frescos" automaticamente.
     """
     from app.services import curadoria_service
 
+    # Clamp do limite pra evitar abuso
+    limite = max(10, min(100, limite))
+
     produtos, fonte = await curadoria_service.listar_top_com_fallback(
-        db, org_id=user.org_id, limite=50, nota_minima=nota_min,
+        db, org_id=user.org_id, limite=limite, nota_minima=nota_min,
     )
 
     return templates.TemplateResponse(
@@ -1955,6 +1962,7 @@ async def pagina_curadoria_top(
             "produtos": produtos,
             "fonte":    fonte,
             "nota_min": nota_min,
+            "limite":   limite,
             "mensagem": request.query_params.get("mensagem"),
             "erro":     request.query_params.get("erro"),
         },
@@ -1992,6 +2000,33 @@ async def curadoria_postar_um(
         )
     else:
         msg = f"erro={quote_plus(resultado.get('erro', 'erro_desconhecido'))}"
+    return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
+
+
+@router.post("/curadoria/top/{produto_id}/excluir", response_class=HTMLResponse)
+async def curadoria_excluir_produto(
+    produto_id: int,
+    admin: Usuario = Depends(exigir_admin),
+    db:    AsyncSession = Depends(get_db_async),
+):
+    """Admin: exclui produto direto do TOP. Reusa CASCADE do DB pra
+    apagar produto_nichos + redirects (definido nos models).
+    """
+    from urllib.parse import quote_plus
+
+    produto = await db.get(Produto, produto_id)
+    if produto is None or produto.org_id != admin.org_id:
+        msg = "erro=" + quote_plus("Produto não encontrado nesta organização")
+        return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
+
+    nome_curto = (produto.nome or "")[:60]
+    try:
+        await db.delete(produto)
+        await db.commit()
+        msg = "mensagem=" + quote_plus(f"Produto excluído: {nome_curto}")
+    except Exception as e:
+        await db.rollback()
+        msg = "erro=" + quote_plus(f"Falha ao excluir: {str(e)[:120]}")
     return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
 
 

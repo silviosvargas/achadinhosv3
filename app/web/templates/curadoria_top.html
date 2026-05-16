@@ -41,10 +41,16 @@
       <input type="number" name="nota_min" value="{{ nota_min|int }}"
              min="0" max="100" step="5"
              style="height:32px; width:70px; font-size:13px; padding:0 8px;">
+      <input type="hidden" name="limite" value="{{ limite }}">
       <button type="submit" class="btn" style="height:32px; padding:0 12px; font-size:13px;">
         filtrar
       </button>
     </form>
+    <a href="/curadoria/top?nota_min={{ nota_min|int }}&limite={{ limite }}"
+       class="btn btn-primario" style="height:32px; padding:0 12px; font-size:13px;"
+       title="Recarrega a lista — produtos postados nos últimos 7 dias saem automaticamente e novos entram conforme nota DESC">
+      🔄 Atualizar TOP
+    </a>
     {% if user.eh_admin %}
     <form method="post" action="/curadoria/recalcular-notas" style="display:inline"
           data-confirm="Re-aplicar fórmula de nota em TODOS os produtos da org? Útil após mudança de pesos ou primeira vez após deploy."
@@ -171,6 +177,17 @@
            class="btn produto-btn-icon" title="Abrir produto" style="height:34px;">
           🔗
         </a>
+        {% endif %}
+        {% if user.eh_admin %}
+        <form method="post" action="/curadoria/top/{{ p.id }}/excluir" style="display:inline"
+              data-confirm="Excluir DEFINITIVAMENTE este produto do catálogo?&#10;&#10;{{ p.nome[:60]|e }}&#10;&#10;Apaga nichos vinculados e shortlink — não tem volta."
+              data-confirm-titulo="Excluir produto?"
+              data-confirm-ok="🗑️ Sim, excluir">
+          <button type="submit" class="btn produto-btn-icon" title="Excluir produto"
+                  style="height:34px; color:#dc2626; border-color:#fca5a5;">
+            🗑️
+          </button>
+        </form>
         {% endif %}
       </div>
     </div>
