@@ -1473,6 +1473,18 @@ async def _coletar_produtos_ml(
                 cfg, candidatos_por_categoria=candidatos_por_cat,
                 tarefa_id=msg.get("tarefa_id"),
             )
+        elif tipo_busca == "padrao_comissao_extra":
+            # v3.8.0 — busca padrão SÓ produtos com bônus GANHOS EXTRAS
+            # (promoção Mais por Mais ML). Para de buscar ao juntar
+            # `alvo_total` (default 10).
+            from agent.busca_padrao_ml import varrer_padrao_comissao_extra
+            candidatos_por_cat = int(msg.get("candidatos_por_categoria", 30))
+            alvo_total         = int(msg.get("alvo_total", 10))
+            produtos = await varrer_padrao_comissao_extra(
+                cfg, candidatos_por_categoria=candidatos_por_cat,
+                alvo_total=alvo_total,
+                tarefa_id=msg.get("tarefa_id"),
+            )
         elif tipo_busca == "mais_vendidos":
             produtos = await asyncio.to_thread(
                 _varrer_mais_vendidos_sync, cfg, max_produtos=max_produtos,

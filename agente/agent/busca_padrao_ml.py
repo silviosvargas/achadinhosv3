@@ -57,18 +57,27 @@ CATEGORIAS_PADRAO = [
 TOP_FINAL_POR_CATEGORIA = 10
 
 
-def _capturar_comissao_e_preco_no_destino(driver) -> tuple[float | None, float | None]:
+def _capturar_comissao_e_preco_no_destino(
+    driver,
+) -> tuple[float | None, float | None, float | None]:
     """Captura comissão (barra preta) + preço atual via JS na página atual.
 
-    Pré-condição: driver já está na página DO PRODUTO (após meli.la →
-    /social/ → clicar "Ir para produto"). NÃO chamar em /social/.
+    Pré-condição: driver já está na página DO PRODUTO (URL canônica aberta
+    direto — Chrome do agente logado como afiliado mostra a barra preta).
 
     Returns:
-        (comissao_pct, preco) — qualquer um pode ser None se não achou.
-        Comissão: prefere "GANHOS EXTRAS X%" sobre "GANHOS X%" base.
+        (comissao_efetiva, comissao_extra, preco)
+        - comissao_efetiva: % final paga (EXTRAS se houver, senão BASE). None se nada.
+        - comissao_extra:   % do bônus EXTRAS quando presente. None se sem bônus.
+        - preco:            preço atual (excluindo riscado). None se não capturou.
+
+        v3.8.0: passou a retornar tupla de 3 (antes 2). Quem chama precisa
+        atualizar pra desempacotar `comissao_extra` separadamente — usado pela
+        busca padrão `padrao_comissao_extra` que filtra só os com bônus.
     """
     dados = driver.execute_script(r"""
-        // Helper: busca GANHOS [EXTRAS] X% no texto, prefere EXTRAS
+        // Helper: busca GANHOS [EXTRAS] X% no texto. Retorna extras E base
+        // separados (chamador decide qual usar).
         function buscarComissao(scopo) {
             var res = {extras: null, base: null};
             var txt = scopo.textContent || '';
@@ -103,7 +112,6 @@ def _capturar_comissao_e_preco_no_destino(driver) -> tuple[float | None, float |
         if (melhorCom.extras === null && melhorCom.base === null) {
             melhorCom = buscarComissao(document.body);
         }
-        var comissao = melhorCom.extras !== null ? melhorCom.extras : melhorCom.base;
 
         // Captura preço atual — XPath excluindo <s> (riscado) pra não pegar o original
         var preco = null;
@@ -129,20 +137,26 @@ def _capturar_comissao_e_preco_no_destino(driver) -> tuple[float | None, float |
             }
         }
 
-        return {comissao: comissao, preco: preco};
+        return {extras: melhorCom.extras, base: melhorCom.base, preco: preco};
     """) or {}
 
-    com = dados.get("comissao")
-    pre = dados.get("preco")
-    try:
-        com = float(com) if com is not None else None
-    except (TypeError, ValueError):
-        com = None
-    try:
-        pre = float(pre) if pre is not None else None
-    except (TypeError, ValueError):
-        pre = None
-    return com, pre
+    extras_raw = dados.get("extras")
+    base_raw   = dados.get("base")
+    pre_raw    = dados.get("preco")
+
+    def _to_float(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    extras_pct = _to_float(extras_raw)
+    base_pct   = _to_float(base_raw)
+    preco      = _to_float(pre_raw)
+
+    # Efetiva = extras se tem, base senão
+    efetiva = extras_pct if extras_pct is not None else base_pct
+    return efetiva, extras_pct, preco
 
 
 def _entrar_produto_via_meli_la(driver, meli_la_url: str) -> bool:
@@ -290,11 +304,14 @@ def _processar_categoria(
         except Exception:
             continue
 
-        com_real, preco_real = _capturar_comissao_e_preco_no_destino(driver)
+        com_real, com_extra, preco_real = _capturar_comissao_e_preco_no_destino(driver)
 
         if com_real and com_real > 0:
             p["comissao"]       = com_real
             p["comissao_fonte"] = "ml_barra_afiliados"
+            # Marca o bônus EXTRAS quando presente (None se sem bônus).
+            # Servidor usa pra filtro `comissao_extra IS NOT NULL`.
+            p["comissao_extra"] = com_extra
             capturados_total.append(p)
             buffer_sem_meli.append(p)
         if preco_real and preco_real > 0 and abs(preco_real - (p.get("preco") or 0)) > 0.01:
@@ -307,6 +324,7 @@ def _processar_categoria(
                  n=i, total=len(candidatos),
                  item_id=p.get("item_id"),
                  comissao=p.get("comissao"),
+                 extra=p.get("comissao_extra"),
                  fonte=p.get("comissao_fonte"),
                  preco=p.get("preco"))
 
@@ -471,5 +489,252 @@ async def varrer_padrao_completo(
     return await asyncio.to_thread(
         _varrer_padrao_completo_sync, cfg,
         candidatos_por_categoria=candidatos_por_categoria,
+        tarefa_id=tarefa_id,
+    )
+
+
+# ============================================================
+# Busca padrão: SÓ produtos com bônus EXTRAS (v3.8.0)
+# ============================================================
+
+def _processar_categoria_para_extras(
+    driver, *, nome_categoria: str, url_categoria: str,
+    candidatos_por_categoria: int, faltam: int,
+    tarefa_id: int | str | None = None,
+) -> list[dict[str, Any]]:
+    """Igual `_processar_categoria` mas:
+    1. Filtra: só mantém produtos com `comissao_extra > 0` (bônus GANHOS EXTRAS).
+    2. Para ao juntar `faltam` produtos válidos.
+    3. Gera meli.la INCREMENTAL (a cada N) só pros COM extras.
+
+    Returns: lista de produtos com extras, no máximo `faltam`.
+    """
+    from agent.busca_ml import (
+        _extrair_cards_da_pagina,
+        _gerar_meli_la_no_driver,
+        _bloqueado_por_login,
+        _scroll_lazy_load,
+    )
+    from agent import cancelamento
+
+    log.info("ml.padrao_extra.categoria_iniciada",
+             nome=nome_categoria, url=url_categoria,
+             candidatos_alvo=candidatos_por_categoria, faltam=faltam)
+
+    try:
+        driver.get(url_categoria)
+    except Exception as e:
+        log.warning("ml.padrao_extra.get_categoria_falhou",
+                    nome=nome_categoria, erro=str(e)[:120])
+        return []
+
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+    except TimeoutException:
+        log.warning("ml.padrao_extra.timeout_categoria", nome=nome_categoria)
+        return []
+
+    if _bloqueado_por_login(driver.current_url):
+        raise RuntimeError(
+            f"ML exige login na busca padrão extras ({nome_categoria}). "
+            "Rode `python -m agent.login_ml` uma vez."
+        )
+
+    _scroll_lazy_load(driver)
+    candidatos = _extrair_cards_da_pagina(driver)
+    candidatos = candidatos[:candidatos_por_categoria]
+    if not candidatos:
+        log.warning("ml.padrao_extra.categoria_vazia", nome=nome_categoria)
+        return []
+
+    for p in candidatos:
+        p["categoria"] = nome_categoria
+        p["is_bestseller"] = True
+
+    BATCH_LINKBUILDER = 5  # batch menor — total esperado é pequeno (~10)
+
+    com_extras: list[dict] = []        # acumula só os com bônus EXTRAS
+    buffer_sem_meli: list[dict] = []    # com extras que ainda não tiveram meli.la
+
+    for i, p in enumerate(candidatos, start=1):
+        if cancelamento.foi_cancelada(tarefa_id):
+            log.info("ml.padrao_extra.cancelada_durante_captura",
+                     tarefa_id=tarefa_id, nome=nome_categoria,
+                     com_extras_ate_aqui=len(com_extras))
+            break
+
+        if len(com_extras) >= faltam:
+            log.info("ml.padrao_extra.alvo_atingido",
+                     nome=nome_categoria, total=len(com_extras))
+            break
+
+        url_can = p.get("url_canonica") or ""
+        if not url_can:
+            continue
+
+        try:
+            driver.get(url_can)
+            time.sleep(1.5)
+        except Exception:
+            continue
+
+        com_real, com_extra, preco_real = _capturar_comissao_e_preco_no_destino(driver)
+
+        # FILTRO PRINCIPAL: só mantém se tem bônus EXTRAS > 0
+        if not (com_extra and com_extra > 0):
+            log.debug("ml.padrao_extra.sem_bonus",
+                      item_id=p.get("item_id"), com_efetiva=com_real)
+            continue
+
+        p["comissao"]       = com_real
+        p["comissao_extra"] = com_extra
+        p["comissao_fonte"] = "ml_barra_afiliados"
+        if preco_real and preco_real > 0:
+            p["preco"] = preco_real
+
+        com_extras.append(p)
+        buffer_sem_meli.append(p)
+
+        log.info("ml.padrao_extra.captura_com_bonus",
+                 n=i, total=len(candidatos),
+                 com_extras=len(com_extras), alvo=faltam,
+                 item_id=p.get("item_id"),
+                 comissao=p.get("comissao"),
+                 extra=com_extra, preco=p.get("preco"))
+
+        if len(buffer_sem_meli) >= BATCH_LINKBUILDER:
+            log.info("ml.padrao_extra.gerando_meli_la_lote",
+                     nome=nome_categoria, tamanho=len(buffer_sem_meli))
+            _gerar_meli_la_no_driver(
+                driver, buffer_sem_meli,
+                log_prefixo=f"ml.padrao_extra[{nome_categoria}]",
+            )
+            buffer_sem_meli = []
+
+        time.sleep(random.uniform(0.3, 0.6))
+
+    # Resto do buffer (parcial ou alvo atingido) — gera meli.la garantido
+    if buffer_sem_meli:
+        log.info("ml.padrao_extra.gerando_meli_la_resto",
+                 nome=nome_categoria, tamanho=len(buffer_sem_meli))
+        _gerar_meli_la_no_driver(
+            driver, buffer_sem_meli,
+            log_prefixo=f"ml.padrao_extra[{nome_categoria}].resto",
+        )
+
+    log.info("ml.padrao_extra.categoria_concluida",
+             nome=nome_categoria,
+             candidatos=len(candidatos),
+             com_extras=len(com_extras))
+    return com_extras[:faltam]
+
+
+def _varrer_padrao_comissao_extra_sync(
+    cfg: Config, *, candidatos_por_categoria: int = 30,
+    alvo_total: int = 10, tarefa_id: int | str | None = None,
+) -> list[dict[str, Any]]:
+    """Itera CATEGORIAS_PADRAO até juntar `alvo_total` produtos com bônus
+    GANHOS EXTRAS. Para cedo (não passa por todas categorias se já achou N).
+    """
+    from agent.busca_ml import _criar_driver_ml
+    from agent.linkbuilder_ml import _LOCK_CHROME_ML
+    from agent import ws_progresso, cancelamento
+
+    total_cat = len(CATEGORIAS_PADRAO)
+    log.info("ml.padrao_extra.iniciando",
+             categorias=total_cat, alvo_total=alvo_total,
+             candidatos_por_categoria=candidatos_por_categoria,
+             tarefa_id=tarefa_id)
+    ws_progresso.reportar(tarefa_id, 0.0,
+                          f"Buscando {alvo_total} produtos com comissão EXTRA…")
+
+    cancelada = False
+    with _LOCK_CHROME_ML:
+        driver = _criar_driver_ml(cfg)
+        todos: list[dict[str, Any]] = []
+        try:
+            for i, (nome, url, _com_est) in enumerate(CATEGORIAS_PADRAO, start=1):
+                if cancelamento.foi_cancelada(tarefa_id):
+                    log.info("ml.padrao_extra.cancelada", tarefa_id=tarefa_id,
+                             concluido_ate=i-1, total=total_cat)
+                    ws_progresso.reportar(
+                        tarefa_id, ((i - 1) / total_cat) * 100.0,
+                        f"⏹ Cancelado após {i-1}/{total_cat} categorias — {len(todos)} com EXTRAS",
+                    )
+                    cancelada = True
+                    break
+
+                faltam = alvo_total - len(todos)
+                if faltam <= 0:
+                    log.info("ml.padrao_extra.alvo_global_atingido",
+                             total=len(todos), categorias_visitadas=i-1)
+                    # Reporta 100% explicitamente — pulou as categorias restantes
+                    break
+
+                pct_inicio = ((i - 1) / total_cat) * 100.0
+                ws_progresso.reportar(
+                    tarefa_id, pct_inicio,
+                    f"Categoria {i}/{total_cat}: {nome} ({len(todos)}/{alvo_total} já com EXTRAS)",
+                )
+                log.info("ml.padrao_extra.categoria",
+                         n=i, total=total_cat, nome=nome, faltam=faltam)
+                try:
+                    achados = _processar_categoria_para_extras(
+                        driver,
+                        nome_categoria=nome,
+                        url_categoria=url,
+                        candidatos_por_categoria=candidatos_por_categoria,
+                        faltam=faltam,
+                        tarefa_id=tarefa_id,
+                    )
+                    todos.extend(achados)
+                except Exception as e:
+                    log.exception("ml.padrao_extra.categoria_crash",
+                                  nome=nome, erro=str(e)[:200])
+                    continue
+
+                if cancelamento.foi_cancelada(tarefa_id):
+                    cancelada = True
+                    ws_progresso.reportar(
+                        tarefa_id, (i / total_cat) * 100.0,
+                        f"⏹ Cancelado durante categoria {i}/{total_cat} — {len(todos)} com EXTRAS",
+                    )
+                    break
+
+                pct_fim = (i / total_cat) * 100.0
+                ws_progresso.reportar(
+                    tarefa_id, pct_fim,
+                    f"Categoria {i}/{total_cat} OK — {len(todos)}/{alvo_total} com EXTRAS",
+                )
+        finally:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+    cancelamento.consumir(tarefa_id)
+
+    if not cancelada:
+        ws_progresso.reportar(
+            tarefa_id, 100.0,
+            f"Concluído — {len(todos)} produtos com comissão EXTRA",
+        )
+    log.info("ml.padrao_extra.concluido",
+             produtos_finais=len(todos), alvo=alvo_total, cancelada=cancelada)
+    return todos[:alvo_total]
+
+
+async def varrer_padrao_comissao_extra(
+    cfg: Config, *, candidatos_por_categoria: int = 30,
+    alvo_total: int = 10, tarefa_id: int | str | None = None,
+) -> list[dict[str, Any]]:
+    """Async wrapper — roda Selenium em thread separada."""
+    return await asyncio.to_thread(
+        _varrer_padrao_comissao_extra_sync, cfg,
+        candidatos_por_categoria=candidatos_por_categoria,
+        alvo_total=alvo_total,
         tarefa_id=tarefa_id,
     )
