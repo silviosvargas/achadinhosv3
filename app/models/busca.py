@@ -50,7 +50,12 @@ class BuscaML(Base, TimestampMixin):
 
     nome:     Mapped[str] = mapped_column(String(150))
     entrada:  Mapped[str] = mapped_column(String(2000),
-        comment="Termo livre ('fone bluetooth') ou URL do ML")
+        comment="Termo livre ('fone bluetooth'), URL do ML, ou '[tipo]' pros automáticos")
+    # Fase 16: tipo da busca + marketplaces escolhidos
+    tipo:         Mapped[str] = mapped_column(String(30), default="termo_livre",
+        comment="termo_livre | por_url | mais_vendidos | melhor_comissao | em_alta")
+    marketplaces: Mapped[str] = mapped_column(String(200), default='["ml"]',
+        comment='JSON array com slugs dos marketplaces. Ex: ["ml","shopee"]')
     max_paginas:  Mapped[int] = mapped_column(Integer, default=3)
     max_produtos: Mapped[int] = mapped_column(Integer, default=50)
 

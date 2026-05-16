@@ -1536,19 +1536,77 @@ async def nova_busca_form(
     )
 
 
+_TIPOS_BUSCA_VALIDOS = {
+    "termo_livre", "por_url", "mais_vendidos", "melhor_comissao", "em_alta",
+}
+_MARKETPLACES_SUPORTADOS = {"ml"}  # Fase 16.1: só ML por enquanto. Outros: stub.
+
+
 @router.post("/buscas/nova", response_class=HTMLResponse)
 async def criar_busca_form(
     request: Request,
-    nome:    str = Form(...),
-    entrada: str = Form(...),
+    nome:         str = Form(...),
+    tipo:         str = Form(default="termo_livre"),
+    marketplaces: list[str] = Form(default=[]),
+    termo:        str = Form(default=""),
+    url_produto:  str = Form(default=""),
     max_paginas:  int = Form(default=3),
     max_produtos: int = Form(default=50),
-    agente_id: str = Form(default=""),
+    agente_id:    str = Form(default=""),
     intervalo_minutos: str = Form(default=""),
-    ativo: str = Form(default=""),
+    ativo:        str = Form(default=""),
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Cria busca (Fase 16: multi-marketplace + tipos de busca).
+
+    Tipos suportados:
+    - termo_livre   → varre páginas de resultado por palavra-chave
+    - por_url       → 1 produto específico (busca personalizada)
+    - mais_vendidos → URLs hardcoded de "best sellers" por categoria
+    - melhor_comissao, em_alta → roadmap (cria a busca mas devolve aviso)
+    """
+    import json
+    from app.web.routes import _render_busca_form_erro  # forward ref
+
+    # Validação de tipo
+    tipo = (tipo or "").strip().lower()
+    if tipo not in _TIPOS_BUSCA_VALIDOS:
+        return await _render_busca_form_erro(
+            request, db, user, f"Tipo '{tipo}' inválido.",
+        )
+
+    # Marketplaces: filtra suportados (Fase 16.1 só ML está funcional)
+    marketplaces_pedidos = [m for m in marketplaces if m]
+    marketplaces_validos = [m for m in marketplaces_pedidos if m in _MARKETPLACES_SUPORTADOS]
+    if not marketplaces_validos:
+        return await _render_busca_form_erro(
+            request, db, user,
+            "Selecione pelo menos um marketplace suportado. "
+            "Por enquanto apenas Mercado Livre tem scraper ativo; outros "
+            "marketplaces ficam na próxima fase.",
+        )
+
+    # Por enquanto entrada compatível com schema antigo: termo OU URL.
+    # Pra tipo "termo_livre" usa o termo; pra "por_url" usa a URL; pros
+    # automáticos (mais_vendidos/melhor_comissao/em_alta), entrada vira o
+    # próprio nome do tipo (scraper decide o que fazer).
+    if tipo == "termo_livre":
+        entrada = (termo or "").strip()
+        if not entrada:
+            return await _render_busca_form_erro(
+                request, db, user, "Termo de busca obrigatório.",
+            )
+    elif tipo == "por_url":
+        entrada = (url_produto or "").strip()
+        if not entrada or not entrada.startswith(("http://", "https://")):
+            return await _render_busca_form_erro(
+                request, db, user, "URL do produto inválida (precisa começar com http(s)://).",
+            )
+    else:
+        # Automáticos não precisam de entrada do user
+        entrada = f"[{tipo}]"
+
     # Parse agente_id
     aid: int | None = None
     if agente_id.strip():
@@ -1574,8 +1632,10 @@ async def criar_busca_form(
         criado_por_usuario_id=user.id,
         agente_id=aid,
         nome=nome.strip()[:150],
-        entrada=entrada.strip()[:2000],
-        max_paginas=max(1, min(20, max_paginas)),
+        entrada=entrada[:2000],
+        tipo=tipo,
+        marketplaces=json.dumps(marketplaces_validos),
+        max_paginas=max(1, min(20, max_paginas)) if tipo != "por_url" else 1,
         max_produtos=max(1, min(500, max_produtos)),
         intervalo_minutos=intervalo,
         ativo=bool(ativo),
@@ -1584,6 +1644,20 @@ async def criar_busca_form(
     db.add(nova)
     await db.commit()
     return RedirectResponse(url="/buscas?mensagem=Busca+criada", status_code=302)
+
+
+async def _render_busca_form_erro(
+    request: Request, db: AsyncSession, user: Usuario, msg: str,
+):
+    """Re-renderiza /buscas/nova com mensagem de erro."""
+    agentes = list((await db.execute(
+        select(Agente).where(Agente.org_id == user.org_id).order_by(Agente.id)
+    )).scalars().all())
+    return templates.TemplateResponse(
+        request, "busca_form.html",
+        {"user": user, "agentes": agentes, "erro": msg},
+        status_code=400,
+    )
 
 
 @router.post("/buscas/{busca_id}/rodar", response_class=HTMLResponse)

@@ -1,44 +1,96 @@
 {% extends "base.html" %}
-{% block titulo %}Nova busca ML{% endblock %}
+{% block titulo %}Nova busca{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Nova busca Mercado Livre</h1>
+  <h1>Nova busca</h1>
   <p class="muted"><a href="/buscas">← voltar</a></p>
 </header>
 
 {% if erro %}
-<div class="alerta alerta-erro">{{ erro }}</div>
+<div class="alerta alerta-erro" style="margin-bottom:12px;">{{ erro }}</div>
 {% endif %}
 
-<form method="post" action="/buscas/nova" class="form-vertical">
+<form method="post" action="/buscas/nova" class="form-vertical" style="max-width:720px;">
+
+  {# ── Tipo de busca ─────────────────────────────────────────── #}
+  <label>
+    Tipo de busca
+    <select name="tipo" id="tipo" required onchange="atualizarCampos()">
+      <option value="termo_livre">🔎 Termo livre (palavra-chave)</option>
+      <option value="por_url">🔗 Por URL/link de produto (busca personalizada)</option>
+      <option value="mais_vendidos">📈 Mais vendidos por categoria</option>
+      <option value="melhor_comissao">💰 Melhor comissão</option>
+      <option value="em_alta">🔥 Produtos em alta</option>
+    </select>
+  </label>
+
+  {# ── Marketplaces ──────────────────────────────────────────── #}
+  <fieldset style="border:1px solid #e5e7eb; border-radius:8px; padding:12px 16px;">
+    <legend style="padding:0 8px; font-weight:600;">Buscar em quais marketplaces?</legend>
+    <div style="display:flex; flex-wrap:wrap; gap:14px;">
+      {% set _marketplaces = [
+        ('ml', 'Mercado Livre', '🛒', true),
+        ('shopee', 'Shopee', '🛍️', false),
+        ('amazon', 'Amazon', '📦', false),
+        ('magalu', 'Magazine Luiza', '🌟', false),
+        ('aliexpress', 'AliExpress', '🌏', false),
+        ('tiktok', 'TikTok Shop', '🎵', false),
+      ] %}
+      {% for slug, nome, icone, suportado in _marketplaces %}
+      <label class="check-inline" style="cursor:pointer;
+             {% if not suportado %}color:#9ca3af;{% endif %}"
+             title="{% if not suportado %}Em desenvolvimento — disponível em breve{% endif %}">
+        <input type="checkbox" name="marketplaces" value="{{ slug }}"
+               {% if slug == 'ml' %}checked{% endif %}
+               {% if not suportado %}disabled{% endif %}>
+        {{ icone }} {{ nome }}
+        {% if not suportado %}<small>(em prep)</small>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  {# ── Nome descritivo ──────────────────────────────────────── #}
   <label>
     Nome (descritivo, só pra você)
     <input type="text" name="nome" required maxlength="150"
            placeholder="Ofertas de fone bluetooth">
   </label>
 
-  <label>
-    Entrada — termo ou URL do ML
-    <textarea name="entrada" required rows="2"
-              placeholder="fone bluetooth   OU   https://lista.mercadolivre.com.br/fone-bluetooth_FretGratis_yes"></textarea>
+  {# ── Campo dinâmico: termo livre ──────────────────────────── #}
+  <label id="campo-termo">
+    Termo de busca
+    <input type="text" name="termo" maxlength="200"
+           placeholder="fone bluetooth, kit ferramentas, perfume importado…">
+    <span class="muted small">Palavra-chave simples. Aplicada igual em todos os marketplaces marcados.</span>
+  </label>
+
+  {# ── Campo dinâmico: URL/link ─────────────────────────────── #}
+  <label id="campo-url" style="display:none;">
+    URL do produto (link copiado do marketplace)
+    <input type="url" name="url_produto" maxlength="2000"
+           placeholder="https://www.mercadolivre.com.br/iphone-17...">
     <span class="muted small">
-      Termo simples ("fone bluetooth") ou URL completa do ML já com filtros aplicados.
-      Detecção automática pelo prefixo http(s)://.
+      Cola UM link de produto. Sistema detecta marketplace pelo domínio,
+      extrai dados e gera o link de afiliado na hora.
     </span>
   </label>
 
+  {# ── Limites ─────────────────────────────────────────────── #}
   <div class="form-row">
-    <label>
+    <label id="campo-max-paginas">
       Máx. páginas (1–20)
       <input type="number" name="max_paginas" value="3" min="1" max="20">
     </label>
     <label>
       Máx. produtos (1–500)
       <input type="number" name="max_produtos" value="50" min="1" max="500">
+      <span class="muted small">Distribuído entre os marketplaces escolhidos.</span>
     </label>
   </div>
 
+  {# ── Agente + agendamento ─────────────────────────────────── #}
   <label>
     Agente que executa
     <select name="agente_id">
@@ -49,14 +101,15 @@
         </option>
       {% endfor %}
     </select>
-    <span class="muted small">Selene um agente específico se quiser fixar onde roda.</span>
   </label>
 
   <label>
     Intervalo de execução (minutos)
-    <input type="number" name="intervalo_minutos" min="15" placeholder="(vazio = só manual)">
+    <input type="number" name="intervalo_minutos" min="15"
+           placeholder="(vazio = só manual)">
     <span class="muted small">
-      Vazio = roda só quando você clicar "rodar". Mínimo 15 min se preencher.
+      Vazio = roda só quando você clicar. Mínimo 15 min se preencher.
+      Recomendado: 360 (6h) pra refresh diário de "mais vendidos".
     </span>
   </label>
 
@@ -66,5 +119,50 @@
 
   <button type="submit" class="btn btn-primario">Criar busca</button>
 </form>
+
+{# Texto explicativo abaixo #}
+<details style="margin-top:24px;">
+  <summary style="cursor:pointer; color:#6b7280;">Como funcionam os tipos de busca?</summary>
+  <div class="muted small" style="margin-top:8px; max-width:680px;">
+    <ul>
+      <li><strong>Termo livre</strong>: você dá uma palavra-chave, o agente
+        varre páginas de resultado de cada marketplace marcado.</li>
+      <li><strong>Por URL/link</strong>: cola um link de produto específico
+        (de qualquer marketplace suportado). Sistema gera o link de afiliado
+        e salva como produto privado seu.</li>
+      <li><strong>Mais vendidos por categoria</strong>: agente abre as páginas
+        "best sellers" do marketplace (ML tem 8 categorias hardcoded, Amazon 10).</li>
+      <li><strong>Melhor comissão</strong>: agente filtra por comissão alta
+        (Shopee tem API; ML/Amazon usam aproximação por categoria).</li>
+      <li><strong>Produtos em alta</strong>: tendências, lançamentos. Em prep.</li>
+    </ul>
+    <p>Cada busca <strong>atualiza</strong> produtos que já existem (preço,
+    disponibilidade, comissão), além de criar os novos. Use intervalo de
+    execução pra manter catálogo fresco automaticamente.</p>
+  </div>
+</details>
+
+<script>
+// Mostra/esconde campos dinâmicos baseado no tipo de busca selecionado.
+function atualizarCampos() {
+  const tipo = document.getElementById('tipo').value;
+  const campoTermo = document.getElementById('campo-termo');
+  const campoUrl = document.getElementById('campo-url');
+  const campoMaxPaginas = document.getElementById('campo-max-paginas');
+
+  // Termo só pra "termo_livre"
+  campoTermo.style.display = (tipo === 'termo_livre') ? '' : 'none';
+  // URL só pra "por_url"
+  campoUrl.style.display = (tipo === 'por_url') ? '' : 'none';
+  // Por URL é 1 produto só, não tem páginas
+  campoMaxPaginas.style.display = (tipo === 'por_url') ? 'none' : '';
+
+  // Ajusta required
+  campoTermo.querySelector('input').required = (tipo === 'termo_livre');
+  campoUrl.querySelector('input').required = (tipo === 'por_url');
+}
+// Inicializa no load
+atualizarCampos();
+</script>
 
 {% endblock %}

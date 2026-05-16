@@ -87,6 +87,15 @@ async def enfileirar_execucao(
 
     tipo_entrada = detectar_tipo_entrada(busca.entrada)
 
+    # Fase 16: parseia marketplaces (JSON string no DB) pra lista no payload
+    import json as _json
+    try:
+        marketplaces_list = _json.loads(busca.marketplaces or '["ml"]')
+        if not isinstance(marketplaces_list, list):
+            marketplaces_list = ["ml"]
+    except (_json.JSONDecodeError, TypeError):
+        marketplaces_list = ["ml"]
+
     tarefa = Tarefa(
         org_id=org_id,
         tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
@@ -99,6 +108,9 @@ async def enfileirar_execucao(
             "max_paginas":   busca.max_paginas,
             "max_produtos":  busca.max_produtos,
             "disparado_por": disparado_por,
+            # Fase 16: agente decide URLs/strategy baseado no tipo
+            "tipo":         getattr(busca, "tipo", "termo_livre"),
+            "marketplaces": marketplaces_list,
         },
         criado_por_usuario_id=criado_por_usuario_id,
     )
