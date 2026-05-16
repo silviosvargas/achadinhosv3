@@ -4,8 +4,8 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-15 (após Fase 16.4 — busca por URL/link)
-**Versão do agente em prod:** `3.0.4` (após Fase 16.4 — busca por URL; release v3.0.3 ainda é a última publicada como GitHub Release validada)
+**Última atualização:** 2026-05-15 (após Fase 16.4 — busca por URL/link + release v3.0.4 publicada)
+**Versão do agente em prod:** `3.0.4` (publicada como GitHub Release — Fase 16.4 ainda **não** validada em prod pelo user; aguarda smoke test com URL real)
 **Migration head:** `0010_busca_tipo_mkt`
 
 ---
@@ -91,10 +91,10 @@ confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
 | 28 | [a8f835a](https://github.com/silviosvargas/achadinhosv3/commit/a8f835a) | release | Bump v3.0.2 + tag |
 | 29 | [ba876e5](https://github.com/silviosvargas/achadinhosv3/commit/ba876e5) | docs | Consolidação completa pra próxima sessão |
 | 30 | [03f63d1](https://github.com/silviosvargas/achadinhosv3/commit/03f63d1) | hotfix | Conflito chave `tipo` no payload WS → renomeia pra `tipo_busca` + bump v3.0.3 |
-| 31 | _pendente_ | 16.4 | Fase 16.4 — busca personalizada por URL/link (extrator de produto único ML) + fix scheduler tipo_busca/marketplaces + bump v3.0.4 |
+| 31 | [2eb403a](https://github.com/silviosvargas/achadinhosv3/commit/2eb403a) | 16.4 | Fase 16.4 — busca personalizada por URL/link (extrator de produto único ML) + fix scheduler tipo_busca/marketplaces + bump v3.0.4 |
 
-**Total:** 31 commits + 4 releases publicadas (v3.0.0, v3.0.1, v3.0.2, v3.0.3). v3.0.4 entra com Fase 16.4.
-**Busca "Mais vendidos" ML validada em prod com a v3.0.3.**
+**Total:** 31 commits + 5 releases publicadas (v3.0.0, v3.0.1, v3.0.2, v3.0.3, v3.0.4).
+**Busca "Mais vendidos" ML validada em prod com a v3.0.3. Busca por URL (v3.0.4) ainda aguarda smoke test.**
 
 ---
 
