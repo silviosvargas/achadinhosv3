@@ -144,6 +144,38 @@ async def download_instalador(_: Usuario = Depends(usuario_atual)) -> dict:
     )
 
 
+@router.get("/avisos")
+async def listar_avisos_dos_agentes(
+    user: Usuario = Depends(usuario_atual),
+) -> dict:
+    """
+    Avisos ATIVOS publicados pelos agentes da org do user.
+
+    Usado pelo banner JS no dashboard (`base.html`) que faz polling
+    pra mostrar quando algum agente precisa de intervenção humana
+    (captcha Shopee, login ML expirado, etc).
+
+    Retorna apenas avisos NÃO expirados (TTL > now). Lista pode estar
+    vazia — caller renderiza nada nesse caso.
+    """
+    from app.services.agente_avisos import avisos as _store
+    lista = _store.por_org(user.org_id)
+    return {
+        "avisos": [
+            {
+                "agente_id":   av.agente_id,
+                "tipo":        av.tipo,
+                "mensagem":    av.mensagem,
+                "detalhe":     av.detalhe,
+                "marketplace": av.marketplace,
+                "criado_em":   av.criado_em,
+                "expira_em":   av.expira_em,
+            }
+            for av in lista
+        ]
+    }
+
+
 @router.get("/status")
 async def status_agentes(
     user: Usuario = Depends(usuario_atual),

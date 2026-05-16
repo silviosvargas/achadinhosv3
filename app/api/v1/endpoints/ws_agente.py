@@ -208,6 +208,62 @@ async def _h_busca_progresso(*, agente_id: int, mensagem: dict[str, Any]) -> Non
     )
 
 
+async def _h_aviso_user(*, agente_id: int, mensagem: dict[str, Any]) -> None:
+    """
+    Agente publicou aviso que precisa de intervenção do user (captcha,
+    login expirado, etc). Servidor armazena no `agente_avisos.avisos`
+    pra exibição no dashboard via banner JS.
+
+    Payload esperado:
+      {
+        tipo:        "aviso_user",
+        aviso_tipo:  "captcha" | "login_expirado" | "limpar" | ...,
+        mensagem:    "Resolva o CAPTCHA da Shopee..."  (user-facing),
+        detalhe:     "URL: shopee.com.br/captcha"    (opcional),
+        marketplace: "shopee"                          (opcional),
+        ttl_seg:     300                                (default 300 = 5min),
+      }
+
+    aviso_tipo="limpar" remove o aviso (agente sinaliza que resolveu).
+    """
+    from time import time
+
+    from app.models import Agente
+    from app.services.agente_avisos import avisos, Aviso
+
+    aviso_tipo  = (mensagem.get("aviso_tipo") or "info").strip().lower()
+    marketplace = mensagem.get("marketplace")
+
+    # Pega org_id do agente (lookup leve)
+    async with sessao_async() as db:
+        agente = await db.get(Agente, agente_id)
+        if agente is None:
+            log.warning("aviso.agente_nao_encontrado", agente_id=agente_id)
+            return
+        org_id = agente.org_id
+
+    if aviso_tipo == "limpar":
+        removeu = avisos.remover(agente_id=agente_id, marketplace=marketplace)
+        log.info("aviso.limpado",
+                 agente_id=agente_id, marketplace=marketplace, removeu=removeu)
+        return
+
+    ttl = max(10, min(1800, int(mensagem.get("ttl_seg", 300) or 300)))
+    av = Aviso(
+        agente_id=agente_id,
+        org_id=org_id,
+        tipo=aviso_tipo,
+        mensagem=(mensagem.get("mensagem") or "").strip()[:500],
+        detalhe=(mensagem.get("detalhe") or None),
+        marketplace=marketplace,
+        criado_em=time(),
+        expira_em=time() + ttl,
+    )
+    avisos.publicar(av)
+    log.info("aviso.publicado",
+             agente_id=agente_id, tipo=aviso_tipo, marketplace=marketplace, ttl=ttl)
+
+
 _HANDLERS = {
     "pong":             _h_pong,
     "tarefa_concluida": _h_tarefa_concluida,
@@ -215,6 +271,7 @@ _HANDLERS = {
     "metricas":         _h_metricas,
     "qr_pendente":      _h_qr_pendente,
     "busca_progresso":  _h_busca_progresso,
+    "aviso_user":       _h_aviso_user,
 }
 
 

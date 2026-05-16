@@ -319,81 +319,160 @@ _BANNER_AVISO_JS = """
 """
 
 
-def _aguardar_resolucao_manual(
-    driver: uc.Chrome,
-    *,
-    motivo: str,
-    mensagem_usuario: str,
-    timeout_seg: int = 300,
-) -> bool:
-    """
-    Mostra banner no Chrome com instruções e fica em polling até o user
-    resolver (URL voltar pra painel afiliados) ou estourar `timeout_seg`.
+CAPTCHA_ESPERA_FIXA_SEG = 30
+CAPTCHA_MAX_TENTATIVAS  = 3
+LOGIN_TIMEOUT_SEG       = 300   # 5 min de polling pra user logar
 
-    Igual V2 (`src/buscar/shopee.py:344`) — que fazia `input("ENTER")`.
-    Aqui não temos stdin (agente roda em background), então pollamos a URL.
 
-    Retorna True se user resolveu dentro do timeout, False senão.
-    """
-    log.warning(
-        "shopee.precisa_intervencao_manual",
-        motivo=motivo, timeout_seg=timeout_seg,
-        url_atual=(driver.current_url or "")[:200],
-    )
-
-    # 1. Injeta banner amarelo no Chrome com instruções
+def _mostrar_banner_chrome(driver: uc.Chrome, mensagem: str) -> None:
+    """Injeta banner amarelo no topo da página atual do Chrome."""
     try:
-        driver.execute_script(_BANNER_AVISO_JS, mensagem_usuario)
+        driver.execute_script(_BANNER_AVISO_JS, mensagem)
+        driver.execute_script("window.focus();")
+        driver.maximize_window()
     except Exception as e:
         log.debug("shopee.banner_falhou", erro=str(e)[:120])
 
-    # 2. Tenta trazer a janela pro primeiro plano (best-effort)
+
+def _remover_banner_chrome(driver: uc.Chrome) -> None:
     try:
-        driver.execute_script("window.focus();")
-        driver.maximize_window()
+        driver.execute_script(
+            "var b=document.getElementById('achadinhos-aviso');"
+            "if(b)b.remove();"
+        )
     except Exception:
         pass
 
-    # 3. Polling de 5s até URL voltar pra painel ou timeout
+
+def _aguardar_login(
+    driver: uc.Chrome, *, mensagem_usuario: str, timeout_seg: int = LOGIN_TIMEOUT_SEG,
+) -> bool:
+    """
+    Login expirado: polling até URL voltar pra painel ou timeout.
+
+    Mostra banner no Chrome + publica aviso no dashboard. Retorna True
+    se user logou dentro do timeout, False senão.
+    """
+    from agent import avisos
+
+    log.warning("shopee.precisa_login_user", timeout_seg=timeout_seg,
+                url_atual=(driver.current_url or "")[:200])
+
+    _mostrar_banner_chrome(driver, mensagem_usuario)
+    avisos.publicar(
+        "login_expirado", mensagem_usuario,
+        detalhe="Abra o Chrome do agente e logue na sua conta Shopee.",
+        marketplace="shopee", ttl_seg=timeout_seg + 30,
+    )
+
     inicio = time.time()
-    while time.time() - inicio < timeout_seg:
-        time.sleep(5)
+    try:
+        while time.time() - inicio < timeout_seg:
+            time.sleep(5)
+            try:
+                url_atual = (driver.current_url or "").lower()
+            except Exception:
+                log.warning("shopee.janela_fechada_durante_login")
+                return False
+
+            if "/offer/product_offer" in url_atual or "/offer/" in url_atual:
+                log.info("shopee.user_logou",
+                         duracao=int(time.time() - inicio), url=url_atual[:120])
+                _remover_banner_chrome(driver)
+                time.sleep(2)
+                return True
+
+            if not any(s in url_atual for s in ("login", "captcha", "verify", "vcode")):
+                # Saiu de login mas em outra página — recarrega o painel
+                log.info("shopee.fora_de_login_recarregando", url=url_atual[:120])
+                try:
+                    driver.get(URL_PAINEL)
+                    time.sleep(3)
+                except Exception:
+                    pass
+                return True
+
+        log.warning("shopee.timeout_aguardando_login")
+        return False
+    finally:
+        avisos.limpar(marketplace="shopee")
+
+
+def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
+    """
+    CAPTCHA: estratégia de tempo fixo (30s) × até 3 tentativas.
+
+    Cada tentativa: mostra banner + publica aviso no dashboard, espera 30s
+    fixos (independente do user resolver ou não — pq às vezes captcha abre
+    em nova aba/janela e o polling pode não detectar imediatamente),
+    recarrega o painel e checa. Se ainda for captcha, próxima tentativa.
+
+    Retorna True se resolveu nas 3 tentativas, False se esgotou.
+    """
+    from agent import avisos
+
+    for tentativa in range(1, CAPTCHA_MAX_TENTATIVAS + 1):
+        msg_tentativa = (
+            f"{mensagem_usuario}\n\n"
+            f"Tentativa {tentativa}/{CAPTCHA_MAX_TENTATIVAS} — "
+            f"aguardando {CAPTCHA_ESPERA_FIXA_SEG}s..."
+        )
+        log.warning("shopee.captcha_tentativa",
+                    tentativa=tentativa, max=CAPTCHA_MAX_TENTATIVAS,
+                    espera_seg=CAPTCHA_ESPERA_FIXA_SEG,
+                    url_atual=(driver.current_url or "")[:200])
+
+        _mostrar_banner_chrome(driver, msg_tentativa)
+        avisos.publicar(
+            "captcha", mensagem_usuario,
+            detalhe=f"Tentativa {tentativa}/{CAPTCHA_MAX_TENTATIVAS} — "
+                    f"aguardando {CAPTCHA_ESPERA_FIXA_SEG}s pra você resolver.",
+            marketplace="shopee", ttl_seg=CAPTCHA_ESPERA_FIXA_SEG + 30,
+        )
+
+        # Espera fixa de 30s independente do que o user fizer
+        # (captcha às vezes abre nova janela/aba e polling falha)
+        time.sleep(CAPTCHA_ESPERA_FIXA_SEG)
+
+        # Tenta recarregar o painel
         try:
-            url_atual = (driver.current_url or "").lower()
-        except Exception:
-            # Provavelmente user fechou a janela
-            log.warning("shopee.janela_fechada_durante_espera")
+            driver.get(URL_PAINEL)
+            time.sleep(3)
+        except Exception as e:
+            log.warning("shopee.captcha_recarga_falhou", erro=str(e)[:120])
+            continue
+
+        # Resolveu? Se sim, sai
+        problema = _detectou_login_ou_captcha(driver)
+        if problema is None:
+            log.info("shopee.captcha_resolvido", tentativa=tentativa)
+            _remover_banner_chrome(driver)
+            avisos.limpar(marketplace="shopee")
+            return True
+
+        motivo_atual, _ = problema
+        # Se virou login (outro estado), abandona o loop de captcha e deixa
+        # o caller chamar _aguardar_login
+        if motivo_atual == "login_expirado":
+            log.info("shopee.captcha_virou_login")
+            avisos.limpar(marketplace="shopee")
             return False
 
-        # Resolveu se voltou pra painel afiliados ou saiu de login/captcha
-        if "/offer/product_offer" in url_atual or "/offer/" in url_atual:
-            log.info("shopee.user_resolveu",
-                     duracao=int(time.time() - inicio), url=url_atual[:120])
-            # Remove banner — não polui screenshots posteriores
-            try:
-                driver.execute_script(
-                    "var b=document.getElementById('achadinhos-aviso');"
-                    "if(b)b.remove();"
-                )
-            except Exception:
-                pass
-            time.sleep(2)   # estabiliza após user clicar
-            return True
+        log.info("shopee.captcha_persiste", tentativa=tentativa)
 
-        # Se URL deixou de ter login/captcha, recarrega o painel
-        if not any(
-            s in url_atual for s in ("login", "captcha", "verify", "vcode")
-        ):
-            log.info("shopee.fora_de_login_recarregando", url=url_atual[:120])
-            try:
-                driver.get(URL_PAINEL)
-                time.sleep(3)
-            except Exception:
-                pass
-            return True
-
-    log.warning("shopee.timeout_aguardando_user", timeout_seg=timeout_seg)
+    log.warning("shopee.captcha_esgotou_tentativas",
+                tentativas=CAPTCHA_MAX_TENTATIVAS)
+    avisos.limpar(marketplace="shopee")
     return False
+
+
+def _resolver_login_ou_captcha(
+    driver: uc.Chrome, motivo: str, mensagem_usuario: str,
+) -> bool:
+    """Roteia pra estratégia certa baseado em login vs captcha."""
+    if motivo == "captcha":
+        return _aguardar_captcha(driver, mensagem_usuario=mensagem_usuario)
+    return _aguardar_login(driver, mensagem_usuario=mensagem_usuario)
 
 
 def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
@@ -412,15 +491,10 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
             problema = _detectou_login_ou_captcha(driver)
             if problema:
                 motivo, instrucao = problema
-                resolveu = _aguardar_resolucao_manual(
-                    driver,
-                    motivo=motivo,
-                    mensagem_usuario=instrucao,
-                    timeout_seg=300,   # 5 minutos pra user logar/resolver captcha
-                )
+                resolveu = _resolver_login_ou_captcha(driver, motivo, instrucao)
                 if not resolveu:
                     raise RuntimeError(
-                        f"Shopee {motivo} — usuário não resolveu em 5 minutos. "
+                        f"Shopee {motivo} — não foi possível prosseguir. "
                         "Refaça login: `python -m agent.login_shopee`."
                     )
                 # Após resolver, garante que estamos no painel certo
@@ -463,15 +537,12 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                             problema = _detectou_login_ou_captcha(driver)
                             if problema:
                                 motivo_re, instrucao_re = problema
-                                if not _aguardar_resolucao_manual(
-                                    driver,
-                                    motivo=f"meio_busca_{motivo_re}",
-                                    mensagem_usuario=instrucao_re,
-                                    timeout_seg=300,
+                                if not _resolver_login_ou_captcha(
+                                    driver, motivo_re, instrucao_re,
                                 ):
                                     raise RuntimeError(
-                                        f"Shopee sessão expirou no meio (HTTP {status}) e "
-                                        "user não resolveu em 5 minutos."
+                                        f"Shopee sessão expirou no meio (HTTP {status}) "
+                                        f"e não foi possível recuperar."
                                     )
                             # Retry: refaz a chamada da mesma página
                             result = _chamar_api(

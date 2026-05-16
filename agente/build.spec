@@ -32,6 +32,7 @@ a = Analysis(
         'pystray._win32',     # backend Windows do pystray
         'PIL._tkinter_finder',
         # Módulos do próprio agente que podem não ser detectados via import estático
+        'agent.avisos',               # Fase 16.5 — avisos pro dashboard via WS
         'agent.busca_ml',
         'agent.busca_shopee',         # Fase 16.5 — Shopee via API interna
         'agent.ingest_client',

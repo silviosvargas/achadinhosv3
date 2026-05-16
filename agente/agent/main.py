@@ -208,6 +208,11 @@ async def main_async(
     # Cliente WS
     cliente = WSClient(cfg)
 
+    # Linka módulo de avisos pro WS — permite que código sync (thread)
+    # publique mensagens user-facing no dashboard via `avisos.publicar(...)`.
+    from agent import avisos
+    avisos.configurar(cliente, asyncio.get_event_loop())
+
     # Handler de postagem WhatsApp
     async def handler_postar(msg: dict) -> dict:
         if tray:

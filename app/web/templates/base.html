@@ -74,6 +74,16 @@
   </nav>
   {% endif %}
 
+  {% if user %}
+  {# Container de avisos dos agentes (captcha, login expirado, etc).
+     Renderizado dinamicamente via JS no fim do body. Toast amarelo no
+     canto superior direito; só aparece quando há aviso ativo. #}
+  <div id="avisos-agentes-container" aria-live="polite"
+       style="position:fixed; top:64px; right:14px; z-index:99999;
+              display:flex; flex-direction:column; gap:10px;
+              max-width:380px; pointer-events:none;"></div>
+  {% endif %}
+
   <main class="container">
     {% block conteudo %}{% endblock %}
   </main>
@@ -135,6 +145,101 @@
 
     atualizar();
     setInterval(atualizar, 20000);
+  })();
+  </script>
+
+  {# Polling dos avisos dos agentes (captcha, login expirado, qr_pendente). #}
+  <script>
+  (function () {
+    const elContainer = document.getElementById('avisos-agentes-container');
+    if (!elContainer) return;
+
+    // Cores por tipo de aviso — usa hue pra distinguir captcha/login/erro.
+    const CORES = {
+      captcha:        { bg: '#fef3c7', borda: '#f59e0b', icone: '🤖' },
+      login_expirado: { bg: '#fee2e2', borda: '#dc2626', icone: '🔐' },
+      qr_pendente:    { bg: '#dbeafe', borda: '#2563eb', icone: '📱' },
+      info:           { bg: '#f3f4f6', borda: '#6b7280', icone: 'ℹ️' },
+    };
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = String(s == null ? '' : s);
+      return d.innerHTML;
+    }
+
+    function renderizar(avisos) {
+      // Preserva avisos abertos por chave (agente_id|marketplace) pra evitar
+      // flash visual. Re-renderiza só o que mudou.
+      const novosIds = new Set();
+      for (const av of avisos) {
+        const chave = `aviso-${av.agente_id}-${av.marketplace || 'global'}`;
+        novosIds.add(chave);
+        let card = document.getElementById(chave);
+        const cor = CORES[av.tipo] || CORES.info;
+        const html = (
+          `<div style="display:flex; gap:10px; align-items:flex-start;">` +
+            `<div style="font-size:22px; line-height:1;">${cor.icone}</div>` +
+            `<div style="flex:1; min-width:0;">` +
+              `<div style="font-weight:600; color:#1f2937; margin-bottom:4px;">` +
+                `Agente #${esc(av.agente_id)}` +
+                (av.marketplace ? ` · ${esc(av.marketplace)}` : '') +
+              `</div>` +
+              `<div style="color:#1f2937; line-height:1.4;">${esc(av.mensagem)}</div>` +
+              (av.detalhe
+                ? `<div style="color:#4b5563; font-size:12px; margin-top:6px;">${esc(av.detalhe)}</div>`
+                : '') +
+            `</div>` +
+          `</div>`
+        );
+        if (!card) {
+          card = document.createElement('div');
+          card.id = chave;
+          card.style.cssText = (
+            `background:${cor.bg}; border:1px solid ${cor.borda}; ` +
+            `border-left:4px solid ${cor.borda}; ` +
+            `border-radius:8px; padding:12px 14px; ` +
+            `box-shadow:0 4px 12px rgba(0,0,0,0.15); ` +
+            `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; ` +
+            `font-size:13px; pointer-events:auto; ` +
+            `animation:avisoEntra 220ms ease-out;`
+          );
+          elContainer.appendChild(card);
+        }
+        if (card.innerHTML !== html) card.innerHTML = html;
+      }
+
+      // Remove cards de avisos que não estão mais ativos
+      for (const card of Array.from(elContainer.children)) {
+        if (!novosIds.has(card.id)) {
+          card.style.opacity = '0';
+          card.style.transition = 'opacity 200ms';
+          setTimeout(() => card.remove(), 200);
+        }
+      }
+    }
+
+    async function atualizar() {
+      try {
+        const r = await fetch('/api/v1/agentes/avisos', { credentials: 'include' });
+        if (!r.ok) return;
+        const d = await r.json();
+        renderizar(d.avisos || []);
+      } catch (e) { /* silencioso — não polui console em desconexão */ }
+    }
+
+    atualizar();
+    setInterval(atualizar, 8000);   // 8s — mais responsivo que status (20s)
+
+    // Keyframe pra entrada suave
+    const style = document.createElement('style');
+    style.textContent = (
+      '@keyframes avisoEntra { ' +
+        'from { transform: translateX(20px); opacity: 0; } ' +
+        'to   { transform: translateX(0);    opacity: 1; } ' +
+      '}'
+    );
+    document.head.appendChild(style);
   })();
   </script>
   {% endif %}
