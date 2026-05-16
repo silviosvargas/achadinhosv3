@@ -47,18 +47,19 @@ BUSCAS_PADRAO: list[dict] = [
     },
     {
         "slug":         "ml_comissao_extra",
-        "nome":         "🎁 Mercado Livre — Top 10 com comissão EXTRA",
+        "nome":         "🎁 Mercado Livre — 3+ com EXTRAS por categoria",
         "descricao":    (
-            "Itera as mesmas categorias mais vendidas, mas mantém SOMENTE "
-            "produtos com bônus 'GANHOS EXTRAS' (promoção Mais por Mais ML — "
-            "comissão temporariamente alta). Para de buscar ao juntar 10 com "
-            "extras. Marca `comissao_extra` no DB pra filtrar depois. ~3min."
+            "Itera as 8 categorias mais vendidas e mantém produtos com bônus "
+            "'GANHOS EXTRAS' (promoção Mais por Mais ML). Em cada categoria, "
+            "busca até achar pelo menos 3 com extras (ou esgotar candidatos). "
+            "Sem limite total — pega tudo que tiver com bônus. Marca "
+            "`comissao_extra` no DB pra filtrar depois. ~4–8min."
         ),
         "marketplaces": ["ml"],
         "tipo_busca":   "padrao_comissao_extra",
-        "max_produtos": 10,
+        "max_produtos": 24,    # 8 cat × 3 mín — só informativo pra UI
         "candidatos_por_categoria": 30,
-        "alvo_total":   10,    # para ao juntar N com extras
+        "min_por_categoria": 3,  # garante ao menos N com extras por categoria
         "ordem":        2,
         "ativa":        True,
     },

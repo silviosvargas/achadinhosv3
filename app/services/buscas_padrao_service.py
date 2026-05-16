@@ -77,6 +77,11 @@ async def disparar(
     # agente lê esse campo e para ao juntar N produtos válidos.
     if "alvo_total" in busca:
         payload["alvo_total"] = busca["alvo_total"]
+    # Mínimo de produtos válidos POR CATEGORIA (busca extras v3.8.5+).
+    # Agente itera candidatos da categoria até atingir esse mínimo (ou esgotar
+    # candidatos da categoria) e passa pra próxima categoria.
+    if "min_por_categoria" in busca:
+        payload["min_por_categoria"] = busca["min_por_categoria"]
 
     tarefa = Tarefa(
         org_id=org_id,

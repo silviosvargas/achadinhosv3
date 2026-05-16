@@ -523,6 +523,41 @@ Se mudança envolve servidor + agente: **servidor primeiro, agente depois**
 (senão agente manda campo que servidor ainda não tem coluna pra gravar).
 
 
+### Captura comissão ML — SELETOR CSS, nunca regex no body (v3.8.4+)
+
+Captura da barra preta de afiliados ML SEMPRE via seletor CSS:
+- `span.stripe-commission__percentage` → texto do número (ex: "9%")
+- `span.stripe-commission__pillsecond`  → presença confirma EXTRAS (bônus). Ausência = só base.
+
+Implementado em:
+- `agente/agent/busca_padrao_ml.py:_capturar_comissao_e_preco_no_destino`
+- `agente/agent/busca_ml.py:_capturar_comissao_da_barra`
+
+```js
+var pctEl   = document.querySelector('span.stripe-commission__percentage');
+var pillsec = document.querySelector('span.stripe-commission__pillsecond');
+if (pctEl) {
+    var n = parseFloat(pctEl.textContent.replace(/[^\d.,]/g, '').replace(',','.'));
+    if (pillsec && /EXTRAS/i.test(pillsec.textContent)) {
+        melhor.extras = n;   // bônus GANHOS EXTRAS
+    } else {
+        melhor.base = n;     // comissão base GANHOS
+    }
+}
+```
+
+**LIÇÃO v3.8.0-3 (4 releases queimadas)**: tentei regex `/GANHOS\s+EXTRAS\s+\d/` em
+`document.body.textContent`. ML renderiza os spans BEM SEM whitespace entre
+tags → `textContent` concatena como `"EXTRAS9%"` (sem espaços). Regex com `\s+`
+NÃO dá match. Adicionei iframes, outerHTML, sleep 3s, nada resolvia.
+
+User abriu DevTools em 2026-05-16 e mostrou as classes — fix em ~5min.
+**Sempre que captura ML voltar a falhar, pedir DevTools antes de chutar.**
+
+Mantém fallback regex no body com `\s*` (zero ou mais espaços, não `\s+`) só
+pra defesa caso ML mude as classes — mas seletor CSS é a fonte primária.
+
+
 ### Página ML carrega lazy — espera elemento específico
 
 `driver.get(url)` + `WebDriverWait(body)` não basta — o ML serve HTML
