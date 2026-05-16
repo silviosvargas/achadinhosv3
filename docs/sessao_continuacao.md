@@ -14,6 +14,31 @@
 1. [docs/contrato_handlers_ws.md](contrato_handlers_ws.md) — **handlers WS PRECISAM
    retornar `"ok": True/False`**. Sem isso, ws_client envia `tarefa_falhou` e
    servidor nunca chama hooks de pós-conclusão. Bug ficou escondido 5 meses.
+
+## 📦 LEITURA OBRIGATÓRIA antes de mexer em `agente/`
+
+Toda mudança em `agente/agent/*.py` PRECISA de release nova (`.exe`) — user
+roda o installer no PC, não faz `git pull`. Sem release, servidor já tem
+schema novo mas agente continua antigo → dados descartados silenciosamente.
+
+**Procedimento completo em [CLAUDE.md → "Workflow de release do agente"](../CLAUDE.md)**.
+Resumo:
+
+1. Bump 3 arquivos sempre juntos: `local_server.py:VERSAO_AGENTE`,
+   `pyproject.toml:version`, `installer.iss:#define MyAppVersion`
+2. Commit + push `:main` (servidor) + tag `agente-vX.Y.Z` + push da tag
+3. **MONITORAR workflow até `completed/success`** (curl GitHub API ou
+   background script). Sem monitoramento, release pode ter falhado e
+   user fica com `.exe` antigo sem aviso.
+4. Conferir asset `AchadinhosAgent-Setup-X.Y.Z.exe` publicado em
+   `github.com/silviosvargas/achadinhosv3/releases/tag/agente-vX.Y.Z`
+5. SÓ ENTÃO comunicar pro user instalar + validar com busca real
+   do tipo afetado pela mudança
+
+Quando muda servidor + agente: **servidor primeiro** (Railway redeploy
++ migration), **agente depois** (release). Inverter quebra silencioso
+(Pydantic `extra="allow"` aceita campos novos mas servidor não tem
+coluna pra gravar).
 2. **[docs/contrato_busca_marketplace.md](contrato_busca_marketplace.md)** — guia
    pra adicionar marketplace novo (Magalu/AliExpress/TikTok). Checklist completo
    + template de código + padrão de modo interativo (banner Chrome + aviso

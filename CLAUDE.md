@@ -214,6 +214,112 @@ Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
 ---
 
+## Workflow de release do agente — LEIA antes de mexer no `agente/`
+
+Toda mudança em `agente/agent/*.py` (scrapers, linkbuilder, login_*, main, ws_client,
+local_server) **precisa virar release** porque o user roda o `.exe` instalado
+no PC dele — não pega mudanças via git pull. Sem release, o servidor pode estar
+no v3.X.Y mas o agente do user continua no v3.X.Y-1, gerando bugs silenciosos
+(ex: campos novos no schema do servidor que o agente nunca envia).
+
+### Quando bumpar
+
+| Tipo de mudança | Bump |
+|---|---|
+| Bug fix em scraper / linkbuilder / handler | **patch** (3.3.0 → 3.3.1) |
+| Captura de dado novo, novo tipo de busca, mudança em formato de retorno | **minor** (3.3.1 → 3.4.0) |
+| Quebra de protocolo WS (raríssimo) | **major** (3.X.Y → 4.0.0) |
+
+**Regra de bolso:** mexeu em qualquer `.py` em `agente/agent/`? Bump no fim.
+
+### Como bumpar (3 arquivos, sempre os mesmos)
+
+1. `agente/agent/local_server.py` → `VERSAO_AGENTE = "X.Y.Z"`
+2. `agente/pyproject.toml`       → `version = "X.Y.Z"`
+3. `agente/installer.iss`        → `#define MyAppVersion "X.Y.Z"`
+
+Faltar um quebra: `local_server.py` retorna versão errada via `/ping`,
+`pyproject.toml` é fonte oficial pro PyPI/pip, `installer.iss` define o nome
+do arquivo `AchadinhosAgent-Setup-X.Y.Z.exe` no Inno Setup.
+
+### Como publicar
+
+```powershell
+git commit -am "feat(agente): mudança X (bump X.Y.Y → X.Y.Z)"
+git push origin <branch>:main                    # API redeployar
+git tag -a agente-vX.Y.Z -m "Descrição curta"
+git push origin agente-vX.Y.Z                    # dispara build
+```
+
+Tag `agente-v*` dispara workflow `.github/workflows/release-agente.yml`:
+- Roda em `windows-latest` (PyInstaller só builda Windows)
+- Compila `.exe` + Inno Setup empacota installer
+- Publica release no GitHub com asset `AchadinhosAgent-Setup-X.Y.Z.exe`
+- **Demora ~3min**
+
+### Monitoramento OBRIGATÓRIO após push da tag
+
+**Sempre verificar que o build terminou com sucesso** antes de pedir pro user
+instalar OU antes de seguir com próximas mudanças no agente. Sem monitoramento,
+release pode ter falhado (deps quebradas, sintaxe Inno Setup, erro PyInstaller)
+e o user fica com versão antiga **sem saber**.
+
+Comandos pra checar status:
+
+```bash
+# Workflow runs (status: in_progress | completed; conclusion: success | failure)
+curl -s "https://api.github.com/repos/silviosvargas/achadinhosv3/actions/workflows/release-agente.yml/runs?per_page=2" \
+  | python -c "import json,sys; d=json.load(sys.stdin); [print(f\"{r['head_branch']:18} {r['status']:12} {r['conclusion'] or '-':10} {r['updated_at']}\") for r in d.get('workflow_runs', [])]"
+
+# Release publicada (id existe + asset listado)
+curl -s https://api.github.com/repos/silviosvargas/achadinhosv3/releases/tags/agente-vX.Y.Z \
+  | python -c "import json,sys; d=json.load(sys.stdin); print('publicada:', bool(d.get('id'))); [print(' -', a['name'], a['size'], 'bytes') for a in d.get('assets',[])]"
+```
+
+Pra **monitorar em background** até completar (Claude recebe notificação
+automática quando o background process termina):
+
+```bash
+# Bash com run_in_background=true:
+until [ "$(curl -s '<workflow_runs_url>' | python -c '...status')" = "completed" ]; do
+  sleep 30
+done
+# Print resumo final do conclusion + asset
+```
+
+Padrão usado nesta sessão (commit 033ed54 → tag agente-v3.3.1).
+
+### Após release validada, comunicar ao user:
+1. Badge "⚠ atualização disponível" aparece automaticamente em `/agentes/baixar`
+   (a detecção de versão da Fase 15.1 consulta `/api/v1/agentes/versao-atual`
+   que lê o `tag_name` do GitHub releases — cache 60s)
+2. Link direto: `https://github.com/silviosvargas/achadinhosv3/releases/tag/agente-vX.Y.Z`
+3. Após user instalar, validar com 1 busca real do tipo afetado pela mudança
+   (ex: se mexeu em `busca_ml.py:_achar_vendidos`, pede pra rodar busca tipo
+   mais_vendidos e conferir `total_vendidos > 0` no produto resultante)
+
+### Ordem servidor × agente importa
+
+Quando mudança envolve servidor + agente juntos (caso comum):
+1. **Servidor PRIMEIRO** (push pra main → Railway redeploy + migration)
+2. **Agente DEPOIS** (tag + build + user instala)
+
+Razão: agente novo pode enviar campos que precisam de coluna no schema do
+servidor (Fase 18 v3.3.0 é exemplo: agente manda `total_vendidos` que precisa
+existir em `produtos` antes do ingest aceitar). Inverter ordem → agente envia
+dados que `extra="allow"` aceita silenciosamente mas nunca grava → mesmo
+padrão do bug v3.21.1.
+
+### Agente NÃO precisa de release quando
+
+- Mudança só em `app/` (servidor) — Railway redeploy automático cobre
+- Mudança em CSS/Jinja templates — idem
+- Mudança em migrations — Railway aplica via `bootstrap_producao.py`
+- Mudança em `.github/workflows/` (exceto release-agente.yml)
+- Mudança em docs / CLAUDE.md / `docs/*.md`
+
+---
+
 ## Armadilhas conhecidas — LEIA antes de mexer
 
 ### Handlers WS sempre retornam `ok=True/False`
@@ -301,6 +407,24 @@ URL do ML tem variantes:
 **Regex robusto**: `MLB[A-Z]?-?\d{4,15}`. Antes era `\d{8,15}` e rejeitava
 legacy. Aplica tanto em `_extrair_item_id` (agente) quanto em
 `afiliado_ml_writer._RE_MLB` (servidor).
+
+### Mudou código do `agente/`? Sempre bump + tag + monitorar
+
+Mudança em `agente/agent/*.py` SEM bump de versão + tag + verificação do
+build = release fantasma. User continua com `.exe` antigo, servidor já tem
+schema novo, dados são descartados silenciosamente. Passo a passo completo
+em "Workflow de release do agente" acima. Resumo:
+
+1. Bump 3 arquivos: `local_server.py`, `pyproject.toml`, `installer.iss`
+2. Commit + push pra main + tag `agente-vX.Y.Z` + push da tag
+3. **Monitorar workflow até `completed/success`** (curl GitHub API ou
+   background script com until-loop)
+4. Conferir asset `AchadinhosAgent-Setup-X.Y.Z.exe` publicado
+5. SÓ ENTÃO comunicar pro user instalar + validar com busca real
+
+Se mudança envolve servidor + agente: **servidor primeiro, agente depois**
+(senão agente manda campo que servidor ainda não tem coluna pra gravar).
+
 
 ### Página ML carrega lazy — espera elemento específico
 
