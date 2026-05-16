@@ -56,12 +56,12 @@
       </button>
     </form>
     <form method="post" action="/curadoria/revalidar-comissoes" style="display:inline"
-          data-confirm="Re-validar TODAS comissões contra os ranges esperados? Comissões fora do range perdem score_comissao (caem no TOP)."
-          data-confirm-titulo="Revalidar comissões?"
-          data-confirm-ok="✓ Sim, revalidar">
+          data-confirm="Disparar tarefa pro agente abrir CADA produto ML no Chrome e capturar comissão REAL da barra preta de afiliados? (pega até 100 produtos sem comissão de barra ainda, ~2s/produto, agente leva ~3min). Precisa de agente ONLINE."
+          data-confirm-titulo="Revalidar via agente?"
+          data-confirm-ok="🤖 Sim, abrir links">
       <button type="submit" class="btn" style="height:32px; padding:0 12px; font-size:13px;"
-              title="Re-passa todas comissões pela validação de range">
-        ✓ Revalidar comissões
+              title="Dispara tarefa pro agente capturar comissão REAL da barra ML em cada produto">
+        🤖 Revalidar comissões (via agente)
       </button>
     </form>
     {% endif %}

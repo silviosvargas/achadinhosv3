@@ -849,6 +849,62 @@ def _capturar_comissoes_da_barra_em_lote(
              total=len(alvos), capturados=capturados, falhas=falhas)
 
 
+def _revalidar_comissoes_sync(cfg: Config, urls: list[str]) -> dict[str, float]:
+    """Fase 18.3 (v3.4.1) — abre cada URL ML no driver logado como afiliado
+    e captura comissão da barra preta. Usado pra REVALIDAR produtos antigos
+    no DB sem precisar rebuscar tudo.
+
+    Retorna mapping `{url_canonica: comissao_pct_float}`. URLs sem captura
+    (sessão expirada, barra ausente, captcha) ficam ausentes do dict —
+    caller (servidor) sabe quais não conseguiu atualizar.
+
+    Reusa `_capturar_comissoes_da_barra_em_lote` que já implementa loop +
+    delay + try/except per-produto. Aqui só precisa estruturar o output.
+    """
+    if not urls:
+        return {}
+
+    log.info("ml.revalidar_comissoes.aguardando_lock", urls=len(urls))
+    # Reusa lock do ML (1 Chrome ML por vez)
+    with _LOCK_CHROME_ML:
+        log.info("ml.revalidar_comissoes.lock_adquirido", urls=len(urls))
+        driver = _criar_driver_ml(cfg)
+        mapping: dict[str, float] = {}
+        try:
+            # Adapta lista de URLs pra formato esperado por
+            # _capturar_comissoes_da_barra_em_lote (que recebe lista de produtos
+            # dicts com `url_canonica`). Cria "produtos" fictícios pra
+            # reaproveitar a função sem duplicar lógica.
+            produtos_ficticios = [{"url_canonica": u, "item_id": u[-15:]} for u in urls]
+            _capturar_comissoes_da_barra_em_lote(
+                driver, produtos_ficticios, log_prefixo="ml.revalidar",
+            )
+            # Extrai resultado: produtos que tiveram comissao_fonte trocada
+            for p in produtos_ficticios:
+                if p.get("comissao_fonte") == "ml_barra_afiliados" and p.get("comissao"):
+                    mapping[p["url_canonica"]] = float(p["comissao"])
+        finally:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            time.sleep(1.5)
+        return mapping
+
+
+async def revalidar_comissoes_em_lote(
+    cfg: Config, urls: list[str],
+) -> dict[str, float]:
+    """Async wrapper — abre URLs em thread separada."""
+    if not urls:
+        return {}
+    log.info("ml.revalidar_comissoes.iniciado", total=len(urls))
+    mapa = await asyncio.to_thread(_revalidar_comissoes_sync, cfg, urls)
+    log.info("ml.revalidar_comissoes.concluido",
+             pedidos=len(urls), atualizados=len(mapa))
+    return mapa
+
+
 def _varrer_lista_urls_sync(
     cfg: Config,
     *,

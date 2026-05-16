@@ -152,3 +152,107 @@ async def aplicar_mapping(
     await db.commit()
     log.info("afiliado_ml.mapping_aplicado", org_id=org_id, **stats)
     return stats
+
+
+async def aplicar_mapping_comissoes_barra(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    mapping_comissoes: dict[str, float],
+) -> dict[str, int]:
+    """Aplica `{url_canonica: comissao_pct}` capturada da barra preta do
+    painel de afiliados ML (Fase 18.3, v3.4.1).
+
+    Diferente de `aplicar_mapping` (que escreve `url_afiliado`), aqui:
+    - Atualiza `produtos.comissao` com o valor REAL capturado
+    - Marca `comissao_fonte = "ml_barra_afiliados"` (fonte de verdade)
+    - Atualiza `comissao_atualizada_em` (timestamp específico do campo)
+    - Recalcula `nota` aplicando `scoring.calcular_nota` com valor novo
+    - Valida via `validar_comissao` → `comissao_validada`
+
+    Match em 3 estratégias (mesma cascata do aplicar_mapping):
+    URL exata → URL normalizada (sem fragment) → MLB ID via LIKE.
+
+    Returns:
+        Stats {produtos_atualizados, ignorados, sem_match}.
+    """
+    if not mapping_comissoes:
+        return {"produtos_atualizados": 0, "ignorados": 0, "sem_match": 0}
+
+    from datetime import datetime, timezone
+    from app.services.scoring import calcular_nota
+
+    stats = {"produtos_atualizados": 0, "ignorados": 0, "sem_match": 0}
+    agora = datetime.now(tz=timezone.utc)
+
+    for url_canonica, comissao_pct in mapping_comissoes.items():
+        if not url_canonica or comissao_pct is None or comissao_pct <= 0:
+            stats["ignorados"] += 1
+            continue
+
+        # Match cascata (mesma do aplicar_mapping)
+        produto = (await db.execute(
+            select(Produto).where(
+                Produto.org_id == org_id,
+                Produto.plataforma == "ml",
+                Produto.url_canonica == url_canonica,
+            ).limit(1)
+        )).scalar_one_or_none()
+
+        if produto is None:
+            url_limpa = _normalizar_url(url_canonica)
+            if url_limpa and url_limpa != url_canonica:
+                produto = (await db.execute(
+                    select(Produto).where(
+                        Produto.org_id == org_id,
+                        Produto.plataforma == "ml",
+                        Produto.url_canonica.like(f"{url_limpa}%"),
+                    ).limit(1)
+                )).scalar_one_or_none()
+
+        if produto is None:
+            mlb_id = _extrair_mlb(url_canonica)
+            if mlb_id:
+                produto = (await db.execute(
+                    select(Produto).where(
+                        Produto.org_id == org_id,
+                        Produto.plataforma == "ml",
+                        Produto.url_canonica.like(f"%{mlb_id}%"),
+                    ).limit(1)
+                )).scalar_one_or_none()
+
+        if produto is None:
+            log.warning("afiliado_ml.comissao_sem_match",
+                        url_canonica=url_canonica[:200], comissao=comissao_pct)
+            stats["sem_match"] += 1
+            continue
+
+        # Atualiza comissão + fonte + timestamp
+        antes = produto.comissao
+        produto.comissao               = float(comissao_pct)
+        produto.comissao_fonte         = "ml_barra_afiliados"
+        produto.comissao_atualizada_em = agora
+
+        # Recalcula nota com a comissão nova (fonte de verdade, validada=True
+        # automaticamente porque calcular_nota chama validar_comissao)
+        info_nota = calcular_nota({
+            "plataforma":     produto.plataforma,
+            "preco":          produto.preco,
+            "preco_orig":     produto.preco_orig,
+            "desconto":       produto.desconto,
+            "comissao":       produto.comissao,
+            "total_vendidos": produto.total_vendidos,
+            "is_bestseller":  produto.is_bestseller,
+            "is_em_alta":     produto.is_em_alta,
+        })
+        produto.nota              = info_nota["nota"]
+        produto.comissao_validada = info_nota["comissao_validada"]
+
+        stats["produtos_atualizados"] += 1
+        log.info("afiliado_ml.comissao_atualizada",
+                 produto_id=produto.id, antes=antes, depois=comissao_pct,
+                 nota_nova=info_nota["nota"])
+
+    await db.commit()
+    log.info("afiliado_ml.mapping_comissoes_aplicado", org_id=org_id, **stats)
+    return stats

@@ -140,9 +140,10 @@ def _resolver_destino(canal: Canal) -> tuple[str, int | None]:
 # ============================================================
 
 _TIPO_TAREFA_PARA_COMANDO_WS = {
-    TipoTarefa.POSTAR_WHATSAPP:      "postar_whatsapp",
-    TipoTarefa.BUSCAR_MERCADO_LIVRE: "iniciar_busca_ml",
-    TipoTarefa.GERAR_LINK:           "gerar_links_afiliado_ml",
+    TipoTarefa.POSTAR_WHATSAPP:       "postar_whatsapp",
+    TipoTarefa.BUSCAR_MERCADO_LIVRE:  "iniciar_busca_ml",
+    TipoTarefa.GERAR_LINK:            "gerar_links_afiliado_ml",
+    TipoTarefa.REVALIDAR_COMISSAO_ML: "revalidar_comissao_ml",
 }
 
 
@@ -257,6 +258,16 @@ async def marcar_concluida(
             from app.services import afiliado_ml_writer
             await afiliado_ml_writer.aplicar_mapping(
                 db, org_id=tarefa.org_id, mapping=mapping,
+            )
+    # REVALIDAR_COMISSAO_ML (Fase 18.3, v3.4.1): agente abriu cada URL,
+    # capturou comissão real da barra de afiliados. Aplica nos produtos
+    # com `comissao_fonte = "ml_barra_afiliados"` + recalcula nota.
+    elif tarefa.tipo == TipoTarefa.REVALIDAR_COMISSAO_ML:
+        mapping_comissoes = (resultado or {}).get("mapping_comissoes") or {}
+        if mapping_comissoes:
+            from app.services import afiliado_ml_writer
+            await afiliado_ml_writer.aplicar_mapping_comissoes_barra(
+                db, org_id=tarefa.org_id, mapping_comissoes=mapping_comissoes,
             )
 
 

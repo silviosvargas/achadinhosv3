@@ -176,12 +176,96 @@ async def recalcular_notas_da_org(
 async def revalidar_comissoes_da_org(
     db: AsyncSession, *, org_id: int,
 ) -> dict[str, int]:
-    """
-    Passa todas comissões da org pela validação de range (`app/core/comissoes.py`).
+    """LEGADO: passa todas comissões pela validação de range + recalcula nota.
 
-    Marca `comissao_validada` + re-aplica `nota`. Útil pra detectar comissões
-    suspeitas (ex: ML retornou 0% por sessão expirada) — produto sai do TOP
-    automaticamente quando perde score_comissao.
+    NÃO consulta o agente — só re-executa `calcular_nota` com valores
+    já no DB. Para captura REAL via barra ML, use `disparar_revalidacao_comissoes_via_agente`.
     """
-    # Reusa recalcular_notas — a validação acontece dentro do calcular_nota
     return await recalcular_notas_da_org(db, org_id=org_id)
+
+
+async def disparar_revalidacao_comissoes_via_agente(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    limite: int = 100,
+) -> dict:
+    """Fase 18.3 (v3.4.1) — dispara tarefa pro agente abrir cada produto ML
+    da org e capturar comissão REAL da barra preta de afiliados.
+
+    Estratégia:
+    1. Pega N produtos ML da org cuja `comissao_fonte` NÃO É 'ml_barra_afiliados'
+       (ou seja, produtos que ainda não foram revalidados)
+    2. Cria 1 tarefa `REVALIDAR_COMISSAO_ML` com `urls=[...]`
+    3. Entrega via dispatcher (tenta entregar via WS se agente online)
+    4. Hook em `dispatcher.marcar_concluida` aplica resultado via
+       `afiliado_ml_writer.aplicar_mapping_comissoes_barra`
+
+    Custo: agente leva ~2s por URL. Pra 100 URLs = ~3min.
+
+    Returns:
+        {"tarefa_id": N, "urls_enfileiradas": M, "produtos_pendentes": K}
+        ou {"ok": False, "erro": "..."}
+    """
+    from app.models import Agente, Produto, StatusTarefa, Tarefa, TipoTarefa
+    from app.services import dispatcher
+    from app.services.agente_registry import registry
+
+    # Produtos ML da org sem comissão real ainda
+    rows = (await db.execute(
+        select(Produto.url_canonica).where(
+            Produto.org_id == org_id,
+            Produto.plataforma == "ml",
+            Produto.url_canonica.is_not(None),
+            Produto.bloqueado.is_(False),
+            Produto.comissao_fonte != "ml_barra_afiliados",
+        ).limit(limite)
+    )).all()
+
+    urls = [u for (u,) in rows if u]
+    if not urls:
+        return {
+            "ok":               True,
+            "tarefa_id":        None,
+            "urls_enfileiradas": 0,
+            "mensagem":         "Todos os produtos já tem comissão da barra ML — nada a revalidar",
+        }
+
+    # Pega 1º agente online da org
+    agentes = list((await db.execute(
+        select(Agente).where(
+            Agente.org_id == org_id, Agente.ativo.is_(True),
+        )
+    )).scalars().all())
+    agente = next((a for a in agentes if registry.esta_online(a.id)), None)
+    if agente is None:
+        return {
+            "ok":    False,
+            "erro":  "Nenhum agente online — abra o AchadinhosAgent no PC primeiro",
+        }
+
+    tarefa = Tarefa(
+        org_id=org_id,
+        tipo=TipoTarefa.REVALIDAR_COMISSAO_ML,
+        status=StatusTarefa.PENDENTE,
+        agente_id=agente.id,
+        payload={"urls": urls},
+    )
+    db.add(tarefa)
+    await db.commit()
+    await db.refresh(tarefa)
+
+    await dispatcher._tentar_entrega(db, tarefa)
+
+    log.info("curadoria.revalidar_via_agente.disparado",
+             org_id=org_id, tarefa_id=tarefa.id, urls=len(urls))
+    return {
+        "ok":               True,
+        "tarefa_id":        tarefa.id,
+        "urls_enfileiradas": len(urls),
+        "mensagem":         (
+            f"Tarefa #{tarefa.id} enfileirada com {len(urls)} produtos. "
+            f"Agente leva ~{len(urls) * 2}s pra processar. "
+            "Recarregue a página em ~{}min".format(max(1, len(urls) // 30))
+        ),
+    }

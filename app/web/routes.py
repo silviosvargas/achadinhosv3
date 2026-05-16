@@ -1936,23 +1936,25 @@ async def curadoria_revalidar_comissoes_form(
     admin: Usuario = Depends(exigir_admin),
     db:    AsyncSession = Depends(get_db_async),
 ):
-    """Admin: re-valida comissões + recalcula notas."""
+    """Admin: dispara tarefa pro agente abrir cada produto ML e capturar
+    comissão REAL da barra preta de afiliados (Fase 18.3, v3.4.1).
+
+    NÃO recalcula só com dados do DB — pede pro agente abrir URLs e capturar.
+    Resultado vem assíncrono via callback WS → `aplicar_mapping_comissoes_barra`.
+    """
     from urllib.parse import quote_plus
     from app.services import curadoria_service
 
     try:
-        resultado = await curadoria_service.revalidar_comissoes_da_org(
-            db, org_id=admin.org_id,
+        resultado = await curadoria_service.disparar_revalidacao_comissoes_via_agente(
+            db, org_id=admin.org_id, limite=100,
         )
-        await db.commit()
-        msg = (
-            "mensagem="
-            + quote_plus(
-                f"Revalidou comissões: {resultado['atualizados']}/{resultado['total']} ajustados"
-            )
-        )
+        if resultado.get("ok"):
+            msg = "mensagem=" + quote_plus(resultado["mensagem"])
+        else:
+            msg = "erro=" + quote_plus(resultado.get("erro", "erro_desconhecido"))
     except Exception as e:
-        msg = f"erro={quote_plus('Falha revalidando: ' + str(e)[:120])}"
+        msg = "erro=" + quote_plus("Falha disparando revalidacao: " + str(e)[:120])
     return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
 
 

@@ -281,6 +281,43 @@ async def main_async(
 
     cliente.on_comando("gerar_links_afiliado_ml", handler_gerar_links_ml)
 
+    # Handler de revalidação de comissões via barra ML (Fase 18.3 / v3.4.1)
+    async def handler_revalidar_comissao_ml(msg: dict) -> dict:
+        """Abre N URLs ML uma a uma, captura comissão da barra preta de
+        afiliados, devolve mapping `{url: comissao_pct}`.
+
+        Body esperado: {"urls": ["https://mercadolivre.com.br/...", ...]}
+        Resposta: {"ok": True, "mapping_comissoes": {url: pct}, "total": N}
+
+        ⚠️ Retorno PRECISA ter `"ok": True` — ws_client._executar_handler
+        decide tarefa_concluida vs tarefa_falhou por isso (cf docs/contrato_handlers_ws.md).
+
+        Pré-condição: chrome_perfil_ml logado como afiliado ML.
+        Custo: ~2s por URL (navega + captura JS). Usar lotes razoáveis (≤50).
+        """
+        from agent.busca_ml import revalidar_comissoes_em_lote
+
+        urls = msg.get("urls") or []
+        if not isinstance(urls, list) or not urls:
+            return {"ok": False, "erro": "lista_vazia",
+                    "mapping_comissoes": {}, "total": 0}
+
+        if tray:
+            tray.atualizar_status("postando")
+        try:
+            mapping = await revalidar_comissoes_em_lote(cfg, urls)
+            return {
+                "ok":                True,
+                "mapping_comissoes": mapping,
+                "total":             len(mapping),
+                "pedidos":           len(urls),
+            }
+        finally:
+            if tray:
+                tray.atualizar_status("online")
+
+    cliente.on_comando("revalidar_comissao_ml", handler_revalidar_comissao_ml)
+
     if tray:
         tray.atualizar_status("online")
 

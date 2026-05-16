@@ -95,11 +95,28 @@ async def revalidar_comissoes(
     admin: Usuario = Depends(usuario_admin),
     db:    AsyncSession = Depends(get_db_async),
 ) -> dict:
-    """Admin: re-passa todas comissões pela validação de range.
+    """Admin: dispara tarefa pro agente capturar comissão REAL via barra
+    de afiliados ML (Fase 18.3, v3.4.1).
 
-    Útil quando `app/core/comissoes.RANGES_VALIDOS` muda OU quando suspeita
-    de batch de produtos com comissão errada (ex: linkbuilder ML retornou 0%
-    por sessão expirada).
+    Diferente do legado: agora abre cada URL no agente em vez de só
+    recalcular nota. Resposta imediata = `tarefa_id` + `urls_enfileiradas`.
+    Resultado real chega via callback WS (~2s por URL).
+    """
+    resultado = await curadoria_service.disparar_revalidacao_comissoes_via_agente(
+        db, org_id=admin.org_id, limite=100,
+    )
+    return {"org_id": admin.org_id, **resultado}
+
+
+@router.post("/revalidar-comissoes-local")
+async def revalidar_comissoes_local(
+    admin: Usuario = Depends(usuario_admin),
+    db:    AsyncSession = Depends(get_db_async),
+) -> dict:
+    """LEGADO: só re-executa `validar_comissao` no DB sem consultar agente.
+
+    Útil pra rodar validação de range sem disparar o agente (mais rápido
+    quando você só ajustou a fórmula/range).
     """
     resultado = await curadoria_service.revalidar_comissoes_da_org(
         db, org_id=admin.org_id,

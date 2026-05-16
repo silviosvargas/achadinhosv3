@@ -40,6 +40,9 @@ class TipoTarefa(StrEnum):
     BUSCAR_PRODUTOS      = "buscar_produtos"      # legado, manter pra retrocompat
     BAIXAR_IMAGEM        = "baixar_imagem"
     GERAR_LINK           = "gerar_link_afiliado"
+    # Fase 18.3 (v3.4.1): re-abre URLs no agente pra capturar comissão
+    # da barra preta de afiliados ML. Atualiza produtos sem rebuscar tudo.
+    REVALIDAR_COMISSAO_ML = "revalidar_comissao_ml"
 
 
 class Tarefa(Base, TimestampMixin):
