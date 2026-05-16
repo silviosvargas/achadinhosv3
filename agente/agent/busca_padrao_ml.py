@@ -292,25 +292,37 @@ def _processar_categoria(
         # Delay anti rate-limit
         time.sleep(random.uniform(0.4, 0.9))
 
-    # 4. Ordena por (preço × comissão) DESC e mantém top N
+    # 4. FILTRO ESTRITO (v3.5.1): só passa adiante produtos com comissão
+    # capturada DA BARRA. Decisão do user: "todos os que não são pegos da
+    # barra estão sendo informados errado". Resto é descartado — o catálogo
+    # não recebe valores estimados/categoria pra esses produtos novos.
+    com_captura_real = [
+        p for p in candidatos
+        if p.get("comissao_fonte") == "ml_barra_afiliados"
+        and (p.get("comissao") or 0) > 0
+    ]
+    descartados = len(candidatos) - len(com_captura_real)
+
+    # 5. Ordena por (preço × comissão_real) DESC e mantém top N
     def _score_ranking(prod: dict) -> float:
         preco = prod.get("preco") or 0
         com   = prod.get("comissao") or 0
         return float(preco) * float(com) / 100.0  # ganho R$ estimado
 
-    candidatos.sort(key=_score_ranking, reverse=True)
-    top = candidatos[:TOP_FINAL_POR_CATEGORIA]
+    com_captura_real.sort(key=_score_ranking, reverse=True)
+    top = com_captura_real[:TOP_FINAL_POR_CATEGORIA]
 
     log.info("ml.padrao.categoria_concluida",
              nome=nome_categoria,
              candidatos=len(candidatos),
-             com_comissao_real=capturados,
+             com_captura_real=capturados,
+             descartados_sem_captura=descartados,
              top_selecionados=len(top))
     return top
 
 
 def _varrer_padrao_completo_sync(
-    cfg: Config, *, candidatos_por_categoria: int = 20,
+    cfg: Config, *, candidatos_por_categoria: int = 30,
 ) -> list[dict[str, Any]]:
     """Loop principal: itera todas as categorias hardcoded em CATEGORIAS_PADRAO.
 
@@ -359,7 +371,7 @@ def _varrer_padrao_completo_sync(
 
 
 async def varrer_padrao_completo(
-    cfg: Config, *, candidatos_por_categoria: int = 20,
+    cfg: Config, *, candidatos_por_categoria: int = 30,
 ) -> list[dict[str, Any]]:
     """Async wrapper — roda Selenium em thread separada."""
     return await asyncio.to_thread(

@@ -27,17 +27,21 @@ BUSCAS_PADRAO: list[dict] = [
         "slug":         "ml_mais_vendidos_completo",
         "nome":         "🛒 Mercado Livre — Mais vendidos por categoria",
         "descricao":    (
-            "Top 10 mais vendidos de cada categoria do ML, filtrados pela "
-            "COMBINAÇÃO de melhor preço + maior comissão REAL (capturada "
-            "da barra preta de afiliados, não estimativa). "
-            "Pega ~20 candidatos por categoria, abre cada um pelo meli.la "
-            "pra extrair comissão real, mantém os 10 melhores. "
-            "Demora ~8min por execução."
+            "Top 10 por categoria do ML, filtrados pela COMBINAÇÃO de melhor "
+            "preço + maior comissão REAL (capturada da barra preta de afiliados). "
+            "Pega ~30 candidatos por categoria, abre cada um pelo meli.la pra "
+            "extrair comissão real, e DESCARTA produtos onde a captura falha "
+            "(sem estimativa errada no catálogo). Mantém os 10 melhores que "
+            "tiveram captura real. Demora ~12min."
         ),
         "marketplaces": ["ml"],
         "tipo_busca":   "padrao_mais_vendidos_completo",
         "max_produtos": 80,    # 8 categorias × 10 finais
-        "candidatos_por_categoria": 20,
+        # v3.5.1: aumentado de 20 → 30 pra compensar descartes (produtos
+        # onde captura da barra falhou são DESCARTADOS, não vão pro catálogo
+        # com estimativa errada). Folga: 30 candidatos → idealmente 10 com
+        # captura ok → top 10 final.
+        "candidatos_por_categoria": 30,
         "ordem":        1,
         "ativa":        True,
     },
