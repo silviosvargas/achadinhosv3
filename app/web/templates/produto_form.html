@@ -1,9 +1,10 @@
 {% extends "base.html" %}
-{% block titulo %}Novo produto{% endblock %}
+{% set _editando = produto is not none %}
+{% block titulo %}{% if _editando %}Editar produto{% else %}Novo produto{% endif %}{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Novo produto</h1>
+  <h1>{% if _editando %}Editar produto{% else %}Novo produto{% endif %}</h1>
   <p class="muted"><a href="/produtos">← voltar</a></p>
 </header>
 
@@ -11,79 +12,100 @@
 <div class="alerta alerta-erro">{{ erro }}</div>
 {% endif %}
 
-<form method="post" action="/produtos/novo" class="form-vertical">
+<form method="post"
+      action="{% if _editando %}/produtos/{{ produto.id }}/editar{% else %}/produtos/novo{% endif %}"
+      class="form-vertical">
   <div class="form-row">
     <label>
       Plataforma
-      <select name="plataforma" required>
-        <option value="ml">Mercado Livre</option>
-        <option value="shopee">Shopee</option>
-        <option value="amazon">Amazon</option>
-        <option value="magalu">Magalu</option>
-        <option value="aliexpress">AliExpress</option>
+      <select name="plataforma" required {% if _editando %}disabled{% endif %}>
+        {% set _plat = produto.plataforma if _editando else 'ml' %}
+        <option value="ml"         {% if _plat == 'ml' %}selected{% endif %}>Mercado Livre</option>
+        <option value="shopee"     {% if _plat == 'shopee' %}selected{% endif %}>Shopee</option>
+        <option value="amazon"     {% if _plat == 'amazon' %}selected{% endif %}>Amazon</option>
+        <option value="magalu"     {% if _plat == 'magalu' %}selected{% endif %}>Magalu</option>
+        <option value="aliexpress" {% if _plat == 'aliexpress' %}selected{% endif %}>AliExpress</option>
       </select>
+      {% if _editando %}<span class="muted small">não editável (identidade)</span>{% endif %}
     </label>
     <label>
       Item ID
-      <input type="text" name="item_id" required maxlength="100" placeholder="MLB123456789">
+      <input type="text" name="item_id" required maxlength="100" placeholder="MLB123456789"
+             value="{{ produto.item_id if _editando else '' }}"
+             {% if _editando %}readonly{% endif %}>
+      {% if _editando %}<span class="muted small">não editável (identidade)</span>{% endif %}
     </label>
   </div>
 
   <label>
     Nome do produto
-    <input type="text" name="nome" required maxlength="500">
+    <input type="text" name="nome" required maxlength="500"
+           value="{{ produto.nome if _editando else '' }}">
   </label>
 
   <div class="form-row">
     <label>
       Preço atual (R$)
-      <input type="text" name="preco" required placeholder="89.90">
+      <input type="text" name="preco" required placeholder="89.90"
+             value="{{ '%.2f'|format(produto.preco) if _editando else '' }}">
     </label>
     <label>
       Preço original (opcional)
-      <input type="text" name="preco_orig" placeholder="159.00">
+      <input type="text" name="preco_orig" placeholder="159.00"
+             value="{{ '%.2f'|format(produto.preco_orig) if _editando and produto.preco_orig else '' }}">
     </label>
     <label>
       Desconto % (opcional)
-      <input type="text" name="desconto" placeholder="44">
+      <input type="text" name="desconto" placeholder="44"
+             value="{{ produto.desconto if _editando and produto.desconto else '' }}">
     </label>
     <label>
       Comissão % (opcional)
-      <input type="text" name="comissao" placeholder="8">
+      <input type="text" name="comissao" placeholder="8"
+             value="{{ produto.comissao if _editando and produto.comissao else '' }}">
     </label>
   </div>
 
   <label>
     Categoria (opcional)
-    <input type="text" name="categoria" maxlength="200">
+    <input type="text" name="categoria" maxlength="200"
+           value="{{ produto.categoria or '' if _editando else '' }}">
   </label>
 
   <label>
     URL canônica (sem tag)
-    <input type="text" name="url_canonica" maxlength="2000">
+    <input type="text" name="url_canonica" maxlength="2000"
+           value="{{ produto.url_canonica or '' if _editando else '' }}">
   </label>
 
   <label>
     URL com tag de afiliado
-    <input type="text" name="url_afiliado" maxlength="2000">
+    <input type="text" name="url_afiliado" maxlength="2000"
+           value="{{ produto.url_afiliado or '' if _editando else '' }}">
     <span class="muted small">É a URL que vai pro grupo. Se vazia, usa a canônica.</span>
   </label>
 
   <label>
     URL da foto
-    <input type="text" name="foto_url" maxlength="2000">
+    <input type="text" name="foto_url" maxlength="2000"
+           value="{{ produto.foto_url or '' if _editando else '' }}">
   </label>
 
   <label>
     Nichos (segura Ctrl pra selecionar vários)
     <select name="nichos_ids" multiple size="8" style="height: auto;">
       {% for n in nichos %}
-        <option value="{{ n.id }}">{{ n.icone or '' }} {{ n.label }}</option>
+        <option value="{{ n.id }}"
+                {% if _editando and nichos_atuais and n.id in nichos_atuais %}selected{% endif %}>
+          {{ n.icone or '' }} {{ n.label }}
+        </option>
       {% endfor %}
     </select>
   </label>
 
-  <button type="submit" class="btn btn-primario">Criar produto</button>
+  <button type="submit" class="btn btn-primario">
+    {% if _editando %}Salvar alterações{% else %}Criar produto{% endif %}
+  </button>
 </form>
 
 {% endblock %}

@@ -1295,6 +1295,145 @@ async def bloquear_produto(
     return RedirectResponse(url="/produtos", status_code=302)
 
 
+@router.get("/produtos/{produto_id}/editar", response_class=HTMLResponse)
+async def editar_produto_form(
+    request: Request,
+    produto_id: int,
+    admin: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Form de edição com campos pré-preenchidos."""
+    p = await db.get(Produto, produto_id)
+    if p is None or p.org_id != admin.org_id:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    nichos = list((await db.execute(
+        select(Nicho).where(Nicho.ativo.is_(True)).order_by(Nicho.ordem, Nicho.label)
+    )).scalars().all())
+
+    nichos_atuais = {nid for (nid,) in (await db.execute(
+        select(ProdutoNicho.nicho_id).where(ProdutoNicho.produto_id == produto_id)
+    )).all()}
+
+    return templates.TemplateResponse(
+        request, "produto_form.html",
+        {"user": admin, "nichos": nichos, "produto": p,
+         "nichos_atuais": nichos_atuais, "erro": None},
+    )
+
+
+@router.post("/produtos/{produto_id}/editar", response_class=HTMLResponse)
+async def salvar_edicao_produto(
+    request: Request,
+    produto_id: int,
+    nome:       str = Form(...),
+    preco:      str = Form(...),
+    preco_orig: str = Form(""),
+    desconto:   str = Form(""),
+    comissao:   str = Form(""),
+    categoria:  str = Form(""),
+    url_canonica: str = Form(""),
+    url_afiliado: str = Form(""),
+    foto_url:   str = Form(""),
+    nichos_ids: list[int] = Form(default=[]),
+    admin: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Salva edição. Plataforma + item_id NÃO mudam (identidade do produto)."""
+    p = await db.get(Produto, produto_id)
+    if p is None or p.org_id != admin.org_id:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    def _f(v: str) -> float | None:
+        v = (v or "").replace(",", ".").strip()
+        if not v:
+            return None
+        try:
+            return float(v)
+        except ValueError:
+            return None
+
+    preco_val = _f(preco)
+    if preco_val is None or preco_val < 0:
+        nichos = list((await db.execute(
+            select(Nicho).where(Nicho.ativo.is_(True))
+        )).scalars().all())
+        nichos_atuais = {nid for (nid,) in (await db.execute(
+            select(ProdutoNicho.nicho_id).where(ProdutoNicho.produto_id == produto_id)
+        )).all()}
+        return templates.TemplateResponse(
+            request, "produto_form.html",
+            {"user": admin, "nichos": nichos, "produto": p,
+             "nichos_atuais": nichos_atuais,
+             "erro": "Preço inválido — use formato: 89.90"},
+            status_code=400,
+        )
+
+    p.nome         = nome.strip()
+    p.preco        = preco_val
+    p.preco_orig   = _f(preco_orig)
+    p.desconto     = _f(desconto)
+    p.comissao     = _f(comissao)
+    p.categoria    = categoria.strip() or None
+    p.url_canonica = url_canonica.strip() or None
+    p.url_afiliado = url_afiliado.strip() or None
+    p.foto_url     = foto_url.strip() or None
+
+    # Sincroniza nichos: remove os antigos, adiciona os novos
+    await db.execute(
+        ProdutoNicho.__table__.delete().where(ProdutoNicho.produto_id == produto_id)
+    )
+    for nid in nichos_ids:
+        db.add(ProdutoNicho(produto_id=produto_id, nicho_id=nid))
+
+    await db.commit()
+    return RedirectResponse(url="/produtos", status_code=302)
+
+
+@router.post("/produtos/{produto_id}/excluir", response_class=HTMLResponse)
+async def excluir_produto(
+    produto_id: int,
+    admin: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Apaga 1 produto. CASCADE remove produto_nichos + redirects associados."""
+    p = await db.get(Produto, produto_id)
+    if p is None or p.org_id != admin.org_id:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    await db.delete(p)
+    await db.commit()
+    return RedirectResponse(url="/produtos", status_code=302)
+
+
+@router.post("/produtos/excluir-todos", response_class=HTMLResponse)
+async def excluir_todos_produtos(
+    confirmacao: str = Form(...),
+    admin: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """
+    Apaga TODOS os produtos da org. Confirmação tripla:
+    - JS no front pede 2× confirm() + 1× prompt() (texto "APAGAR TUDO")
+    - Servidor exige o mesmo token "APAGAR TUDO" no campo `confirmacao`
+    """
+    if confirmacao != "APAGAR TUDO":
+        raise HTTPException(
+            status_code=400,
+            detail="Token de confirmação inválido — operação cancelada.",
+        )
+
+    # CASCADE remove produto_nichos + redirects automaticamente
+    result = await db.execute(
+        Produto.__table__.delete().where(Produto.org_id == admin.org_id)
+    )
+    await db.commit()
+    apagados = result.rowcount or 0
+    return RedirectResponse(
+        url=f"/produtos?mensagem=Apagados+{apagados}+produtos",
+        status_code=302,
+    )
+
+
 @router.get("/produtos/import-csv", response_class=HTMLResponse)
 async def pagina_import_csv(
     request: Request,

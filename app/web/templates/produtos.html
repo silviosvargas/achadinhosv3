@@ -8,12 +8,27 @@
     <p class="muted">Catálogo da sua organização — produtos elegíveis pra postar.</p>
   </div>
   {% if pode_criar %}
-  <div style="display:flex; gap:10px;">
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
     <a href="/produtos/import-csv" class="btn btn-primario">📥 Importar CSV</a>
     <a href="/produtos/novo" class="btn btn-primario">+ Adicionar produto</a>
+    {% if produtos %}
+    <form method="post" action="/produtos/excluir-todos" style="display:inline"
+          onsubmit="return confirmarApagarTudo(this)">
+      <input type="hidden" name="confirmacao" value="">
+      <button type="submit" class="btn"
+              style="background:#dc2626; color:white; border:none;">
+        🗑️ Apagar todos
+      </button>
+    </form>
+    {% endif %}
   </div>
   {% endif %}
 </header>
+
+{% set _mensagem = request.query_params.get('mensagem') %}
+{% if _mensagem %}
+<div class="alerta alerta-ok" style="margin-bottom:12px;">{{ _mensagem }}</div>
+{% endif %}
 
 <form method="get" action="/produtos" class="filtros-form">
   <input type="text" name="busca" placeholder="Buscar nome..." value="{{ filtro_busca }}">
@@ -103,11 +118,20 @@
       </td>
       <td>
         {% if pode_criar %}
-        <form method="post" action="/produtos/{{ p.id }}/bloquear" style="display:inline">
-          <button type="submit" class="btn-link">
-            {% if p.bloqueado %}desbloquear{% else %}bloquear{% endif %}
-          </button>
-        </form>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <a href="/produtos/{{ p.id }}/editar" class="btn-link"
+             title="Editar produto">✏️ editar</a>
+          <form method="post" action="/produtos/{{ p.id }}/bloquear" style="display:inline">
+            <button type="submit" class="btn-link" title="Bloquear/desbloquear pra postagem">
+              {% if p.bloqueado %}desbloquear{% else %}bloquear{% endif %}
+            </button>
+          </form>
+          <form method="post" action="/produtos/{{ p.id }}/excluir" style="display:inline"
+                onsubmit="return confirmarExcluirProduto({{ p.nome[:80] | tojson }});">
+            <button type="submit" class="btn-link" style="color:#dc2626;"
+                    title="Apagar produto (irreversível)">🗑️ excluir</button>
+          </form>
+        </div>
         {% endif %}
       </td>
     </tr>
@@ -128,5 +152,51 @@
   {% endif %}
 </div>
 {% endif %}
+
+<script>
+// Confirmação simples pra excluir 1 produto (escape de nome via tojson no Jinja).
+function confirmarExcluirProduto(nome) {
+  return confirm(
+    "Apagar este produto?\n\n" + nome +
+    "\n\nIsso remove também o redirect /r/{slug} e as marcações de nicho.\n" +
+    "A ação é IRREVERSÍVEL."
+  );
+}
+
+// Confirmação TRIPLA pra "apagar todos" — 2× confirm + 1× prompt com token.
+// O servidor exige o mesmo token "APAGAR TUDO" no campo `confirmacao`, então
+// se alguém bypassar o JS ainda precisa enviar o texto correto.
+function confirmarApagarTudo(form) {
+  // Etapa 1 — aviso inicial
+  if (!confirm(
+    "⚠️  ATENÇÃO\n\n" +
+    "Você está prestes a APAGAR TODOS os produtos da sua organização.\n\n" +
+    "Isso vai remover também:\n" +
+    "  • todos os redirects /r/{slug} associados\n" +
+    "  • todas as marcações de nicho\n\n" +
+    "A ação é IRREVERSÍVEL.\n\nContinuar?"
+  )) return false;
+
+  // Etapa 2 — confirmação dupla
+  if (!confirm(
+    "Última chance pra cancelar.\n\n" +
+    "Tem CERTEZA ABSOLUTA que quer apagar TODOS os produtos?"
+  )) return false;
+
+  // Etapa 3 — token textual
+  const resposta = prompt(
+    "Confirmação final.\n\n" +
+    "Digite exatamente APAGAR TUDO (em maiúsculas) pra confirmar:"
+  );
+  if (resposta !== "APAGAR TUDO") {
+    alert("Texto não confere — operação cancelada.");
+    return false;
+  }
+
+  // Preenche o hidden input pro servidor validar também
+  form.querySelector('input[name="confirmacao"]').value = "APAGAR TUDO";
+  return true;
+}
+</script>
 
 {% endblock %}
