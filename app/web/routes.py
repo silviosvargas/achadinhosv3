@@ -1427,11 +1427,29 @@ async def salvar_edicao_produto(
             status_code=400,
         )
 
+    from datetime import datetime, timezone
+    from app.services.scoring import calcular_nota
+
     p.nome         = nome.strip()
     p.preco        = preco_val
     p.preco_orig   = _f(preco_orig)
     p.desconto     = _f(desconto)
-    p.comissao     = _f(comissao)
+
+    # ── Fase 18.5: comissão editada manualmente é MARCADA ─────────────
+    # Quando admin edita comissão pela UI, marca `comissao_fonte=manual`
+    # (topo da hierarquia). Buscas/revalidações automáticas NÃO sobrescrevem
+    # — `_upsert_produto` respeita a hierarquia (v3.4.4+).
+    nova_comissao = _f(comissao)
+    if nova_comissao is not None and nova_comissao != p.comissao:
+        p.comissao               = nova_comissao
+        p.comissao_fonte         = "manual"
+        p.comissao_atualizada_em = datetime.now(tz=timezone.utc)
+    elif nova_comissao is None and p.comissao is not None:
+        # Admin limpou o campo de propósito — também conta como manual
+        p.comissao               = None
+        p.comissao_fonte         = "manual"
+        p.comissao_atualizada_em = datetime.now(tz=timezone.utc)
+
     p.categoria    = categoria.strip() or None
     p.url_canonica = url_canonica.strip() or None
     p.url_afiliado = url_afiliado.strip() or None
@@ -1443,6 +1461,20 @@ async def salvar_edicao_produto(
     )
     for nid in nichos_ids:
         db.add(ProdutoNicho(produto_id=produto_id, nicho_id=nid))
+
+    # Recalcula nota com valores atualizados (Fase 18)
+    info_nota = calcular_nota({
+        "plataforma":     p.plataforma,
+        "preco":          p.preco,
+        "preco_orig":     p.preco_orig,
+        "desconto":       p.desconto,
+        "comissao":       p.comissao,
+        "total_vendidos": p.total_vendidos,
+        "is_bestseller":  p.is_bestseller,
+        "is_em_alta":     p.is_em_alta,
+    })
+    p.nota              = info_nota["nota"]
+    p.comissao_validada = info_nota["comissao_validada"]
 
     await db.commit()
     return RedirectResponse(url="/produtos", status_code=302)

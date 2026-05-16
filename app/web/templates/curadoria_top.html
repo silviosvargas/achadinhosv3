@@ -124,9 +124,10 @@
             <span class="badge badge-vermelho" style="font-size:9px;"
                   title="Comissão fora do range esperado — score_comissao zerado">⚠</span>
           {% endif %}
-          {# Fase 18.3: label amigável por fonte (mostra confiabilidade do dado).
-             Ordem de confiabilidade: barra_afiliados > painel > api/tabela > estimativa. #}
+          {# Fase 18.5: label amigável por fonte (mostra confiabilidade do dado).
+             Hierarquia: manual > barra_afiliados > painel > api/tabela > estimativa. #}
           {% set _fontes = {
+            'manual':             ('✏️ manual', 'Admin editou pela UI — valor PROTEGIDO contra sobrescrita automática'),
             'ml_barra_afiliados': ('✅ ML barra', 'Capturado da barra de afiliados ML na própria página do produto (FONTE DE VERDADE — inclui bônus EXTRAS)'),
             'ml_painel':          ('🔵 ML painel', 'Capturado do painel afiliados linkbuilder ML'),
             'shopee_api':         ('🟢 API Shopee', 'Direto da API oficial de afiliados Shopee'),

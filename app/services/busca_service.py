@@ -745,7 +745,11 @@ def _fonte_default_por_plataforma(plataforma: str) -> str:
 # real porque o servidor refinava pra `categoria_ml_v2` quando captura
 # falhava na nova busca, e sobrescrevia o `ml_barra_afiliados` antigo.
 # Documentado em CLAUDE.md armadilha "Hierarquia de comissao_fonte".
+#
+# v3.4.5: `manual` adicionado no topo — quando admin edita comissão pela UI
+# (PATCH /produtos/{id}), marca como manual. Imutável por busca automática.
 _HIERARQUIA_FONTE_COMISSAO = [
+    "manual",               # admin editou pela UI editar produto — MÁXIMA confiança
     "ml_barra_afiliados",   # capturado da barra preta ML (Fase 18.3) — fonte de verdade
     "ml_painel",            # capturado do painel linkbuilder ML (Fase 18.0)
     "shopee_api",           # Shopee API direta (Fase 18.0)

@@ -64,6 +64,23 @@
       Comissão % (opcional)
       <input type="text" name="comissao" placeholder="8"
              value="{{ produto.comissao if _editando and produto.comissao else '' }}">
+      {% if _editando and produto.comissao_fonte %}
+        {% set _labels = {
+          'manual':             ('✏️ manual', 'protegido contra sobrescrita'),
+          'ml_barra_afiliados': ('✅ ML barra', 'capturado da barra de afiliados'),
+          'ml_painel':          ('🔵 ML painel', 'do painel linkbuilder ML'),
+          'shopee_api':         ('🟢 API Shopee', 'da API Shopee oficial'),
+          'amazon_tabela':      ('🟠 tabela Amazon', 'tabela oficial Amazon BR'),
+          'categoria_ml_v2':    ('🟡 categoria ML', 'estimativa servidor por categoria'),
+          'estimativa':         ('⚪ estimativa', 'estimativa genérica'),
+        } %}
+        {% set _lab, _help = _labels.get(produto.comissao_fonte, ('?', '')) %}
+        <small style="color:var(--muted); display:block; margin-top:4px;">
+          Fonte atual: <strong>{{ _lab }}</strong> · <em>{{ _help }}</em>.
+          Ao editar e salvar, fica como <strong>✏️ manual</strong> e não é
+          mais sobrescrita por buscas automáticas.
+        </small>
+      {% endif %}
     </label>
   </div>
 
