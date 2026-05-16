@@ -2200,6 +2200,8 @@ async def lista_buscas(
     mensagem: str | None = None,
     erro: str | None = None,
 ):
+    from app.core.buscas_padrao import listar_ativas as _listar_padrao
+
     buscas = list((await db.execute(
         select(BuscaML).where(BuscaML.org_id == user.org_id)
         .order_by(BuscaML.criado_em.desc())
@@ -2209,11 +2211,43 @@ async def lista_buscas(
         {
             "user": user,
             "buscas": buscas,
+            "buscas_padrao": _listar_padrao(),     # Fase 19 — seção topo
             "pode_admin": user.eh_admin,
-            "mensagem": mensagem,
-            "erro": erro,
+            "mensagem": mensagem or request.query_params.get("mensagem"),
+            "erro": erro or request.query_params.get("erro"),
         },
     )
+
+
+@router.post("/buscas/padrao/{slug}/rodar", response_class=HTMLResponse)
+async def buscas_padrao_rodar_form(
+    slug: str,
+    admin: Usuario = Depends(exigir_admin),
+    db:    AsyncSession = Depends(get_db_async),
+):
+    """Fase 19: dispara uma busca padrão (admin-only).
+
+    Cria Tarefa(BUSCAR_MERCADO_LIVRE) com payload da busca padrão, agente
+    abre cada categoria, captura comissão REAL via barra preta, salva.
+    """
+    from urllib.parse import quote_plus
+    from app.services import buscas_padrao_service
+
+    try:
+        resultado = await buscas_padrao_service.disparar(
+            db, slug=slug, org_id=admin.org_id,
+            criado_por_usuario_id=admin.id,
+        )
+        if resultado.get("ok"):
+            msg = "mensagem=" + quote_plus(resultado["mensagem"])
+        else:
+            msg = "erro=" + quote_plus(resultado.get("erro", "erro_desconhecido"))
+    except buscas_padrao_service.BuscaPadraoServiceError as e:
+        msg = "erro=" + quote_plus(str(e))
+    except Exception as e:
+        msg = "erro=" + quote_plus(f"Falha: {str(e)[:120]}")
+
+    return RedirectResponse(url=f"/buscas?{msg}", status_code=302)
 
 
 @router.get("/buscas/nova", response_class=HTMLResponse)

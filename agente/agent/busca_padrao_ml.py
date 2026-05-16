@@ -1,0 +1,368 @@
+"""
+Busca padrão ML — top 10 mais vendidos por categoria com comissão REAL
+(Fase 19, v3.5.0).
+
+Fluxo por categoria:
+1. Abre página `mais-vendidos/MLBxxx` da categoria
+2. Extrai N candidatos (default 20) via `_extrair_cards_da_pagina`
+3. Gera `meli.la` pra TODOS os candidatos via `_gerar_meli_la_no_driver`
+4. Pra cada candidato com meli.la: abre meli.la → /social/ → clica "Ir
+   para produto" → captura comissão REAL + preço REAL via
+   `_capturar_comissao_e_preco_no_destino`
+5. Ordena candidatos por `(preço × comissão_real)` DESC
+6. Mantém top 10 da categoria
+7. Devolve lista pro orquestrador (que faz ingest)
+
+Custo: ~20 candidatos × ~3s/captura = ~1min por categoria.
+8 categorias = ~8min por execução.
+
+⚠ NÃO inventar abordagem alternativa. Documentado em CLAUDE.md:
+"meli.la → /social/ → clicar 'Ir para produto' → barra preta".
+"""
+from __future__ import annotations
+
+import asyncio
+import random
+import threading
+import time
+from typing import Any
+
+import structlog
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+from agent.config import Config
+
+log = structlog.get_logger(__name__)
+
+
+# Mesmas 8 categorias do mais_vendidos (busca_ml.py CATEGORIAS_MAIS_VENDIDOS),
+# replicadas aqui pra evitar import circular e permitir evolução independente
+# (ex: adicionar subcategorias no futuro sem mexer no busca_ml).
+CATEGORIAS_PADRAO = [
+    # (nome_display, url_mais_vendidos, comissao_estimada_para_fallback)
+    ("Roupas, Calçados e Acessórios", "https://www.mercadolivre.com.br/mais-vendidos/MLB1430", 14.0),
+    ("Esportes e Fitness",            "https://www.mercadolivre.com.br/mais-vendidos/MLB1276", 12.0),
+    ("Beleza e Cuidado Pessoal",      "https://www.mercadolivre.com.br/mais-vendidos/MLB1246", 12.0),
+    ("Bebês",                          "https://www.mercadolivre.com.br/mais-vendidos/MLB5726", 10.0),
+    ("Casa, Móveis e Decoração",      "https://www.mercadolivre.com.br/mais-vendidos/MLB1574", 10.0),
+    ("Eletrônicos, Áudio e Vídeo",    "https://www.mercadolivre.com.br/mais-vendidos/MLB1051",  8.0),
+    ("Informática",                    "https://www.mercadolivre.com.br/mais-vendidos/MLB1648",  8.0),
+    ("Ferramentas",                    "https://www.mercadolivre.com.br/mais-vendidos/MLB1499",  8.0),
+]
+
+# Quantos finais por categoria (depois da filtragem por preço × comissão_real)
+TOP_FINAL_POR_CATEGORIA = 10
+
+
+def _capturar_comissao_e_preco_no_destino(driver) -> tuple[float | None, float | None]:
+    """Captura comissão (barra preta) + preço atual via JS na página atual.
+
+    Pré-condição: driver já está na página DO PRODUTO (após meli.la →
+    /social/ → clicar "Ir para produto"). NÃO chamar em /social/.
+
+    Returns:
+        (comissao_pct, preco) — qualquer um pode ser None se não achou.
+        Comissão: prefere "GANHOS EXTRAS X%" sobre "GANHOS X%" base.
+    """
+    dados = driver.execute_script(r"""
+        // Helper: busca GANHOS [EXTRAS] X% no texto, prefere EXTRAS
+        function buscarComissao(scopo) {
+            var res = {extras: null, base: null};
+            var txt = scopo.textContent || '';
+            var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mE) {
+                var nE = parseFloat(mE[1].replace(',', '.'));
+                if (!isNaN(nE) && nE > 0 && nE <= 50) res.extras = nE;
+            }
+            var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mB) {
+                var nB = parseFloat(mB[1].replace(',', '.'));
+                if (!isNaN(nB) && nB > 0 && nB <= 50) res.base = nB;
+            }
+            return res;
+        }
+
+        // Procura comissão em elementos prováveis (header/banner afiliados)
+        var seletores = [
+            'header', '[class*="affiliate"]', '[class*="afiliad"]',
+            '[class*="banner"]', '[id*="banner"]',
+        ];
+        var melhorCom = {extras: null, base: null};
+        for (var i = 0; i < seletores.length; i++) {
+            var els = document.querySelectorAll(seletores[i]);
+            for (var j = 0; j < els.length; j++) {
+                var r = buscarComissao(els[j]);
+                if (r.extras !== null && melhorCom.extras === null) melhorCom.extras = r.extras;
+                if (r.base   !== null && melhorCom.base   === null) melhorCom.base   = r.base;
+            }
+            if (melhorCom.extras !== null) break;
+        }
+        if (melhorCom.extras === null && melhorCom.base === null) {
+            melhorCom = buscarComissao(document.body);
+        }
+        var comissao = melhorCom.extras !== null ? melhorCom.extras : melhorCom.base;
+
+        // Captura preço atual — XPath excluindo <s> (riscado) pra não pegar o original
+        var preco = null;
+        var precoEls = document.evaluate(
+            ".//*[contains(concat(' ', normalize-space(@class), ' '), ' andes-money-amount__fraction ') and not(ancestor::s)]",
+            document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null,
+        );
+        if (precoEls.snapshotLength > 0) {
+            var int_el = precoEls.snapshotItem(0);
+            var inteiro = (int_el.textContent || '').replace(/[^\d]/g, '');
+            if (inteiro) {
+                var base = parseFloat(inteiro);
+                // Cents (opcional)
+                var centsEls = document.evaluate(
+                    ".//*[contains(concat(' ', normalize-space(@class), ' '), ' andes-money-amount__cents ') and not(ancestor::s)]",
+                    document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null,
+                );
+                if (centsEls.snapshotLength > 0) {
+                    var c = (centsEls.snapshotItem(0).textContent || '').replace(/[^\d]/g, '');
+                    if (c) base += parseFloat(c) / 100;
+                }
+                if (!isNaN(base) && base > 0) preco = base;
+            }
+        }
+
+        return {comissao: comissao, preco: preco};
+    """) or {}
+
+    com = dados.get("comissao")
+    pre = dados.get("preco")
+    try:
+        com = float(com) if com is not None else None
+    except (TypeError, ValueError):
+        com = None
+    try:
+        pre = float(pre) if pre is not None else None
+    except (TypeError, ValueError):
+        pre = None
+    return com, pre
+
+
+def _entrar_produto_via_meli_la(driver, meli_la_url: str) -> bool:
+    """Fluxo OBRIGATÓRIO (documentado em CLAUDE.md):
+    1. Abre meli.la
+    2. ML redireciona pra /social/<usuario>
+    3. Procura botão "Ir para produto" → extrai href ou clica
+    4. Navega pra página do produto
+
+    Returns: True se conseguiu chegar na página do produto, False caso contrário.
+    """
+    try:
+        driver.get(meli_la_url)
+        time.sleep(2.0)  # aguarda redirect
+
+        url_atual = (driver.current_url or "").lower()
+        if "/social/" in url_atual:
+            destino = driver.execute_script(r"""
+                var els = document.querySelectorAll('a, button');
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    var t = (el.textContent || '').trim().toLowerCase();
+                    if (t.indexOf('ir para produto') !== -1
+                            || t.indexOf('ver produto') !== -1) {
+                        if (el.tagName === 'A' && el.href) return el.href;
+                        el.click();
+                        return 'CLICKED';
+                    }
+                }
+                return null;
+            """)
+            if isinstance(destino, str) and destino.startswith("http"):
+                driver.get(destino)
+            elif destino == "CLICKED":
+                pass  # clicou, aguarda navegação
+            else:
+                log.warning("ml.padrao.botao_ausente", meli=meli_la_url[:80])
+                return False
+            time.sleep(2.0)
+        return True
+    except Exception as e:
+        log.debug("ml.padrao.entrar_falhou", meli=meli_la_url[:80], erro=str(e)[:120])
+        return False
+
+
+def _processar_categoria(
+    driver, *, nome_categoria: str, url_categoria: str,
+    comissao_estimada: float, candidatos_por_categoria: int,
+) -> list[dict[str, Any]]:
+    """Processa UMA categoria de cabo a rabo:
+    1. Extrai N candidatos da página de mais-vendidos
+    2. Gera meli.la pra todos
+    3. Pra cada um, abre meli.la → /social/ → produto → captura comissão e preço REAIS
+    4. Ordena por (preço × comissão_real) DESC, mantém TOP_FINAL_POR_CATEGORIA
+
+    Retorna lista de produtos prontos pra ingest (com `comissao_fonte=ml_barra_afiliados`).
+    """
+    # Imports tardios pra reusar lógica de busca_ml SEM duplicar
+    from agent.busca_ml import (
+        _extrair_cards_da_pagina,
+        _gerar_meli_la_no_driver,
+        _bloqueado_por_login,
+        _scroll_lazy_load,
+    )
+
+    log.info("ml.padrao.categoria_iniciada",
+             nome=nome_categoria, url=url_categoria,
+             candidatos_alvo=candidatos_por_categoria)
+
+    # 1. Abre página de mais-vendidos e extrai candidatos
+    try:
+        driver.get(url_categoria)
+    except Exception as e:
+        log.warning("ml.padrao.get_categoria_falhou",
+                    nome=nome_categoria, erro=str(e)[:120])
+        return []
+
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+    except TimeoutException:
+        log.warning("ml.padrao.timeout_categoria", nome=nome_categoria)
+        return []
+
+    if _bloqueado_por_login(driver.current_url):
+        raise RuntimeError(
+            f"ML exige login na busca padrão ({nome_categoria}). "
+            "Rode `python -m agent.login_ml` uma vez."
+        )
+
+    _scroll_lazy_load(driver)
+    candidatos = _extrair_cards_da_pagina(driver)
+    candidatos = candidatos[:candidatos_por_categoria]
+
+    if not candidatos:
+        log.warning("ml.padrao.categoria_vazia", nome=nome_categoria)
+        return []
+
+    # Preenche metadados: categoria + flag bestseller + fonte default
+    for p in candidatos:
+        p["categoria"] = nome_categoria
+        p["is_bestseller"] = True
+        p.setdefault("comissao", comissao_estimada)
+        p.setdefault("comissao_fonte", "estimativa")
+
+    log.info("ml.padrao.candidatos_extraidos",
+             nome=nome_categoria, total=len(candidatos))
+
+    # 2. Gera meli.la inline pra todos (reusa fluxo conhecido)
+    _gerar_meli_la_no_driver(
+        driver, candidatos, log_prefixo=f"ml.padrao[{nome_categoria}]",
+    )
+
+    # 3. Pra cada com meli.la, abre → /social/ → produto → captura comissão e preço REAIS
+    capturados = 0
+    for i, p in enumerate(candidatos, start=1):
+        meli = p.get("url_afiliado") or ""
+        if "meli.la/" not in meli:
+            log.info("ml.padrao.sem_meli_la_pula",
+                     item_id=p.get("item_id"), n=i, total=len(candidatos))
+            continue
+
+        ok = _entrar_produto_via_meli_la(driver, meli)
+        if not ok:
+            continue
+
+        com_real, preco_real = _capturar_comissao_e_preco_no_destino(driver)
+
+        if com_real and com_real > 0:
+            p["comissao"]       = com_real
+            p["comissao_fonte"] = "ml_barra_afiliados"
+            capturados += 1
+        if preco_real and preco_real > 0 and abs(preco_real - (p.get("preco") or 0)) > 0.01:
+            log.info("ml.padrao.preco_atualizado",
+                     item_id=p.get("item_id"),
+                     antes=p.get("preco"), depois=preco_real)
+            p["preco"] = preco_real
+
+        log.info("ml.padrao.captura",
+                 n=i, total=len(candidatos),
+                 item_id=p.get("item_id"),
+                 comissao=p.get("comissao"),
+                 fonte=p.get("comissao_fonte"),
+                 preco=p.get("preco"))
+
+        # Delay anti rate-limit
+        time.sleep(random.uniform(0.4, 0.9))
+
+    # 4. Ordena por (preço × comissão) DESC e mantém top N
+    def _score_ranking(prod: dict) -> float:
+        preco = prod.get("preco") or 0
+        com   = prod.get("comissao") or 0
+        return float(preco) * float(com) / 100.0  # ganho R$ estimado
+
+    candidatos.sort(key=_score_ranking, reverse=True)
+    top = candidatos[:TOP_FINAL_POR_CATEGORIA]
+
+    log.info("ml.padrao.categoria_concluida",
+             nome=nome_categoria,
+             candidatos=len(candidatos),
+             com_comissao_real=capturados,
+             top_selecionados=len(top))
+    return top
+
+
+def _varrer_padrao_completo_sync(
+    cfg: Config, *, candidatos_por_categoria: int = 20,
+) -> list[dict[str, Any]]:
+    """Loop principal: itera todas as categorias hardcoded em CATEGORIAS_PADRAO.
+
+    Pra cada categoria, chama `_processar_categoria` que retorna o top 10
+    com comissão real capturada. Junta tudo numa lista única e devolve.
+    """
+    # Reusa lock e driver ML do módulo principal
+    from agent.busca_ml import _criar_driver_ml
+    from agent.linkbuilder_ml import _LOCK_CHROME_ML
+
+    log.info("ml.padrao.iniciando",
+             categorias=len(CATEGORIAS_PADRAO),
+             candidatos_por_categoria=candidatos_por_categoria)
+
+    with _LOCK_CHROME_ML:
+        driver = _criar_driver_ml(cfg)
+        todos: list[dict[str, Any]] = []
+        try:
+            for i, (nome, url, com_est) in enumerate(CATEGORIAS_PADRAO, start=1):
+                log.info("ml.padrao.categoria",
+                         n=i, total=len(CATEGORIAS_PADRAO), nome=nome)
+                try:
+                    top_cat = _processar_categoria(
+                        driver,
+                        nome_categoria=nome,
+                        url_categoria=url,
+                        comissao_estimada=com_est,
+                        candidatos_por_categoria=candidatos_por_categoria,
+                    )
+                    todos.extend(top_cat)
+                except Exception as e:
+                    log.exception("ml.padrao.categoria_crash",
+                                  nome=nome, erro=str(e)[:200])
+                    continue
+        finally:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+    log.info("ml.padrao.concluido",
+             categorias=len(CATEGORIAS_PADRAO),
+             produtos_finais=len(todos))
+    return todos
+
+
+async def varrer_padrao_completo(
+    cfg: Config, *, candidatos_por_categoria: int = 20,
+) -> list[dict[str, Any]]:
+    """Async wrapper — roda Selenium em thread separada."""
+    return await asyncio.to_thread(
+        _varrer_padrao_completo_sync, cfg,
+        candidatos_por_categoria=candidatos_por_categoria,
+    )

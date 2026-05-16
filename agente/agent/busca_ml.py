@@ -1520,7 +1520,17 @@ async def _coletar_produtos_ml(
     tipo_busca   = msg.get("tipo_busca", "termo_livre")
 
     try:
-        if tipo_busca == "mais_vendidos":
+        if tipo_busca == "padrao_mais_vendidos_completo":
+            # Fase 19 (v3.5.0) — busca padrão: itera 8 categorias, 20 candidatos
+            # cada, gera meli.la, abre cada um pra capturar comissão REAL da
+            # barra preta, ordena por (preço × comissão_real), top 10.
+            # Reusa fluxo `meli.la → /social/ → clicar Ir para produto → barra`.
+            from agent.busca_padrao_ml import varrer_padrao_completo
+            candidatos_por_cat = int(msg.get("candidatos_por_categoria", 20))
+            produtos = await varrer_padrao_completo(
+                cfg, candidatos_por_categoria=candidatos_por_cat,
+            )
+        elif tipo_busca == "mais_vendidos":
             produtos = await asyncio.to_thread(
                 _varrer_mais_vendidos_sync, cfg, max_produtos=max_produtos,
             )

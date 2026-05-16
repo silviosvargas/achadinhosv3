@@ -19,6 +19,53 @@
 {% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
 {% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
 
+{# ── Fase 19: BUSCAS PADRÃO (seção FIXA no topo) ──────────────── #}
+{% if buscas_padrao %}
+<section style="margin-bottom: 28px;">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:12px;">
+    <div>
+      <h2 style="margin:0 0 4px; font-size:18px;">⭐ Buscas padrão</h2>
+      <p style="margin:0; color:var(--muted); font-size:13px;">
+        Buscas oficiais do sistema — captura comissão REAL pelo painel ML.
+      </p>
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:14px;">
+    {% for bp in buscas_padrao %}
+    <div class="card" style="padding:16px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--bg-card);">
+      <div style="font-size:15px; font-weight:600; margin-bottom:6px; color:var(--texto);">
+        {{ bp.nome }}
+      </div>
+      <div style="font-size:12px; color:var(--muted); margin-bottom:12px; line-height:1.4;">
+        {{ bp.descricao }}
+      </div>
+      <div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">
+        <span class="badge badge-cinza" style="font-size:10px;">tipo: {{ bp.tipo_busca }}</span>
+        <span class="badge badge-azul" style="font-size:10px;">~{{ bp.max_produtos }} produtos</span>
+        <span class="badge badge-verde" style="font-size:10px;">✅ comissão real</span>
+      </div>
+      {% if pode_admin %}
+      <form method="post" action="/buscas/padrao/{{ bp.slug }}/rodar" style="margin:0"
+            data-confirm="Rodar '{{ bp.nome }}'? Agente leva ~8min — abre cada produto pra capturar a comissão REAL da barra preta."
+            data-confirm-titulo="Rodar busca padrão?"
+            data-confirm-ok="▶ Sim, rodar agora">
+        <button type="submit" class="btn btn-primario" style="width:100%; height:36px; font-size:13px;">
+          ▶ Rodar agora
+        </button>
+      </form>
+      {% else %}
+      <button class="btn" disabled style="width:100%; height:36px; font-size:13px; opacity:.6;">
+        Só admin pode rodar
+      </button>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+<hr style="border:0; border-top:1px solid var(--border); margin:24px 0;">
+{% endif %}
+
 {% if buscas %}
 
 {# Sumário rápido — quantas / quantas ativas / quantas agendadas #}
