@@ -177,6 +177,7 @@
       <th>Nome</th>
       <th>Plataforma</th>
       <th>Preço</th>
+      <th>Comissão</th>
       <th>Nichos</th>
       <th>Status</th>
       <th></th>
@@ -204,6 +205,28 @@
             <s>R$ {{ "%.2f"|format(p.preco_orig)|replace('.', ',') }}</s>
             {% if p.desconto %} -{{ p.desconto|int }}%{% endif %}
           </div>
+        {% endif %}
+      </td>
+      <td>
+        {# Comissão + label da fonte (Fase 18.5 hierarquia) #}
+        {% if p.comissao %}
+          {% set _fontes_curtas = {
+            'manual':             ('✏️', 'manual'),
+            'ml_barra_afiliados': ('✅', 'ML barra'),
+            'ml_painel':          ('🔵', 'ML painel'),
+            'shopee_api':         ('🟢', 'API Shopee'),
+            'amazon_tabela':      ('🟠', 'tabela Amazon'),
+            'categoria_ml_v2':    ('🟡', 'categoria ML'),
+            'estimativa':         ('⚪', 'estimativa'),
+          } %}
+          {% set _emoji, _lbl = _fontes_curtas.get(p.comissao_fonte or 'estimativa', ('⚪', p.comissao_fonte or 'estimativa')) %}
+          <strong>{{ "%.1f"|format(p.comissao) }}%</strong>
+          {% if p.comissao_validada %}<span title="dentro do range esperado">✓</span>{% endif %}
+          <div class="muted small" title="{{ _lbl }}">
+            {{ _emoji }} {{ _lbl }}
+          </div>
+        {% else %}
+          <span class="muted small">—</span>
         {% endif %}
       </td>
       <td>
