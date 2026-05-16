@@ -124,8 +124,19 @@
             <span class="badge badge-vermelho" style="font-size:9px;"
                   title="Comissão fora do range esperado — score_comissao zerado">⚠</span>
           {% endif %}
-          <small style="color:var(--muted);">
-            ({{ p.comissao_fonte or 'estimativa' }})
+          {# Fase 18.3: label amigável por fonte (mostra confiabilidade do dado).
+             Ordem de confiabilidade: barra_afiliados > painel > api/tabela > estimativa. #}
+          {% set _fontes = {
+            'ml_barra_afiliados': ('✅ ML barra', 'Capturado da barra de afiliados ML na própria página do produto (FONTE DE VERDADE — inclui bônus EXTRAS)'),
+            'ml_painel':          ('🔵 ML painel', 'Capturado do painel afiliados linkbuilder ML'),
+            'shopee_api':         ('🟢 API Shopee', 'Direto da API oficial de afiliados Shopee'),
+            'amazon_tabela':      ('🟠 tabela Amazon', 'Tabela oficial Amazon BR por categoria'),
+            'categoria_ml_v2':    ('🟡 categoria ML', 'Estimativa do servidor baseada na categoria do produto (~50 categorias mapeadas)'),
+            'estimativa':         ('⚪ estimativa', 'Estimativa genérica da categoria pai (otimista — só 8 categorias)'),
+          } %}
+          {% set _fonte_label, _fonte_titulo = _fontes.get(p.comissao_fonte or 'estimativa', ('⚪ ' ~ (p.comissao_fonte or 'estimativa'), '')) %}
+          <small style="color:var(--muted);" title="{{ _fonte_titulo }}">
+            ({{ _fonte_label }})
           </small>
         {% else %}
           <span style="color:var(--muted);">Sem comissão</span>

@@ -720,6 +720,135 @@ def _gerar_meli_la_no_driver(
              total_produtos=len(produtos))
 
 
+# ============================================================
+# Fase 18.3 (v3.4.0) — Comissão REAL via barra de afiliados ML
+# ============================================================
+# Quando o agente está logado como afiliado no `chrome_perfil_ml`, ABRIR
+# uma URL de produto ML mostra uma barra preta no topo da página com:
+#     "GANHOS 5%"           (comissão padrão)
+#     "GANHOS EXTRAS 17%"   (com bônus do programa Mais por Mais)
+# Esse é o valor REAL que o ML vai pagar pelo afiliado naquele produto
+# AGORA — inclui promoções temporárias. Captura mais confiável que:
+# - Painel linkbuilder (DOM muda + nem todo produto aparece)
+# - Tabela hardcoded (média otimista por categoria pai)
+
+# Regex pra "GANHOS X%" ou "GANHOS EXTRAS X%" — case-insensitive.
+# Aceita 0.5..50% (filtra ruído tipo "100% de garantia" etc).
+_RE_BARRA_GANHOS = re.compile(
+    r"GANHOS\s+(?:EXTRAS\s+)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%",
+    flags=re.IGNORECASE,
+)
+
+
+def _capturar_comissao_da_barra(driver, url: str) -> float | None:
+    """Abre URL de produto ML e captura % comissão da barra de afiliados.
+
+    Pré-condição: Chrome do agente já logado como afiliado em sessão
+    persistente (`chrome_perfil_ml`). Sem isso, a barra preta não aparece
+    e a captura retorna None.
+
+    Retorna float (0.5..50) ou None se barra não apareceu.
+    Não levanta exceção — chamado em loop, falha individual = skip.
+    """
+    try:
+        driver.get(url)
+        # Espera curta — a barra é renderizada server-side, aparece rápido
+        time.sleep(1.5)
+        # Captura % da barra de afiliados via JS (mais rápido que iterar DOM)
+        pct = driver.execute_script(r"""
+            // Procura primeiro em elementos prováveis (header/banner de afiliados)
+            var seletores = [
+                'header', '[class*="affiliate"]', '[class*="afiliad"]',
+                '[class*="banner"]', '[id*="banner"]',
+            ];
+            for (var i = 0; i < seletores.length; i++) {
+                var els = document.querySelectorAll(seletores[i]);
+                for (var j = 0; j < els.length; j++) {
+                    var txt = els[j].textContent || '';
+                    var m = txt.match(/GANHOS\s+(?:EXTRAS\s+)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+                    if (m) {
+                        var n = parseFloat(m[1].replace(',', '.'));
+                        if (!isNaN(n) && n > 0 && n <= 50) return n;
+                    }
+                }
+            }
+            // Fallback: scanea body inteiro (mais lento mas robusto)
+            var txt = document.body.textContent || '';
+            var m = txt.match(/GANHOS\s+(?:EXTRAS\s+)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (m) {
+                var n = parseFloat(m[1].replace(',', '.'));
+                if (!isNaN(n) && n > 0 && n <= 50) return n;
+            }
+            return null;
+        """)
+        if pct is None:
+            return None
+        try:
+            return float(pct)
+        except (TypeError, ValueError):
+            return None
+    except Exception as e:
+        log.debug("ml.barra_afiliados.falha", url=url[:120], erro=str(e)[:120])
+        return None
+
+
+def _capturar_comissoes_da_barra_em_lote(
+    driver, produtos: list[dict[str, Any]], *, log_prefixo: str,
+    max_capturas: int | None = None,
+) -> None:
+    """Itera produtos, abre cada URL canônica no MESMO driver, captura
+    comissão da barra de afiliados. Atualiza IN-PLACE:
+        produto["comissao"]        = float capturado
+        produto["comissao_fonte"]  = "ml_barra_afiliados"
+
+    Custo: ~2s por produto (1.5s get + 0.5s ramdom delay anti-rate-limit).
+    Pra lote de 50 produtos: ~1.5min adicional.
+
+    Falha individual (sessão expirou meio do loop, captcha, rede) = skip
+    do produto, mantém o que já tinha (ml_painel/estimativa).
+
+    `max_capturas` limita quantos produtos passam pela captura (default None
+    = todos). Útil pra debug ou pra lotes grandes onde só os top N
+    importam.
+    """
+    import random
+
+    alvos = [p for p in produtos if p.get("url_canonica")]
+    if max_capturas is not None:
+        alvos = alvos[:max_capturas]
+
+    if not alvos:
+        return
+
+    log.info(f"{log_prefixo}.barra_afiliados.iniciado",
+             total=len(alvos), max_capturas=max_capturas)
+
+    capturados = 0
+    falhas = 0
+    for i, p in enumerate(alvos, start=1):
+        url = p.get("url_canonica")
+        if not url:
+            continue
+        pct = _capturar_comissao_da_barra(driver, url)
+        if pct is not None and pct > 0:
+            antes = p.get("comissao")
+            p["comissao"]       = pct
+            p["comissao_fonte"] = "ml_barra_afiliados"
+            capturados += 1
+            log.info(f"{log_prefixo}.barra_afiliados.ok",
+                     n=i, total=len(alvos),
+                     item_id=p.get("item_id"),
+                     antes=antes, depois=pct)
+        else:
+            falhas += 1
+        # Delay aleatório curto pra não estourar rate limit do ML
+        # (cada produto = 1 page load, 50 produtos seguidos é suspeito)
+        time.sleep(random.uniform(0.3, 0.8))
+
+    log.info(f"{log_prefixo}.barra_afiliados.concluido",
+             total=len(alvos), capturados=capturados, falhas=falhas)
+
+
 def _varrer_lista_urls_sync(
     cfg: Config,
     *,
@@ -786,6 +915,12 @@ def _varrer_lista_urls_sync(
 
         # Gera meli.la INLINE no mesmo driver — antes de fechar (igual V2)
         _gerar_meli_la_no_driver(driver, todos, log_prefixo=log_prefixo)
+
+        # Fase 18.3 (v3.4.0) — captura comissão REAL via barra preta de
+        # afiliados ML. Roda DEPOIS do linkbuilder porque também usa o
+        # mesmo driver/sessão logada. Cada produto = 1 navegação adicional
+        # (~2s), aceitável pra lote de 50 (~1.5min extra). Vale a precisão.
+        _capturar_comissoes_da_barra_em_lote(driver, todos, log_prefixo=log_prefixo)
 
     finally:
         try:
@@ -1041,6 +1176,10 @@ def _varrer_produto_unico_sync(
 
         # Gera meli.la INLINE no mesmo driver — igual V2
         _gerar_meli_la_no_driver(driver, [produto], log_prefixo="ml.por_url")
+        # Fase 18.3 — captura comissão real da barra de afiliados
+        _capturar_comissoes_da_barra_em_lote(
+            driver, [produto], log_prefixo="ml.por_url",
+        )
         return [produto]
     finally:
         try:
@@ -1194,6 +1333,8 @@ def _varrer_termo_livre_sync(
 
         # Gera meli.la INLINE no mesmo driver — igual V2
         _gerar_meli_la_no_driver(driver, todos, log_prefixo="ml.termo_livre")
+        # Fase 18.3 — captura comissão real da barra de afiliados ML
+        _capturar_comissoes_da_barra_em_lote(driver, todos, log_prefixo="ml.termo_livre")
 
     finally:
         try:

@@ -543,6 +543,33 @@ async def _upsert_produto(
     is_bestseller  = bool(item.get("is_bestseller"))
     is_em_alta     = bool(item.get("is_em_alta"))
 
+    # ── Fase 18.2/18.3: cascata de fontes pra comissão ML ────────────
+    # Hierarquia de confiabilidade (alta → baixa):
+    #   1. ml_barra_afiliados — agente capturou barra preta do ML afiliados
+    #                            (valor REAL com promoção EXTRAS, fonte de verdade)
+    #   2. ml_painel          — agente capturou tabela do painel linkbuilder
+    #                            (frágil — DOM muda, nem todo produto exibe)
+    #   3. categoria_ml_v2    — servidor estimou pela tabela de ~50 categorias
+    #                            (refinamento baseado no path de categoria)
+    #   4. estimativa         — categoria pai hardcoded no agente (otimista)
+    #
+    # Se a comissão veio de fontes 1 ou 2, NÃO sobrescreve com tabela.
+    # Senão, tenta refinar pelo categoria_ml_v2.
+    FONTES_OFICIAIS_ML = {"ml_barra_afiliados", "ml_painel"}
+    if plataforma == "ml" and comissao_fonte not in FONTES_OFICIAIS_ML:
+        from app.core.comissoes_ml_categorias import estimar_comissao_ml_categoria
+        estimativa_refinada = estimar_comissao_ml_categoria(item.get("categoria"))
+        if estimativa_refinada is not None and estimativa_refinada != comissao_pct:
+            log.info(
+                "ingest.comissao_refinada_por_categoria",
+                item_id=item_id,
+                categoria=item.get("categoria"),
+                antes=comissao_pct,
+                depois=estimativa_refinada,
+            )
+            comissao_pct   = estimativa_refinada
+            comissao_fonte = "categoria_ml_v2"  # estimativa refinada pelo path
+
     # Calcula nota + valida comissão (função pura)
     info_nota = calcular_nota({
         "plataforma":     plataforma,
