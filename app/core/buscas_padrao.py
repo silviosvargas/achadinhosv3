@@ -63,7 +63,48 @@ BUSCAS_PADRAO: list[dict] = [
         "ordem":        2,
         "ativa":        True,
     },
-    # Futuras: Shopee mais ofertas, Amazon bestsellers, etc.
+    {
+        "slug":         "shopee_mais_vendidos",
+        "nome":         "🛍️ Shopee — Top 50 melhor performance",
+        "descricao":    (
+            "Busca produtos no painel oficial de afiliados Shopee via API "
+            "interna (list_type=melhor performance). Retorna até 50 produtos "
+            "com link de afiliado (`long_link`) e comissão REAL direto da API. "
+            "Rápido (~30s) — não precisa abrir cada produto no Chrome. "
+            "Requer login uma vez via `python -m agent.login_shopee`."
+        ),
+        "marketplaces": ["shopee"],
+        "tipo_busca":   "padrao_shopee_mais_vendidos",
+        "max_produtos": 50,
+        "mensagem_run": (
+            "'{nome}' enfileirada (tarefa #{tarefa_id}). Agente vai consultar "
+            "a API afiliados Shopee e ingestar até 50 produtos com link e "
+            "comissão prontos. ~30s."
+        ),
+        "ordem":        3,
+        "ativa":        True,
+    },
+    {
+        "slug":         "amazon_bestsellers",
+        "nome":         "📦 Amazon — Top 50 bestsellers (10 categorias)",
+        "descricao":    (
+            "Itera as 10 categorias bestsellers da Amazon BR "
+            "(`/gp/bestsellers/<cat>`) e usa o SiteStripe pra gerar "
+            "`amzn.to/XXX` afiliado em cada produto. Comissão via tabela "
+            "oficial Amazon por categoria (3–10%). ~3min. Requer login uma "
+            "vez via `python -m agent.login_amazon` no painel Associates."
+        ),
+        "marketplaces": ["amazon"],
+        "tipo_busca":   "padrao_amazon_bestsellers",
+        "max_produtos": 50,
+        "mensagem_run": (
+            "'{nome}' enfileirada (tarefa #{tarefa_id}). Agente vai abrir as "
+            "10 categorias bestsellers Amazon e gerar amzn.to via SiteStripe "
+            "em cada produto. ~3min."
+        ),
+        "ordem":        4,
+        "ativa":        True,
+    },
 ]
 
 

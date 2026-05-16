@@ -101,13 +101,28 @@ async def disparar(
              slug=slug, org_id=org_id, tarefa_id=tarefa.id,
              agente_id=agente.id)
 
-    return {
-        "ok":        True,
-        "tarefa_id": tarefa.id,
-        "mensagem":  (
+    # Mensagem amigável — busca pode especificar texto próprio em `mensagem_run`.
+    # Senão usa fallback genérico baseado em `candidatos_por_categoria` quando
+    # presente (típico ML), ou só nome + tarefa_id pra outras.
+    if "mensagem_run" in busca:
+        msg = busca["mensagem_run"].format(
+            nome=busca["nome"], tarefa_id=tarefa.id,
+        )
+    elif "candidatos_por_categoria" in busca:
+        msg = (
             f"'{busca['nome']}' enfileirada (tarefa #{tarefa.id}). "
             f"Agente vai abrir cada categoria, capturar comissão real de "
             f"~{busca['candidatos_por_categoria']} candidatos, e ingestar os "
             f"melhores. Demora ~8min."
-        ),
+        )
+    else:
+        msg = (
+            f"'{busca['nome']}' enfileirada (tarefa #{tarefa.id}). "
+            f"Acompanhe o progresso no dashboard."
+        )
+
+    return {
+        "ok":        True,
+        "tarefa_id": tarefa.id,
+        "mensagem":  msg,
     }
