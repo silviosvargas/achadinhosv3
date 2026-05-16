@@ -76,41 +76,30 @@ def _capturar_comissao_e_preco_no_destino(
         busca padrão `padrao_comissao_extra` que filtra só os com bônus.
     """
     dados = driver.execute_script(r"""
-        // Helper: busca GANHOS [EXTRAS] X% no texto. Retorna extras E base
-        // separados (chamador decide qual usar).
-        function buscarComissao(scopo) {
-            var res = {extras: null, base: null};
-            var txt = scopo.textContent || '';
-            var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-            if (mE) {
-                var nE = parseFloat(mE[1].replace(',', '.'));
-                if (!isNaN(nE) && nE > 0 && nE <= 50) res.extras = nE;
-            }
-            var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-            if (mB) {
-                var nB = parseFloat(mB[1].replace(',', '.'));
-                if (!isNaN(nB) && nB > 0 && nB <= 50) res.base = nB;
-            }
-            return res;
-        }
-
-        // Procura comissão em elementos prováveis (header/banner afiliados)
-        var seletores = [
-            'header', '[class*="affiliate"]', '[class*="afiliad"]',
-            '[class*="banner"]', '[id*="banner"]',
-        ];
+        // v3.8.2: busca SEMPRE no document.body inteiro.
+        //
+        // BUG anterior (v3.8.0/8.1): otimização com seletores ['header',
+        // 'affiliate', 'banner'...] mascarava EXTRAS. Quando o <header> da
+        // página de produto tinha "GANHOS X%" (base) mas a barra preta de
+        // afiliados (em outro elemento) tinha "GANHOS EXTRAS Y%":
+        //   1. melhorCom.base = X (capturado do header)
+        //   2. Loop continua, nenhum seletor de "affiliate" bateu
+        //   3. melhorCom.extras = null no fim
+        //   4. Fallback no body só rodava se ambos null → NÃO rodava
+        //   5. EXTRAS perdido silenciosamente
+        //
+        // Body contém todo o texto da página. Regex pega o que existir.
+        var txt = document.body ? (document.body.textContent || '') : '';
         var melhorCom = {extras: null, base: null};
-        for (var i = 0; i < seletores.length; i++) {
-            var els = document.querySelectorAll(seletores[i]);
-            for (var j = 0; j < els.length; j++) {
-                var r = buscarComissao(els[j]);
-                if (r.extras !== null && melhorCom.extras === null) melhorCom.extras = r.extras;
-                if (r.base   !== null && melhorCom.base   === null) melhorCom.base   = r.base;
-            }
-            if (melhorCom.extras !== null) break;
+        var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+        if (mE) {
+            var nE = parseFloat(mE[1].replace(',', '.'));
+            if (!isNaN(nE) && nE > 0 && nE <= 50) melhorCom.extras = nE;
         }
-        if (melhorCom.extras === null && melhorCom.base === null) {
-            melhorCom = buscarComissao(document.body);
+        var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+        if (mB) {
+            var nB = parseFloat(mB[1].replace(',', '.'));
+            if (!isNaN(nB) && nB > 0 && nB <= 50) melhorCom.base = nB;
         }
 
         // Captura preço atual — XPath excluindo <s> (riscado) pra não pegar o original

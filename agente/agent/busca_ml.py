@@ -771,37 +771,21 @@ def _capturar_comissao_da_barra(driver, url: str) -> float | None:
         time.sleep(1.5)
 
         pct = driver.execute_script(r"""
-            function buscar(scopo) {
-                var res = {extras: null, base: null};
-                var txt = scopo.textContent || '';
-                var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-                if (mE) {
-                    var nE = parseFloat(mE[1].replace(',', '.'));
-                    if (!isNaN(nE) && nE > 0 && nE <= 50) res.extras = nE;
-                }
-                var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
-                if (mB) {
-                    var nB = parseFloat(mB[1].replace(',', '.'));
-                    if (!isNaN(nB) && nB > 0 && nB <= 50) res.base = nB;
-                }
-                return res;
-            }
-            var seletores = [
-                'header', '[class*="affiliate"]', '[class*="afiliad"]',
-                '[class*="banner"]', '[id*="banner"]',
-            ];
+            // v3.8.2: busca SEMPRE no body inteiro (era seletores específicos
+            // que mascaravam EXTRAS — quando header tinha base mas a barra
+            // preta de afiliados ML estava em outro elemento, perdíamos o
+            // EXTRAS). Detalhes em busca_padrao_ml.py.
+            var txt = document.body ? (document.body.textContent || '') : '';
             var melhor = {extras: null, base: null};
-            for (var i = 0; i < seletores.length; i++) {
-                var els = document.querySelectorAll(seletores[i]);
-                for (var j = 0; j < els.length; j++) {
-                    var r = buscar(els[j]);
-                    if (r.extras !== null && melhor.extras === null) melhor.extras = r.extras;
-                    if (r.base !== null && melhor.base === null) melhor.base = r.base;
-                }
-                if (melhor.extras !== null) break;
+            var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mE) {
+                var nE = parseFloat(mE[1].replace(',', '.'));
+                if (!isNaN(nE) && nE > 0 && nE <= 50) melhor.extras = nE;
             }
-            if (melhor.extras === null && melhor.base === null) {
-                melhor = buscar(document.body);
+            var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mB) {
+                var nB = parseFloat(mB[1].replace(',', '.'));
+                if (!isNaN(nB) && nB > 0 && nB <= 50) melhor.base = nB;
             }
             return melhor.extras !== null ? melhor.extras : melhor.base;
         """)
