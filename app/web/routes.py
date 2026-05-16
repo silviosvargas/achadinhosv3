@@ -380,15 +380,19 @@ async def pagina_baixar_agente(
     )
 
 
-# Cache de 5 min pra URL do installer (evita bater no GitHub a cada click).
+# Cache da URL do installer (evita bater no GitHub a cada click).
+# TTL curto (60s) pra propagar releases recém-publicadas sem espera longa.
+# Bypass via `?nocache=1` quando precisa forçar refresh (ex: usuário acabou
+# de publicar uma versão e quer baixar imediatamente).
 _INSTALADOR_CACHE: dict[str, str | float] = {"url": "", "ate": 0.0}
-_INSTALADOR_TTL_S = 300
+_INSTALADOR_TTL_S = 60
 
 
 @router.get("/agentes/instalador")
 async def baixar_instalador(
     request: Request,
     user: Usuario = Depends(exigir_login),
+    nocache: str | None = None,
 ):
     """
     Redireciona pra última release do agente no GitHub.
@@ -398,6 +402,9 @@ async def baixar_instalador(
     `.github/workflows/release-agente.yml`. Se acha → 302 pra ele
     (download começa direto no browser). Se não acha → renderiza
     `agente_instalador_em_breve.html` com mensagem amigável.
+
+    `?nocache=1` força bypass do cache de 60s — útil logo após publicar
+    uma nova release.
     """
     import time
 
@@ -405,10 +412,11 @@ async def baixar_instalador(
     from fastapi.responses import RedirectResponse
 
     agora = time.time()
-    cached_url = _INSTALADOR_CACHE["url"]
-    cached_ate = _INSTALADOR_CACHE["ate"]
-    if isinstance(cached_url, str) and cached_url and isinstance(cached_ate, float) and agora < cached_ate:
-        return RedirectResponse(url=cached_url, status_code=302)
+    if nocache != "1":
+        cached_url = _INSTALADOR_CACHE["url"]
+        cached_ate = _INSTALADOR_CACHE["ate"]
+        if isinstance(cached_url, str) and cached_url and isinstance(cached_ate, float) and agora < cached_ate:
+            return RedirectResponse(url=cached_url, status_code=302)
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as cli:
