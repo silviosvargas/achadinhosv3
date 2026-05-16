@@ -552,6 +552,8 @@ def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
         marketplace="shopee", ttl_seg=CAPTCHA_TIMEOUT_SEG + 30,
     )
 
+    from selenium.common.exceptions import WebDriverException
+
     inicio = time.time()
     try:
         while time.time() - inicio < CAPTCHA_TIMEOUT_SEG:
@@ -559,6 +561,13 @@ def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
                 resolvido = driver.execute_script(
                     "return window.__shopee_captcha_resolvido === true;"
                 )
+            except WebDriverException as e:
+                # Chrome fechado/crashou — sem usuário pra clicar o botão,
+                # não adianta seguir esperando.
+                log.warning("shopee.captcha_chrome_fechado",
+                            duracao_seg=int(time.time() - inicio),
+                            erro=str(e)[:120])
+                return False
             except Exception as e:
                 log.debug("shopee.captcha_check_falhou", erro=str(e)[:120])
                 resolvido = False
@@ -574,7 +583,11 @@ def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
                     timeout_seg=CAPTCHA_TIMEOUT_SEG)
         return False
     finally:
-        _remover_banner_chrome(driver)
+        # Best-effort cleanup — driver pode estar morto
+        try:
+            _remover_banner_chrome(driver)
+        except Exception:
+            pass
         avisos.limpar(marketplace="shopee")
 
 
@@ -612,8 +625,9 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                             url=url_inicial[:200])
                 problema = (
                     "captcha",
-                    "🤖 Shopee bloqueou esta sessão. Resolva o desafio nesta "
-                    "janela do Chrome. Vou aguardar 30s e continuar.",
+                    "🤖 Shopee bloqueou esta sessão. Resolva o desafio "
+                    "nesta janela do Chrome e clique em '✅ CAPTCHA "
+                    "RESOLVIDO! Continuar...' pra prosseguir.",
                 )
             elif problema is None:
                 # URL ok — faz ping na API pra confirmar que sessão funciona
@@ -627,8 +641,8 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                     problema = (
                         "captcha",
                         "🤖 Shopee bloqueou esta sessão (anti-bot silencioso). "
-                        "Verifique a janela do Chrome — vou aguardar 30s "
-                        "e continuar.",
+                        "Resolva o desafio nesta janela do Chrome e clique "
+                        "em '✅ CAPTCHA RESOLVIDO! Continuar...'.",
                     )
 
             if problema:
@@ -698,9 +712,9 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                                     "captcha",
                                     "🤖 Shopee bloqueou esta sessão (API "
                                     f"retornou status {status}). Pode ser "
-                                    "captcha invisível ou anti-bot. Verifique "
-                                    "a janela do Chrome — vou aguardar 30s "
-                                    "e continuar.",
+                                    "captcha invisível ou anti-bot. Resolva "
+                                    "na janela do Chrome e clique em '✅ "
+                                    "CAPTCHA RESOLVIDO! Continuar...'.",
                                 )
 
                             if problema:
