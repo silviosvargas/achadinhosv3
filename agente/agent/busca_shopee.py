@@ -538,8 +538,22 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
         try:
             # 1. Carrega painel (autentica via cookies persistidos)
             driver.get(URL_PAINEL)
-            time.sleep(4)
+            time.sleep(5)
+            url_inicial = (driver.current_url or "").lower()
+            log.info("shopee.url_apos_abrir_painel", url=url_inicial[:300])
+
             problema = _detectou_login_ou_captcha(driver)
+            # v3.8.10: força captcha se URL fugiu do painel (mesma lógica do
+            # retry no meio do loop). Ex: shopee.com.br/verify/captcha.
+            if problema is None and "/offer/product_offer" not in url_inicial:
+                log.warning("shopee.bloqueio_inicial_inferido",
+                            url=url_inicial[:200])
+                problema = (
+                    "captcha",
+                    "🤖 Shopee bloqueou esta sessão. Resolva o desafio nesta "
+                    "janela do Chrome. Vou aguardar 30s e continuar.",
+                )
+
             if problema:
                 motivo, instrucao = problema
                 resolveu = _resolver_login_ou_captcha(driver, motivo, instrucao)
@@ -584,8 +598,34 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                         # painel e aguardando user resolver.
                         if status in (0, 401, 403):
                             driver.get(URL_PAINEL)
-                            time.sleep(3)
+                            time.sleep(5)
+                            url_apos = (driver.current_url or "").lower()
+                            log.info("shopee.url_apos_recarga",
+                                     url=url_apos[:300], status_orig=status)
+
                             problema = _detectou_login_ou_captcha(driver)
+
+                            # v3.8.10: FORÇA tratamento como captcha quando
+                            # status=0 + URL não está no painel afiliados.
+                            # Casos reais (log do user):
+                            # - shopee.com.br/verify/captcha?anti_bot_tracking_id=...
+                            #   → URL TEM "captcha" mas redirect ainda em curso quando
+                            #     `_detectou_login_ou_captcha` foi chamado
+                            # - Domínio diferente (shopee.com.br vs affiliate.shopee.com.br)
+                            #   pode escapar dos seletores DOM
+                            # Status 0 + fora do painel = bloqueio quase certo.
+                            if problema is None and "/offer/product_offer" not in url_apos:
+                                log.warning(
+                                    "shopee.bloqueio_inferido_por_status0",
+                                    url=url_apos[:200],
+                                )
+                                problema = (
+                                    "captcha",
+                                    "🤖 Shopee bloqueou esta sessão (status 0). "
+                                    "Resolva o desafio nesta janela do Chrome. "
+                                    "Vou aguardar 30s e continuar.",
+                                )
+
                             if problema:
                                 motivo_re, instrucao_re = problema
                                 if not _resolver_login_ou_captcha(
