@@ -76,20 +76,29 @@ def _capturar_comissao_e_preco_no_destino(
         busca padrão `padrao_comissao_extra` que filtra só os com bônus.
     """
     dados = driver.execute_script(r"""
-        // v3.8.2: busca SEMPRE no document.body inteiro.
+        // v3.8.3: busca em MÚLTIPLAS fontes (body + iframes + outerHTML).
         //
-        // BUG anterior (v3.8.0/8.1): otimização com seletores ['header',
-        // 'affiliate', 'banner'...] mascarava EXTRAS. Quando o <header> da
-        // página de produto tinha "GANHOS X%" (base) mas a barra preta de
-        // afiliados (em outro elemento) tinha "GANHOS EXTRAS Y%":
-        //   1. melhorCom.base = X (capturado do header)
-        //   2. Loop continua, nenhum seletor de "affiliate" bateu
-        //   3. melhorCom.extras = null no fim
-        //   4. Fallback no body só rodava se ambos null → NÃO rodava
-        //   5. EXTRAS perdido silenciosamente
-        //
-        // Body contém todo o texto da página. Regex pega o que existir.
-        var txt = document.body ? (document.body.textContent || '') : '';
+        // v3.8.2 buscava só body.textContent — pegava "GANHOS X%" base
+        // (texto regular da página) mas perdia "GANHOS EXTRAS Y%" da barra
+        // preta de afiliados ML, que é injetada via iframe ou tem markup
+        // peculiar. Diagnóstico do user (v3.8.2): screenshot mostra bem
+        // "GANHOS EXTRAS 9%" no topo mas log mostra extra=None.
+        function coletarTextos() {
+            var partes = [];
+            if (document.body) partes.push(document.body.textContent || '');
+            // Iframes same-origin (security exception em cross-origin → ignora)
+            try {
+                var iframes = document.querySelectorAll('iframe');
+                for (var k = 0; k < iframes.length; k++) {
+                    try {
+                        var d = iframes[k].contentDocument;
+                        if (d && d.body) partes.push(d.body.textContent || '');
+                    } catch (e) { /* cross-origin */ }
+                }
+            } catch (e) {}
+            return partes.join('\n');
+        }
+        var txt = coletarTextos();
         var melhorCom = {extras: null, base: null};
         var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
         if (mE) {
@@ -100,6 +109,19 @@ def _capturar_comissao_e_preco_no_destino(
         if (mB) {
             var nB = parseFloat(mB[1].replace(',', '.'));
             if (!isNaN(nB) && nB > 0 && nB <= 50) melhorCom.base = nB;
+        }
+        // Fallback: se extras não achou no body/iframes mas pode estar com
+        // markup peculiar (spans/divs com whitespace exótico), tenta regex
+        // flexível no HTML serializado completo.
+        if (melhorCom.extras === null && document.documentElement) {
+            var html = document.documentElement.outerHTML || '';
+            // Regex flexível: aceita até 300 chars de tags/whitespace entre
+            // GANHOS, EXTRAS e o número.
+            var mEh = html.match(/GANHOS[\s\S]{0,300}?EXTRAS[\s\S]{0,300}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+            if (mEh) {
+                var nEh = parseFloat(mEh[1].replace(',', '.'));
+                if (!isNaN(nEh) && nEh > 0 && nEh <= 50) melhorCom.extras = nEh;
+            }
         }
 
         // Captura preço atual — XPath excluindo <s> (riscado) pra não pegar o original
@@ -289,7 +311,12 @@ def _processar_categoria(
 
         try:
             driver.get(url_can)
-            time.sleep(1.5)
+            # v3.8.3: barra preta de afiliados ML carrega async via JS do
+            # programa de afiliados — 1.5s era suficiente pra "GANHOS X%"
+            # base (renderizada no HTML servido) mas curto demais pra
+            # "GANHOS EXTRAS Y%" (injetada via JS após o load). Diagnóstico
+            # do user: screenshot mostra extras mas captura retornava None.
+            time.sleep(3.0)
         except Exception:
             continue
 
@@ -572,7 +599,12 @@ def _processar_categoria_para_extras(
 
         try:
             driver.get(url_can)
-            time.sleep(1.5)
+            # v3.8.3: barra preta de afiliados ML carrega async via JS do
+            # programa de afiliados — 1.5s era suficiente pra "GANHOS X%"
+            # base (renderizada no HTML servido) mas curto demais pra
+            # "GANHOS EXTRAS Y%" (injetada via JS após o load). Diagnóstico
+            # do user: screenshot mostra extras mas captura retornava None.
+            time.sleep(3.0)
         except Exception:
             continue
 

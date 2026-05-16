@@ -771,11 +771,24 @@ def _capturar_comissao_da_barra(driver, url: str) -> float | None:
         time.sleep(1.5)
 
         pct = driver.execute_script(r"""
-            // v3.8.2: busca SEMPRE no body inteiro (era seletores específicos
-            // que mascaravam EXTRAS — quando header tinha base mas a barra
-            // preta de afiliados ML estava em outro elemento, perdíamos o
-            // EXTRAS). Detalhes em busca_padrao_ml.py.
-            var txt = document.body ? (document.body.textContent || '') : '';
+            // v3.8.3: busca em múltiplas fontes (body + iframes + outerHTML).
+            // Mesma estratégia do busca_padrao_ml.py — barra de afiliados ML
+            // pode estar em iframe / markup com tags entre as palavras.
+            function coletarTextos() {
+                var partes = [];
+                if (document.body) partes.push(document.body.textContent || '');
+                try {
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var k = 0; k < iframes.length; k++) {
+                        try {
+                            var d = iframes[k].contentDocument;
+                            if (d && d.body) partes.push(d.body.textContent || '');
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+                return partes.join('\n');
+            }
+            var txt = coletarTextos();
             var melhor = {extras: null, base: null};
             var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
             if (mE) {
@@ -786,6 +799,14 @@ def _capturar_comissao_da_barra(driver, url: str) -> float | None:
             if (mB) {
                 var nB = parseFloat(mB[1].replace(',', '.'));
                 if (!isNaN(nB) && nB > 0 && nB <= 50) melhor.base = nB;
+            }
+            if (melhor.extras === null && document.documentElement) {
+                var html = document.documentElement.outerHTML || '';
+                var mEh = html.match(/GANHOS[\s\S]{0,300}?EXTRAS[\s\S]{0,300}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+                if (mEh) {
+                    var nEh = parseFloat(mEh[1].replace(',', '.'));
+                    if (!isNaN(nEh) && nEh > 0 && nEh <= 50) melhor.extras = nEh;
+                }
             }
             return melhor.extras !== null ? melhor.extras : melhor.base;
         """)
