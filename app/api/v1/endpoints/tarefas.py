@@ -131,24 +131,23 @@ async def postar(
     return TarefaPublica.model_validate(tarefa)
 
 
-@router.post("/{tarefa_id}/cancelar", response_model=TarefaPublica)
+@router.post("/{tarefa_id}/cancelar")
 async def cancelar(
     tarefa_id: int,
     user: Usuario = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db_async),
-) -> TarefaPublica:
-    """Cancela uma tarefa que ainda não foi processada."""
+) -> dict:
+    """Fase 20.1 — cancela tarefa em andamento.
+
+    Envia comando WS `cancelar_tarefa` pro agente (cancelamento cooperativo
+    — agente para na próxima checagem entre etapas, até ~1min) e marca
+    CANCELADA no DB imediatamente.
+    """
     tarefa = await db.get(Tarefa, tarefa_id)
     if tarefa is None or tarefa.org_id != user.org_id:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    if tarefa.status not in (StatusTarefa.PENDENTE, StatusTarefa.PROCESSANDO):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tarefa em status '{tarefa.status}' não pode ser cancelada",
-        )
-
-    tarefa.status = StatusTarefa.CANCELADA
-    await db.commit()
-    await db.refresh(tarefa)
-    return TarefaPublica.model_validate(tarefa)
+    resultado = await dispatcher.cancelar(db, tarefa_id=tarefa_id)
+    if not resultado.get("ok"):
+        raise HTTPException(status_code=400, detail=resultado.get("mensagem"))
+    return resultado

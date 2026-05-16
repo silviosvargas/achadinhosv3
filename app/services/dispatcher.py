@@ -271,6 +271,62 @@ async def marcar_concluida(
             )
 
 
+async def cancelar(
+    db: AsyncSession, *, tarefa_id: int,
+) -> dict:
+    """Fase 20.1 — admin pediu pra cancelar tarefa em andamento.
+
+    Estratégia:
+    1. Envia comando WS `cancelar_tarefa` pro agente sinalizar flag
+       (cancelamento cooperativo — loops longos param graciosamente)
+    2. Marca tarefa como CANCELADA no DB imediatamente (não espera o
+       agente confirmar — o agente vai reportar progresso/concluida normal
+       quando o loop dele realmente parar)
+
+    Returns:
+        {"ok": bool, "comando_enviado": bool, "mensagem": str}
+    """
+    tarefa = await db.get(Tarefa, tarefa_id)
+    if tarefa is None:
+        return {"ok": False, "comando_enviado": False, "mensagem": "Tarefa não existe"}
+
+    if tarefa.status not in (StatusTarefa.PROCESSANDO, StatusTarefa.PENDENTE):
+        return {
+            "ok": False, "comando_enviado": False,
+            "mensagem": f"Tarefa já terminou (status={tarefa.status})",
+        }
+
+    # Envia comando WS pro agente (se houver agente_id e online)
+    comando_enviado = False
+    if tarefa.agente_id is not None:
+        comando_enviado = await registry.enviar_para(
+            tarefa.agente_id,
+            {"tipo": "cancelar_tarefa", "tarefa_id": tarefa.id},
+        )
+
+    # Marca CANCELADA no DB independente do agente confirmar
+    tarefa.status = StatusTarefa.CANCELADA
+    tarefa.erro = "Cancelada pelo usuário"
+    tarefa.concluido_em = datetime.now(tz=timezone.utc)
+    await db.commit()
+
+    log.info("tarefa.cancelada",
+             tarefa_id=tarefa_id,
+             agente_id=tarefa.agente_id,
+             comando_enviado=comando_enviado)
+
+    return {
+        "ok": True,
+        "comando_enviado": comando_enviado,
+        "mensagem": (
+            "Tarefa cancelada. " +
+            ("Agente notificado — vai parar na próxima checagem (até ~1min)."
+             if comando_enviado
+             else "Agente offline — só marcou cancelada no DB.")
+        ),
+    }
+
+
 async def marcar_falhou(
     db: AsyncSession,
     *,

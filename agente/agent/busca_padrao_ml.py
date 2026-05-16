@@ -338,7 +338,7 @@ def _varrer_padrao_completo_sync(
     # Reusa lock e driver ML do módulo principal
     from agent.busca_ml import _criar_driver_ml
     from agent.linkbuilder_ml import _LOCK_CHROME_ML
-    from agent import ws_progresso
+    from agent import ws_progresso, cancelamento
 
     total_cat = len(CATEGORIAS_PADRAO)
     log.info("ml.padrao.iniciando",
@@ -347,12 +347,25 @@ def _varrer_padrao_completo_sync(
              tarefa_id=tarefa_id)
     ws_progresso.reportar(tarefa_id, 0.0, "Iniciando busca padrão ML…")
 
+    cancelada = False
     with _LOCK_CHROME_ML:
         driver = _criar_driver_ml(cfg)
         todos: list[dict[str, Any]] = []
         try:
             for i, (nome, url, com_est) in enumerate(CATEGORIAS_PADRAO, start=1):
-                # Reporta INÍCIO da categoria (mostra "Categoria X/N: nome")
+                # Fase 20.1: checa cancelamento ANTES de cada categoria.
+                # Se cancelado, para gracioso retornando o que tem até aqui.
+                if cancelamento.foi_cancelada(tarefa_id):
+                    log.info("ml.padrao.cancelada", tarefa_id=tarefa_id,
+                             concluido_ate=i-1, total=total_cat)
+                    ws_progresso.reportar(
+                        tarefa_id, ((i - 1) / total_cat) * 100.0,
+                        f"⏹ Cancelado após {i-1}/{total_cat} categorias — {len(todos)} produtos parciais",
+                    )
+                    cancelada = True
+                    break
+
+                # Reporta INÍCIO da categoria
                 pct_inicio = ((i - 1) / total_cat) * 100.0
                 ws_progresso.reportar(
                     tarefa_id, pct_inicio,
@@ -386,12 +399,18 @@ def _varrer_padrao_completo_sync(
                 pass
             time.sleep(1.5)
 
-    ws_progresso.reportar(
-        tarefa_id, 100.0,
-        f"Concluído — {len(todos)} produtos com comissão real",
-    )
+    # Limpa flag de cancelamento (consome) pra próxima execução
+    cancelamento.consumir(tarefa_id)
+
+    if not cancelada:
+        ws_progresso.reportar(
+            tarefa_id, 100.0,
+            f"Concluído — {len(todos)} produtos com comissão real",
+        )
     log.info("ml.padrao.concluido",
-             categorias=total_cat, produtos_finais=len(todos))
+             categorias=total_cat,
+             produtos_finais=len(todos),
+             cancelada=cancelada)
     return todos
 
 

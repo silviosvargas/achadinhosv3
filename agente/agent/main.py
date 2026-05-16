@@ -328,6 +328,25 @@ async def main_async(
 
     cliente.on_comando("revalidar_comissao_ml", handler_revalidar_comissao_ml)
 
+    # Fase 20.1 — Cancelamento cooperativo de tarefa em andamento
+    async def handler_cancelar_tarefa(msg: dict) -> dict:
+        """User clicou '✕ Cancelar' na UI. Sinaliza pro loop longo parar.
+
+        Body: {"tarefa_id": N}
+        Resposta: {"ok": True, "marcada": True}
+
+        Python não permite matar thread bruto. A flag é checada por loops
+        longos (ex: busca_padrao_ml entre categorias) que param graciosamente
+        e retornam o que tinham até ali.
+        """
+        from agent import cancelamento
+
+        tarefa_id = msg.get("tarefa_id")
+        cancelamento.marcar(tarefa_id)
+        return {"ok": True, "marcada": True, "tarefa_id": tarefa_id}
+
+    cliente.on_comando("cancelar_tarefa", handler_cancelar_tarefa)
+
     if tray:
         tray.atualizar_status("online")
 
