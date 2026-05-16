@@ -4,11 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>{% block titulo %}Achadinhos{% endblock %} — Achadinhos</title>
+
+  {# Inter — tipografia signature do design system #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="/static/style.css">
 
   {# ── PWA (Fase 7) ───────────────────────────────────────── #}
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#16a34a">
+  <meta name="theme-color" content="#10b981">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Achadinhos">
@@ -16,81 +22,154 @@
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
 </head>
 <body>
-  {% if user %}
-  <nav class="topbar">
-    <div class="topbar-brand">🛒 Achadinhos</div>
 
-    {# Checkbox CSS-only que controla menu mobile #}
-    <input type="checkbox" id="menu-toggle" class="topbar-toggle">
-    <label for="menu-toggle" class="topbar-hamburger" aria-label="Abrir menu">☰</label>
+{% if user %}
+{# Fase 9.9: menu adaptativo por plano da org. user.organizacao.plano
+   vem via relationship lazy="joined" — sempre disponível aqui. #}
+{% set _plano = user.organizacao.plano if user.organizacao else None %}
+{% set _pode_buscas    = _plano.pode_criar_buscas          if _plano else False %}
+{% set _pode_produtos  = _plano.pode_criar_produto_proprio if _plano else False %}
+{% set _eh_free        = (_plano.slug == "free") if _plano else False %}
+{% set _path = request.url.path %}
 
-    {# Fase 9.9: menu adaptativo por plano da org. user.organizacao.plano
-       vem via relationship lazy="joined" — sempre disponível aqui. #}
-    {% set _plano = user.organizacao.plano if user.organizacao else None %}
-    {% set _pode_buscas    = _plano.pode_criar_buscas          if _plano else False %}
-    {% set _pode_produtos  = _plano.pode_criar_produto_proprio if _plano else False %}
-    {% set _eh_free        = (_plano.slug == "free") if _plano else False %}
+<div class="app">
 
-    <ul class="topbar-menu">
-      <li><a href="/dashboard">Dashboard</a></li>
-      <li><a href="/produtos">Produtos</a></li>
-      {% if _pode_buscas %}
-      <li><a href="/buscas">🔎 Buscas</a></li>
-      {% endif %}
-      {% if _pode_produtos %}
-      <li><a href="/mappings-nichos">🏷️ Nichos</a></li>
-      {% endif %}
-      <li><a href="/templates">Templates</a></li>
-      <li><a href="/agentes">Agentes</a></li>
-      <li><a href="/canais">Canais</a></li>
-      <li><a href="/grupos">Grupos</a></li>
-      <li><a href="/lote"><strong>⚡ Lote</strong></a></li>
-      <li><a href="/tarefas">Tarefas</a></li>
-      <li><a href="/usuarios">Usuários</a></li>
-      {% if _eh_free %}
-      <li><a href="/planos" style="color:#16a34a; font-weight:600;">⭐ Upgrade</a></li>
-      {% else %}
-      <li><a href="/planos">Planos</a></li>
-      {% endif %}
-    </ul>
-    <div class="topbar-user">
-      {# Badge status dos agentes (Fase 9.8) — atualizado por JS a cada 20s #}
-      <a id="agente-status-badge" href="/agentes/baixar"
-         title="Clique pra ver agentes / instalar"
-         style="display:inline-flex; align-items:center; gap:6px;
-                padding:4px 10px; border-radius:12px; background:#444;
-                color:#fff; font-size:0.85em; text-decoration:none;">
-        <span id="agente-status-dot" style="width:8px; height:8px; border-radius:50%;
-              background:#888; display:inline-block;"></span>
-        <span id="agente-status-label">…</span>
-      </a>
-      <a href="/conta" style="color:inherit; text-decoration:none;"
-         title="Minha conta — trocar senha">
-        {{ user.nome_exibicao or user.login }}
-      </a>
-      <span class="papel papel-{{ user.papel }}">{{ user.papel }}</span>
-      <a href="/logout" class="btn-logout">Sair</a>
+  {# ── SIDEBAR ─────────────────────────────────────────── #}
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-logo">🛒</div>
+      <div class="sidebar-brand-nome">Achadinhos</div>
     </div>
-  </nav>
-  {% endif %}
 
-  {% if user %}
-  {# Container de avisos dos agentes (captcha, login expirado, etc).
-     Renderizado dinamicamente via JS no fim do body. Toast amarelo no
-     canto superior direito; só aparece quando há aviso ativo. #}
-  <div id="avisos-agentes-container" aria-live="polite"
-       style="position:fixed; top:64px; right:14px; z-index:99999;
-              display:flex; flex-direction:column; gap:10px;
-              max-width:380px; pointer-events:none;"></div>
-  {% endif %}
+    <nav class="sidebar-nav" aria-label="Menu principal">
 
+      <a href="/dashboard" class="sidebar-item {% if _path == '/dashboard' %}ativo{% endif %}">
+        <span class="sidebar-item-icone">▦</span>
+        <span>Dashboard</span>
+      </a>
+
+      <div class="sidebar-grupo">
+        <div class="sidebar-grupo-titulo">Catálogo</div>
+        <a href="/produtos" class="sidebar-item {% if _path.startswith('/produtos') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">📦</span>
+          <span>Produtos</span>
+        </a>
+        {% if _pode_buscas %}
+        <a href="/buscas" class="sidebar-item {% if _path.startswith('/buscas') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">🔎</span>
+          <span>Buscas</span>
+        </a>
+        {% endif %}
+        {% if _pode_produtos %}
+        <a href="/mappings-nichos" class="sidebar-item {% if _path.startswith('/mappings') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">🏷️</span>
+          <span>Nichos</span>
+        </a>
+        {% endif %}
+        <a href="/templates" class="sidebar-item {% if _path.startswith('/templates') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">✦</span>
+          <span>Templates</span>
+        </a>
+      </div>
+
+      <div class="sidebar-grupo">
+        <div class="sidebar-grupo-titulo">Postagem</div>
+        <a href="/lote" class="sidebar-item {% if _path.startswith('/lote') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">⚡</span>
+          <span>Lote</span>
+        </a>
+        <a href="/tarefas" class="sidebar-item {% if _path.startswith('/tarefas') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">⌛</span>
+          <span>Tarefas</span>
+        </a>
+        <a href="/canais" class="sidebar-item {% if _path.startswith('/canais') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">📡</span>
+          <span>Canais</span>
+        </a>
+        <a href="/grupos" class="sidebar-item {% if _path.startswith('/grupos') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">👥</span>
+          <span>Grupos</span>
+        </a>
+      </div>
+
+      <div class="sidebar-grupo">
+        <div class="sidebar-grupo-titulo">Gestão</div>
+        <a href="/agentes" class="sidebar-item {% if _path.startswith('/agentes') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">🖥️</span>
+          <span>Agentes</span>
+        </a>
+        <a href="/usuarios" class="sidebar-item {% if _path.startswith('/usuarios') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">👤</span>
+          <span>Equipe</span>
+        </a>
+        <a href="/planos" class="sidebar-item {% if _path.startswith('/planos') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">{% if _eh_free %}⭐{% else %}◇{% endif %}</span>
+          <span>{% if _eh_free %}Upgrade{% else %}Planos{% endif %}</span>
+          {% if _eh_free %}<span class="sidebar-item-badge">PRO</span>{% endif %}
+        </a>
+      </div>
+
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="/conta" class="sidebar-user" title="Minha conta">
+        <div class="sidebar-user-avatar">
+          {{ (user.nome_exibicao or user.login)[0]|upper }}
+        </div>
+        <div class="sidebar-user-info">
+          <div class="sidebar-user-nome">{{ user.nome_exibicao or user.login }}</div>
+          <div class="sidebar-user-org">
+            {{ user.organizacao.nome if user.organizacao else '—' }}
+          </div>
+        </div>
+      </a>
+    </div>
+  </aside>
+
+  {# Overlay clicável atrás do drawer mobile #}
+  <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+  <div class="app-content">
+
+    {# ── TOPBAR fina ─────────────────────────────────── #}
+    <header class="topbar">
+      <button class="topbar-hamburger" id="hamburger" aria-label="Abrir menu">☰</button>
+      <h1 class="topbar-titulo">{% block titulo_topbar %}{% endblock %}</h1>
+
+      <div class="topbar-acoes">
+        {# Badge status dos agentes — atualizado por JS a cada 20s #}
+        <a id="agente-status-badge" href="/agentes/baixar"
+           title="Clique pra ver agentes / instalar">
+          <span id="agente-status-dot"></span>
+          <span id="agente-status-label">…</span>
+        </a>
+        <span class="papel papel-{{ user.papel }}">{{ user.papel }}</span>
+        <a href="/logout" class="btn-logout">Sair</a>
+      </div>
+    </header>
+
+    {# Container de avisos dos agentes (captcha, login expirado, etc).
+       Renderizado dinamicamente via JS no fim do body. Toast no canto. #}
+    <div id="avisos-agentes-container" aria-live="polite"
+         style="position:fixed; top:72px; right:14px; z-index:99999;
+                display:flex; flex-direction:column; gap:10px;
+                max-width:380px; pointer-events:none;"></div>
+
+    <main class="container">
+      {% block conteudo %}{% endblock %}
+    </main>
+
+    <footer class="rodape">
+      Achadinhos · {{ '2026' }}
+    </footer>
+  </div>
+</div>
+{% else %}
+  {# Layout simples pra páginas públicas (login, signup) — sem sidebar #}
   <main class="container">
-    {% block conteudo %}{% endblock %}
+    {% block conteudo_publico %}{{ self.conteudo() }}{% endblock %}
   </main>
-
-  <footer class="rodape">
-    Achadinhos V3 · {{ '2026' }}
-  </footer>
+{% endif %}
 
   {# Registra Service Worker pra PWA — silencioso se browser não suportar #}
   <script>
@@ -103,7 +182,27 @@
   </script>
 
   {% if user %}
-  {# Polling do badge "Agentes online" (Fase 9.8). Atualiza a cada 20s. #}
+  {# Drawer mobile: hamburger toggla classe `.aberta` na sidebar #}
+  <script>
+  (function () {
+    const sidebar  = document.getElementById('sidebar');
+    const overlay  = document.getElementById('sidebar-overlay');
+    const hamb     = document.getElementById('hamburger');
+    if (!sidebar || !overlay || !hamb) return;
+
+    function abrir()  { sidebar.classList.add('aberta');  overlay.style.display='block'; requestAnimationFrame(() => overlay.style.opacity='1'); }
+    function fechar() { sidebar.classList.remove('aberta'); overlay.style.opacity='0'; setTimeout(() => overlay.style.display='none', 200); }
+
+    hamb.addEventListener('click', abrir);
+    overlay.addEventListener('click', fechar);
+    // Fecha ao clicar em qualquer item do menu (em mobile)
+    sidebar.querySelectorAll('.sidebar-item').forEach(a => a.addEventListener('click', fechar));
+    // Esc fecha
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') fechar(); });
+  })();
+  </script>
+
+  {# Polling do badge "Agentes online" — atualiza a cada 20s. #}
   <script>
   (function () {
     const elDot   = document.getElementById('agente-status-dot');
@@ -120,24 +219,24 @@
         const total = data.total || 0;
 
         if (total === 0) {
-          elDot.style.background = '#888';   // cinza
+          elDot.style.background = '#94a3b8';
           elLabel.textContent = 'sem agente';
           elLink.title = 'Instale um agente pra postar no WhatsApp';
         } else if (online === 0) {
-          elDot.style.background = '#dc2626'; // vermelho
+          elDot.style.background = '#ef4444';
           elLabel.textContent = `${total} offline`;
           elLink.title = 'Nenhum agente seu está online — ligue o PC e tente de novo';
         } else if (online === total) {
-          elDot.style.background = '#16a34a'; // verde
+          elDot.style.background = '#10b981';
           elLabel.textContent = `${online} online`;
           elLink.title = `Todos os ${total} agentes online`;
         } else {
-          elDot.style.background = '#ca8a04'; // amarelo
+          elDot.style.background = '#f59e0b';
           elLabel.textContent = `${online}/${total} online`;
           elLink.title = `${online} de ${total} agentes online`;
         }
       } catch (e) {
-        elDot.style.background = '#888';
+        elDot.style.background = '#94a3b8';
         elLabel.textContent = 'status?';
         elLink.title = 'Não consegui consultar o servidor';
       }
@@ -154,7 +253,6 @@
     const elContainer = document.getElementById('avisos-agentes-container');
     if (!elContainer) return;
 
-    // Cores por tipo de aviso — usa hue pra distinguir captcha/login/erro.
     const CORES = {
       captcha:        { bg: '#fef3c7', borda: '#f59e0b', icone: '🤖' },
       login_expirado: { bg: '#fee2e2', borda: '#dc2626', icone: '🔐' },
@@ -169,8 +267,6 @@
     }
 
     function renderizar(avisos) {
-      // Preserva avisos abertos por chave (agente_id|marketplace) pra evitar
-      // flash visual. Re-renderiza só o que mudou.
       const novosIds = new Set();
       for (const av of avisos) {
         const chave = `aviso-${av.agente_id}-${av.marketplace || 'global'}`;
@@ -198,9 +294,9 @@
           card.style.cssText = (
             `background:${cor.bg}; border:1px solid ${cor.borda}; ` +
             `border-left:4px solid ${cor.borda}; ` +
-            `border-radius:8px; padding:12px 14px; ` +
-            `box-shadow:0 4px 12px rgba(0,0,0,0.15); ` +
-            `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; ` +
+            `border-radius:10px; padding:12px 14px; ` +
+            `box-shadow:0 8px 20px rgba(15,23,42,0.18); ` +
+            `font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; ` +
             `font-size:13px; pointer-events:auto; ` +
             `animation:avisoEntra 220ms ease-out;`
           );
@@ -209,7 +305,6 @@
         if (card.innerHTML !== html) card.innerHTML = html;
       }
 
-      // Remove cards de avisos que não estão mais ativos
       for (const card of Array.from(elContainer.children)) {
         if (!novosIds.has(card.id)) {
           card.style.opacity = '0';
@@ -225,13 +320,12 @@
         if (!r.ok) return;
         const d = await r.json();
         renderizar(d.avisos || []);
-      } catch (e) { /* silencioso — não polui console em desconexão */ }
+      } catch (e) {}
     }
 
     atualizar();
-    setInterval(atualizar, 8000);   // 8s — mais responsivo que status (20s)
+    setInterval(atualizar, 8000);
 
-    // Keyframe pra entrada suave
     const style = document.createElement('style');
     style.textContent = (
       '@keyframes avisoEntra { ' +

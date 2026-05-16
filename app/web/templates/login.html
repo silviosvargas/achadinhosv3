@@ -2,8 +2,13 @@
 {% block titulo %}Entrar{% endblock %}
 {% block conteudo %}
 <div class="login-card">
+  <div class="login-brand">
+    <div class="login-brand-logo">🛒</div>
+    <div class="login-brand-nome">Achadinhos</div>
+  </div>
+
   <h1>Entrar</h1>
-  <p class="login-sub">Acesse sua organização Achadinhos</p>
+  <p class="login-sub">Acesse sua organização</p>
 
   {% if erro %}
   <div class="alerta alerta-erro">{{ erro }}</div>
@@ -22,7 +27,7 @@
       Senha
       <input type="password" name="senha" required autocomplete="current-password">
     </label>
-    <button type="submit" class="btn btn-primario">Entrar</button>
+    <button type="submit" class="btn btn-primario btn-block">Entrar</button>
   </form>
 
   <p class="login-dica">

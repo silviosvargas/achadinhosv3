@@ -1,20 +1,22 @@
 {% extends "base.html" %}
 {% block titulo %}Dashboard{% endblock %}
+{% block titulo_topbar %}Dashboard{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Olá, {{ user.nome_exibicao or user.login }}</h1>
-  <p class="muted">
-    Organização: <strong>{{ org.nome if org else 'Achadinhos' }}</strong>
+  <h1>Olá, {{ user.nome_exibicao or user.login }} 👋</h1>
+  <p>
+    Organização <strong>{{ org.nome if org else 'Achadinhos' }}</strong>
     {% if org and org.plano %} · plano <code>{{ org.plano.slug }}</code>{% endif %}
   </p>
 </header>
 
 {% if not user.onboarding_completo %}
-<div class="alerta alerta-info" style="display:flex; justify-content:space-between; align-items:center; gap:16px;">
-  <span>
-    👋 <strong>Bem-vindo!</strong> Termine a configuração inicial pra começar a postar.
-  </span>
+<div class="alerta alerta-info" style="margin-bottom: 24px;">
+  <span style="font-size: 18px;">👋</span>
+  <div style="flex: 1;">
+    <strong>Bem-vindo!</strong> Termine a configuração inicial pra começar a postar.
+  </div>
   <a href="/onboarding" class="btn btn-primario">Continuar setup</a>
 </div>
 {% endif %}
