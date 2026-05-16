@@ -4,8 +4,8 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-15 (após Fase 16.4 — busca por URL/link + release v3.0.4 publicada)
-**Versão do agente em prod:** `3.0.4` (publicada como GitHub Release — Fase 16.4 ainda **não** validada em prod pelo user; aguarda smoke test com URL real)
+**Última atualização:** 2026-05-15 (após Fase 16.5 parcial — scrapers ML completos por tipo + v3.0.5)
+**Versão do agente em prod:** `3.0.5` (todos os 5 tipos de busca ML têm handler dedicado: termo_livre, por_url, mais_vendidos, melhor_comissao, em_alta)
 **Migration head:** `0010_busca_tipo_mkt`
 
 ---
@@ -52,6 +52,9 @@ confirmou funcionamento por screenshot. Não há nada quebrado pra consertar.
 | Buscas multi-tipo UI | OK | `/buscas/nova` com dropdown tipo + checkbox marketplaces |
 | Scraper "mais vendidos" ML | OK | 8 categorias hardcoded da V2 |
 | Busca por URL/link (Fase 16.4) | OK | 1 produto ML extraído via cascata JSON-LD → OG → CSS |
+| Busca termo_livre (paginação) | OK | `_varrer_termo_livre_sync` — listagem ML por palavra-chave |
+| Busca melhor_comissao | OK | Top 4 categorias por comissão DESC (Roupas/Esportes/Beleza) |
+| Busca em_alta | OK | `/ofertas` ML (promoções relâmpago) |
 | Lote com late binding tag | OK | Recalcula URL na hora da postagem |
 | Badge "agentes online" | OK | Polling 20s, cookie-aware |
 

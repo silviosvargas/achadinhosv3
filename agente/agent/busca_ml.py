@@ -462,6 +462,114 @@ CATEGORIAS_MAIS_VENDIDOS = [
 ]
 
 
+# Fase 16.5 — URLs "em alta" / ofertas relâmpago ML.
+# `/ofertas` é a landing global de promoções diárias do ML.
+URLS_EM_ALTA = [
+    ("Ofertas do dia", "https://www.mercadolivre.com.br/ofertas",  None),
+]
+
+
+# ============================================================
+# Helpers comuns às varreduras (Fase 16.5)
+# ============================================================
+
+_SINAIS_LOGIN = (
+    "/gz/account-verification",
+    "/login",
+    "/jms/mlb/lgz",
+)
+
+
+def _bloqueado_por_login(url_final: str) -> bool:
+    """True se o ML redirecionou pra página de login/verificação."""
+    u = (url_final or "").lower()
+    return any(s in u for s in _SINAIS_LOGIN)
+
+
+def _scroll_lazy_load(driver) -> None:
+    """Scroll progressivo pra disparar lazy load de cards do ML."""
+    try:
+        for pos in (500, 1500, 3000, 5000):
+            driver.execute_script(f"window.scrollTo(0, {pos});")
+            time.sleep(0.4)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.4)
+    except Exception:
+        pass
+
+
+def _varrer_lista_urls_sync(
+    cfg: Config,
+    *,
+    urls_com_meta: list[tuple[str, str, float | None]],
+    max_produtos: int,
+    log_prefixo: str,
+) -> list[dict[str, Any]]:
+    """
+    Template comum: itera lista de (nome_unidade, url, comissao_estimada),
+    abre cada URL, extrai cards, balanceia por unidade.
+
+    Usado por mais_vendidos / melhor_comissao / em_alta. Mesmo padrão da V2
+    `buscar_mais_vendidos`. Cards extraídos já vêm com campos preenchidos por
+    `_extrair_cards_da_pagina`; aqui só enriquecemos categoria + comissão.
+    """
+    driver = _criar_driver_ml(cfg)
+    todos: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    por_unidade = max(3, max_produtos // max(1, len(urls_com_meta)) + 2)
+
+    try:
+        for nome_unidade, url, comissao_est in urls_com_meta:
+            if len(todos) >= max_produtos:
+                break
+            log.info(f"{log_prefixo}.unidade", nome=nome_unidade, url=url)
+            try:
+                driver.get(url)
+            except Exception as e:
+                log.warning(f"{log_prefixo}.get_falhou", nome=nome_unidade, erro=str(e)[:120])
+                continue
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except TimeoutException:
+                log.warning(f"{log_prefixo}.timeout", nome=nome_unidade)
+                continue
+
+            if _bloqueado_por_login(driver.current_url):
+                raise RuntimeError(
+                    f"ML exige login ({nome_unidade} → {driver.current_url[:120]}). "
+                    "Rode `python -m agent.login_ml` uma vez."
+                )
+
+            _scroll_lazy_load(driver)
+            cards = _extrair_cards_da_pagina(driver)
+            adicionados = 0
+            for c in cards:
+                if len(todos) >= max_produtos or adicionados >= por_unidade:
+                    break
+                item_id = c.get("item_id")
+                if not item_id or item_id in vistos:
+                    continue
+                vistos.add(item_id)
+                # Enriquece com categoria e comissão se a unidade trouxer
+                if not c.get("categoria") and nome_unidade:
+                    c["categoria"] = nome_unidade
+                if comissao_est is not None:
+                    c["comissao"] = comissao_est
+                todos.append(c)
+                adicionados += 1
+            log.info(f"{log_prefixo}.unidade_ok",
+                     nome=nome_unidade, extraidos=adicionados, total=len(todos))
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    return todos
+
+
 # ============================================================
 # Busca por URL — 1 produto específico (Fase 16.4)
 # ============================================================
@@ -649,170 +757,125 @@ def _varrer_mais_vendidos_sync(
     *,
     max_produtos: int,
 ) -> list[dict[str, Any]]:
-    """Itera as N categorias de 'mais vendidos' do ML, balanceando produtos.
+    """Itera as 8 categorias de 'mais vendidos' do ML, balanceando produtos."""
+    return _varrer_lista_urls_sync(
+        cfg,
+        urls_com_meta=CATEGORIAS_MAIS_VENDIDOS,
+        max_produtos=max_produtos,
+        log_prefixo="ml.mais_vendidos",
+    )
 
-    Distribui `max_produtos` entre as categorias (round-robin por padrão).
-    Cada categoria contribui no máximo `max_produtos // len(CATEGORIAS) + 2`
-    pra não saturar uma só.
+
+def _varrer_melhor_comissao_sync(
+    cfg: Config,
+    *,
+    max_produtos: int,
+) -> list[dict[str, Any]]:
+    """Top categorias por comissão estimada — Roupas (14%), Esportes/Beleza (12%).
+
+    Mesma URL pattern das mais_vendidos, filtrado por comissão DESC. Resultado:
+    produtos que tendem a render mais R$ por click (priorização explícita).
     """
-    driver = _criar_driver_ml(cfg)
-    todos: list[dict[str, Any]] = []
-    vistos: set[str] = set()
-    por_cat = max(3, max_produtos // len(CATEGORIAS_MAIS_VENDIDOS) + 2)
-
-    try:
-        for nome_cat, url_cat, comissao_est in CATEGORIAS_MAIS_VENDIDOS:
-            if len(todos) >= max_produtos:
-                break
-            log.info("ml.mais_vendidos.categoria", categoria=nome_cat, url=url_cat)
-            driver.get(url_cat)
-            try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-            except TimeoutException:
-                log.warning("ml.mais_vendidos.timeout", categoria=nome_cat)
-                continue
-
-            # Detecta bloqueio/login (mesma lógica de _varrer_sync)
-            url_final = driver.current_url.lower()
-            if any(s in url_final for s in ("/gz/account-verification", "/login", "/jms/mlb/lgz")):
-                raise RuntimeError(
-                    f"ML exige login (categoria {nome_cat} → {url_final[:120]}). "
-                    "Rode `python -m agent.login_ml` uma vez."
-                )
-
-            cards = _extrair_cards_da_pagina(driver)
-            adicionados_cat = 0
-            for c in cards:
-                if len(todos) >= max_produtos or adicionados_cat >= por_cat:
-                    break
-                item_id = c.get("item_id")
-                if not item_id or item_id in vistos:
-                    continue
-                vistos.add(item_id)
-                # Enriquece com categoria + comissão estimada (V2 fazia isso)
-                c["categoria"] = nome_cat
-                c["comissao"] = comissao_est
-                todos.append(c)
-                adicionados_cat += 1
-            log.info("ml.mais_vendidos.categoria_ok",
-                     categoria=nome_cat, extraidos=adicionados_cat, total=len(todos))
-
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-
-    return todos
+    top = sorted(CATEGORIAS_MAIS_VENDIDOS, key=lambda x: -x[2])[:4]
+    return _varrer_lista_urls_sync(
+        cfg,
+        urls_com_meta=top,
+        max_produtos=max_produtos,
+        log_prefixo="ml.melhor_comissao",
+    )
 
 
-def _varrer_sync(
+def _varrer_em_alta_sync(
+    cfg: Config,
+    *,
+    max_produtos: int,
+) -> list[dict[str, Any]]:
+    """Produtos em alta / ofertas relâmpago — usa landing de ofertas do ML."""
+    return _varrer_lista_urls_sync(
+        cfg,
+        urls_com_meta=URLS_EM_ALTA,
+        max_produtos=max_produtos,
+        log_prefixo="ml.em_alta",
+    )
+
+
+def _varrer_termo_livre_sync(
     cfg: Config,
     *,
     url_inicial: str,
     max_paginas: int,
     max_produtos: int,
 ) -> list[dict[str, Any]]:
-    """Versão síncrona do scraping (rodada em thread separada)."""
+    """Termo livre: itera páginas (1..N) da listagem ML via `_From=N`.
+
+    Mesmo template das outras varreduras: get → wait body → detecta login
+    → scroll lazy load → extrai cards → balanceia/limita.
+    """
     driver = _criar_driver_ml(cfg)
     todos: list[dict[str, Any]] = []
-    vistos: set[str] = set()  # dedup interno por item_id
+    vistos: set[str] = set()
 
     try:
         for pag in range(1, max_paginas + 1):
+            if len(todos) >= max_produtos:
+                break
             url = url_pagina(url_inicial, pag)
-            log.info("ml.pagina", numero=pag, url=url)
-            driver.get(url)
+            log.info("ml.termo_livre.pagina", numero=pag, url=url)
+            try:
+                driver.get(url)
+            except Exception as e:
+                log.warning("ml.termo_livre.get_falhou", numero=pag, erro=str(e)[:120])
+                continue
 
-            # Espera o body carregar (genérico)
             try:
                 WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
             except TimeoutException:
-                log.warning("ml.timeout_body", numero=pag)
+                log.warning("ml.termo_livre.timeout", numero=pag)
                 continue
 
-            url_final = driver.current_url
-            log.info("ml.pagina_carregou",
-                     numero=pag,
-                     url_final=url_final,
-                     titulo=driver.title[:120])
-
-            # Detecta páginas de bloqueio/login do ML — falha rápido com
-            # mensagem clara em vez de varrer um body vazio.
-            sinais_login = (
-                "/gz/account-verification",
-                "/login",
-                "/jms/mlb/lgz",  # cobre /jms/mlb/lgz/msl/login/ e variantes
-            )
-            if any(s in url_final.lower() for s in sinais_login):
-                msg = (
-                    f"ML exige login (redirecionou pra {url_final[:120]}). "
-                    "Rode UMA vez: python -m agent.login_ml — loga manualmente, "
-                    "fecha o Chrome, e tenta de novo."
+            if _bloqueado_por_login(driver.current_url):
+                raise RuntimeError(
+                    f"ML exige login (redirecionou pra {driver.current_url[:120]}). "
+                    "Rode `python -m agent.login_ml` uma vez."
                 )
-                log.warning("ml.precisa_login", url=url_final)
-                # Sai do loop e propaga; quem chamou (executar_busca) vê 0 produtos
-                # e nós aproveitamos pra retornar erro claro abaixo.
-                raise RuntimeError(msg)
 
-            # Scroll pra ativar lazy load ANTES de procurar cards
-            try:
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight*0.5);")
-                time.sleep(1.2)
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(1.2)
-                driver.execute_script("window.scrollTo(0, 0);")
-                time.sleep(0.5)
-            except Exception:
-                pass
-
-            # Tenta achar cards com qualquer um dos seletores conhecidos
-            cards_achados = False
-            for sel in SELETORES_CARD:
-                if driver.find_elements(By.CSS_SELECTOR, sel):
-                    cards_achados = True
-                    log.info("ml.cards_via_seletor", seletor=sel)
-                    break
-
-            if not cards_achados:
-                # Diagnóstico: salva screenshot + HTML pra inspeção
-                from pathlib import Path
-                debug_dir = Path(cfg.config_dir) / "debug"
-                debug_dir.mkdir(parents=True, exist_ok=True)
-                stamp = int(time.time())
-                try:
-                    driver.save_screenshot(str(debug_dir / f"ml_pag{pag}_{stamp}.png"))
-                    (debug_dir / f"ml_pag{pag}_{stamp}.html").write_text(
-                        driver.page_source[:200_000], encoding="utf-8", errors="ignore",
-                    )
-                    log.warning("ml.diagnostico_salvo",
-                                numero=pag, dir=str(debug_dir),
-                                url_final=driver.current_url,
-                                titulo=driver.title)
-                except Exception as e:
-                    log.debug("ml.diagnostico_falhou", erro=str(e))
-                continue
+            _scroll_lazy_load(driver)
 
             produtos = _extrair_cards_da_pagina(driver)
+            if not produtos:
+                # Diagnóstico: salva HTML pra inspeção quando 0 cards
+                try:
+                    from pathlib import Path
+                    debug_dir = Path(cfg.config_dir) / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = int(time.time())
+                    driver.save_screenshot(str(debug_dir / f"ml_termo_pag{pag}_{stamp}.png"))
+                    (debug_dir / f"ml_termo_pag{pag}_{stamp}.html").write_text(
+                        driver.page_source[:200_000], encoding="utf-8", errors="ignore",
+                    )
+                    log.warning("ml.termo_livre.sem_cards",
+                                numero=pag, debug_dir=str(debug_dir),
+                                url_final=driver.current_url,
+                                titulo=driver.title[:120])
+                except Exception:
+                    pass
+                continue
 
+            adicionados = 0
             for p in produtos:
-                if p["item_id"] in vistos:
-                    continue
-                vistos.add(p["item_id"])
-                todos.append(p)
                 if len(todos) >= max_produtos:
                     break
+                item_id = p.get("item_id")
+                if not item_id or item_id in vistos:
+                    continue
+                vistos.add(item_id)
+                todos.append(p)
+                adicionados += 1
 
-            log.info("ml.pagina_concluida",
-                     numero=pag, extraidos_na_pagina=len(produtos),
-                     total_ate_agora=len(todos))
-
-            if len(todos) >= max_produtos:
-                break
+            log.info("ml.termo_livre.pagina_ok",
+                     numero=pag, extraidos=adicionados, total=len(todos))
 
     finally:
         try:
@@ -821,6 +884,10 @@ def _varrer_sync(
             pass
 
     return todos[:max_produtos]
+
+
+# Alias retrocompat — caminho legado ainda chamado por `executar_busca` antigo
+_varrer_sync = _varrer_termo_livre_sync
 
 
 # ============================================================
@@ -832,16 +899,19 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
     Handler do comando `iniciar_busca_ml`. Retorna dict no formato esperado
     pelo WSClient (`{ok, ...}` → vira `tarefa_concluida` automaticamente).
 
-    Fase 16: roteia pelo `tipo` da busca:
-    - termo_livre / por_url (fallback) → varredura de termo/URL (legado)
-    - mais_vendidos → itera 8 categorias hardcoded
-    - melhor_comissao, em_alta → ainda não implementado; cai em mais_vendidos
-      como aproximação (categorias mais vendidas tendem a ter mais movimento).
+    Roteamento explícito por `tipo_busca` (Fase 16.5):
+      - `termo_livre`     → varre listagem ML por termo (paginação `_From=N`)
+      - `por_url`         → extrai 1 produto da URL específica (Fase 16.4)
+      - `mais_vendidos`   → itera 8 categorias hardcoded
+      - `melhor_comissao` → top categorias por comissão (Roupas, Esportes…)
+      - `em_alta`         → /ofertas (promoções relâmpago)
+
+    Fallback: tipo desconhecido cai em termo_livre se entrada for texto.
     """
     busca_id     = msg.get("busca_id")
     tarefa_id    = msg.get("tarefa_id")
     tipo_entrada = msg.get("tipo_entrada", "termo")
-    entrada      = msg.get("entrada", "")
+    entrada      = msg.get("entrada", "") or ""
     max_paginas  = int(msg.get("max_paginas", 3))
     max_produtos = int(msg.get("max_produtos", 50))
     tipo_busca   = msg.get("tipo_busca", "termo_livre")
@@ -852,78 +922,65 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
              tipo_entrada=tipo_entrada, entrada=entrada[:80],
              max_paginas=max_paginas, max_produtos=max_produtos)
 
-    # Roteamento por tipo de busca (Fase 16.3+)
-    if tipo_busca in ("mais_vendidos", "melhor_comissao", "em_alta"):
-        try:
-            produtos = await asyncio.to_thread(
-                _varrer_mais_vendidos_sync,
-                cfg,
-                max_produtos=max_produtos,
-            )
-        except RuntimeError as e:
-            log.warning("busca.bloqueada", motivo=str(e)[:200])
-            return {"ok": False, "erro": f"ml_bloqueou: {str(e)[:300]}",
-                    "tentar_de_novo": False}
-        except Exception as e:
-            log.exception("busca.crash_selenium_mais_vendidos", erro=str(e))
-            return {"ok": False, "erro": f"selenium_crash: {type(e).__name__}",
-                    "tentar_de_novo": True}
-        return await _enviar_produtos_e_responder(
-            produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
-        )
+    def _resposta_bloqueado(e: Exception) -> dict[str, Any]:
+        log.warning("busca.bloqueada", tipo_busca=tipo_busca, motivo=str(e)[:200])
+        return {"ok": False, "erro": f"ml_bloqueou: {str(e)[:300]}",
+                "tentar_de_novo": False}
 
-    # Fase 16.4: busca personalizada — 1 URL de produto ML, extrai dados
-    if tipo_busca == "por_url":
-        try:
+    def _resposta_crash(e: Exception, etapa: str) -> dict[str, Any]:
+        log.exception(f"busca.crash_selenium.{etapa}", erro=str(e))
+        return {"ok": False,
+                "erro": f"selenium_crash: {type(e).__name__}: {str(e)[:200]}",
+                "tentar_de_novo": True}
+
+    try:
+        if tipo_busca == "mais_vendidos":
+            produtos = await asyncio.to_thread(
+                _varrer_mais_vendidos_sync, cfg, max_produtos=max_produtos,
+            )
+
+        elif tipo_busca == "melhor_comissao":
+            produtos = await asyncio.to_thread(
+                _varrer_melhor_comissao_sync, cfg, max_produtos=max_produtos,
+            )
+
+        elif tipo_busca == "em_alta":
+            produtos = await asyncio.to_thread(
+                _varrer_em_alta_sync, cfg, max_produtos=max_produtos,
+            )
+
+        elif tipo_busca == "por_url":
+            if not entrada.lower().startswith(("http://", "https://")):
+                return {"ok": False, "erro": "por_url exige URL com http(s)://",
+                        "tentar_de_novo": False}
             produtos = await asyncio.to_thread(
                 _varrer_produto_unico_sync, cfg, url=entrada,
             )
-        except RuntimeError as e:
-            log.warning("busca.bloqueada", motivo=str(e)[:200])
-            return {"ok": False, "erro": f"ml_bloqueou: {str(e)[:300]}",
-                    "tentar_de_novo": False}
-        except Exception as e:
-            log.exception("busca.crash_selenium_por_url", erro=str(e))
-            return {"ok": False, "erro": f"selenium_crash: {type(e).__name__}",
-                    "tentar_de_novo": True}
-        return await _enviar_produtos_e_responder(
-            produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
-        )
 
-    # Caminho legado: termo_livre / qualquer outra coisa
-    try:
-        url_inicial = montar_url_inicial(
-            tipo_entrada=tipo_entrada, entrada=entrada,
-        )
-    except ValueError as e:
-        return {"ok": False, "erro": f"entrada_invalida: {e}", "tentar_de_novo": False}
+        else:
+            # termo_livre — também é fallback pra tipo desconhecido
+            if not entrada.strip():
+                return {"ok": False, "erro": "termo_livre exige texto na entrada",
+                        "tentar_de_novo": False}
+            try:
+                url_inicial = montar_url_inicial(
+                    tipo_entrada=tipo_entrada, entrada=entrada,
+                )
+            except ValueError as e:
+                return {"ok": False, "erro": f"entrada_invalida: {e}",
+                        "tentar_de_novo": False}
+            produtos = await asyncio.to_thread(
+                _varrer_termo_livre_sync,
+                cfg,
+                url_inicial=url_inicial,
+                max_paginas=max_paginas,
+                max_produtos=max_produtos,
+            )
 
-    # Selenium é síncrono — roda em thread pra não bloquear o loop async
-    try:
-        produtos = await asyncio.to_thread(
-            _varrer_sync,
-            cfg,
-            url_inicial=url_inicial,
-            max_paginas=max_paginas,
-            max_produtos=max_produtos,
-        )
     except RuntimeError as e:
-        # Erros conhecidos (ex: ML pediu login) — não tenta de novo, retry
-        # automático sem login não vai resolver. Admin precisa intervir.
-        msg = str(e)
-        log.warning("busca.bloqueada", motivo=msg[:200])
-        return {
-            "ok": False,
-            "erro": f"ml_bloqueou: {msg[:300]}",
-            "tentar_de_novo": False,
-        }
+        return _resposta_bloqueado(e)
     except Exception as e:
-        log.exception("busca.crash_selenium", erro=str(e))
-        return {
-            "ok": False,
-            "erro": f"selenium_crash: {type(e).__name__}: {str(e)[:200]}",
-            "tentar_de_novo": True,
-        }
+        return _resposta_crash(e, tipo_busca)
 
     return await _enviar_produtos_e_responder(
         produtos, busca_id=busca_id, tarefa_id=tarefa_id, cfg=cfg,
