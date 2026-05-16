@@ -155,6 +155,10 @@ python -m agent.main --sem-tray   # roda
   - **Modo interativo Shopee** (v3.1.1, 3.1.2): banner amarelo no Chrome + aviso no dashboard via WS (`agent.avisos.publicar`) quando detecta captcha/login expirado. Endpoint `GET /api/v1/agentes/avisos` + polling JS no `base.html` (8s) mostra toast persistente. Captcha = 30s fixos × 3 tentativas; login = polling 5min.
   - **Amazon** (v3.2.0): `agente/agent/busca_amazon.py` scraping de 10 categorias `/gp/bestsellers/` + SiteStripe (`#amzn-ss-get-link-button`) gera `amzn.to/XXX`. Cards `div.p13n-sc-uncoverable-faceout`, ASIN extraído de id ou regex `/dp/([A-Z0-9]{10})`. Comissões estimadas por categoria (3-10%). Sem login Associates → cai em fallback `?tag=<sua_tag>` no servidor.
 - **3.20.1** — **Padronização final do retry interativo** (v3.2.1): unifica estratégia pra captcha + login_expirado em TODOS os marketplaces. 30s fixos × 3 tentativas (substitui polling 5min do login). `_verificar_login_amazon` acessa `associados.amazon.com.br/home` (página protegida) ANTES de iterar categorias — se redirect pra signin, dispara retry. Após desbloqueio aparente, verificação dupla pra confirmar login real (evita falso positivo de redirect intermediário). Aviso no dashboard agora inclui texto "Após resolver, vou re-testar automaticamente". **Padrão documentado em `docs/contrato_busca_marketplace.md` — usar nos próximos marketplaces (Magalu, AliExpress, TikTok).**
+- **3.21.0** — Fase 17: **Produtos Personalizados**. Nova seção `/produtos/personalizados` (item 🛍️ no sidebar grupo Catálogo) onde qualquer user cadastra produtos manualmente. Migration `0011_prod_criado_por` adiciona `produtos.criado_por_usuario_id` (FK opcional) — diferente de `usuario_dono_id` (que rege visibilidade pública/privada — ADR-008), `criado_por` rastreia QUEM cadastrou pra UI mostrar "meus produtos". Regras de dono (do usuário): admin/usuário comum → produto **público** (`usuario_dono_id=NULL`, postado com tag central do admin); afiliado COM tag em `usuarios_afiliados` → produto **privado** (`usuario_dono_id=afiliado.id`, SÓ ele posta); afiliado SEM tag → público. Form com palavra-chave (busca termo_livre limit 10) OU link de marketplace (busca por_url) OU link de social com checkbox 🤖 IA (Claude Haiku 4.5 lê `og:title`/`og:description` pra inferir palavra-chave — requer `ANTHROPIC_API_KEY`). Grid de cards estilo V2 (esmeralda V3). Botões ⚡ Postar (lote_service.postar_produto_imediato dedicado, não passa pelo `rodar_lote`), 🔗 Abrir, ✏️ Editar, 🗑 Apagar. Ações em massa: Postar todos / Limpar todos.
+- **3.21.1** — Hotfix Fase 17: **schema Pydantic descartava `url_afiliado` silenciosamente**. `IngestProdutoItem` em `app/schemas/produto.py` não declarava `url_afiliado` nem `comissao` → Pydantic com `extra="ignore"` (default) cortava esses campos do payload do agente, fazendo `meli.la/XXX` capturado pelo linkbuilder NUNCA chegar ao `_upsert_produto` → DB salvava sempre o fallback `?matt_word=`. Fix: declara ambos os campos + `model_config = {"extra": "allow"}` pra aceitar marcadores internos (`_personalizado_dono_id`, `_personalizado_criador_id`). **Lição registrada em armadilhas conhecidas.**
+- **3.21.2** — Fix Fase 17 robustez: 500 no `/postar` (rota chamava `rodar_lote(max_produtos=1)` esperando pegar produto específico, mas é genérico). Nova função dedicada `lote_service.postar_produto_imediato(produto_id, ...)` — carrega produto + nichos, acha 1 grupo compatível não-postado-recentemente, renderiza template + late-binding tag, enfileira via dispatcher. Retorna `{ok, erro}` explícito mostrado no redirect.
+- **3.21.3** — Fix Fase 17 scraper por_url ML (v3.2.2): produtos legacy com MLB curto (`MLB6087`, 4-7 dígitos) eram rejeitados pelo regex `\d{8,15}` → **regex permissivo** `MLB[A-Z]?-?\d{4,15}`. Página de catálogo com layout diferente do produto único tinha `dados_insuficientes preco=None tem_nome=False` → **espera explícita** com `WebDriverWait` até `h1.ui-pdp-title` OU `<script type="application/ld+json">` OU `meta og:title` (12s timeout), `_scroll_lazy_load` agressivo, **cascata de 5 seletores de preço** (PDP + catálogo + meta Schema.org), **diagnóstico em disco** (HTML+screenshot em `%APPDATA%\Achadinhos\debug\ml_porurl_*.png,html`) quando extração falha.
 
 ---
 
@@ -262,6 +266,52 @@ Não invente padrão novo — copia `busca_amazon.py` (template mais robusto)
 e adapta. Pra novo tipo de busca dentro de um marketplace existente (ex:
 "melhor avaliação"), adiciona handler dentro do módulo do marketplace
 alvo (não cria módulo separado).
+
+### Pydantic com `extra="ignore"` descarta silenciosamente
+
+`app/schemas/produto.py:IngestProdutoItem` perdeu 5 meses até v3.21.1
+porque NÃO declarava `url_afiliado`. Pydantic v2 com `extra="ignore"`
+(default) descarta campos não declarados do payload sem warning, sem
+error, sem nada. `meli.la/XXX` capturado pelo agente sumia entre
+`enviar_lote` (cliente) e `ingerir_produtos` (servidor).
+
+**Sempre que mexer em schema de ingest/payload**: declare TODOS os campos
+que o caller pode mandar. Pra aceitar marcadores ad-hoc (ex:
+`_personalizado_dono_id`), use `model_config = {"extra": "allow"}`.
+Sintoma do bug: agente loga sucesso (`linkbuilder_aplicado aplicados=N`),
+mas DB tem o fallback.
+
+### Regex de MLB precisa ser permissivo
+
+URL do ML tem variantes:
+- `/p/MLB1234567890` (catálogo moderno, 10 dígitos)
+- `/p/MLB6087` (legacy, 4-7 dígitos — produtos antigos ainda existem)
+- `/up/MLBU3387021403` (catálogo unificado, letra `U`)
+- `MLB-1234567890` (formato muito antigo, com hífen)
+
+**Regex robusto**: `MLB[A-Z]?-?\d{4,15}`. Antes era `\d{8,15}` e rejeitava
+legacy. Aplica tanto em `_extrair_item_id` (agente) quanto em
+`afiliado_ml_writer._RE_MLB` (servidor).
+
+### Página ML carrega lazy — espera elemento específico
+
+`driver.get(url)` + `WebDriverWait(body)` não basta — o ML serve HTML
+esqueleto e popula via JS. Pra extrair dados confiavelmente:
+
+```python
+WebDriverWait(driver, 12).until(
+    lambda d: (
+        d.find_elements(By.CSS_SELECTOR, "h1.ui-pdp-title")
+        or d.find_elements(By.CSS_SELECTOR, "script[type='application/ld+json']")
+        or d.find_elements(By.CSS_SELECTOR, "meta[property='og:title']")
+    )
+)
+```
+
+E **scroll progressivo** depois pra forçar lazy load de fotos/preços.
+Quando extração falhar, salva HTML+screenshot em
+`%APPDATA%\Achadinhos\debug\` pra próxima sessão analisar layout novo
+do ML.
 
 ---
 

@@ -4,9 +4,9 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-16 (Amazon integrada + retry login 30s×3 padronizado)
-**Versão do agente em prod:** `3.2.1` (ML + Shopee + Amazon validados; modo interativo padronizado)
-**Migration head:** `0010_busca_tipo_mkt`
+**Última atualização:** 2026-05-16 (Produtos Personalizados Fase 17 + fixes scraper)
+**Versão do agente em prod:** `3.2.2` (ML + Shopee + Amazon + Personalizados validados)
+**Migration head:** `0011_prod_criado_por`
 
 ## 🔥 LEITURA OBRIGATÓRIA antes de mexer em busca/linkbuilder
 
@@ -28,9 +28,41 @@
 |---|---|---|---|---|
 | **🛒 Mercado Livre** | v3.0.10+ | Scraping + linkbuilder painel ML | `meli.la/XXX` | `agent.login_ml` |
 | **🛍️ Shopee** | v3.1.2+ | API interna `/api/v3/offer/product/list` | `long_link` direto API | `agent.login_shopee` |
-| **📦 Amazon** | v3.2.1 | Scraping `/gp/bestsellers/` + SiteStripe | `amzn.to/XXX` (fallback `?tag=`) | `agent.login_amazon` |
+| **📦 Amazon** | v3.2.1+ | Scraping `/gp/bestsellers/` + SiteStripe | `amzn.to/XXX` (fallback `?tag=`) | `agent.login_amazon` |
 
 Modo interativo (banner Chrome + aviso dashboard) universal nos 3 — 30s×3 retry.
+
+## 🛍️ Produtos Personalizados (Fase 17 — v3.21+)
+
+Página `/produtos/personalizados` permite qualquer user cadastrar produtos
+manualmente. **Validado em prod com `meli.la` salvando corretamente.**
+
+| Quem cadastra | Visibilidade do produto | Quem posta |
+|---|---|---|
+| Admin | Público (`usuario_dono_id=NULL`) | Admin com tag central |
+| Usuário comum | Público | Admin com tag central |
+| Afiliado COM tag ML | Privado (`usuario_dono_id=afiliado.id`) | **SÓ o afiliado** |
+| Afiliado SEM tag | Público | Admin com tag central |
+
+**3 modos de entrada**:
+1. Palavra-chave → busca termo_livre ML (limit 10)
+2. Link de marketplace (ML/Shopee/Amazon) → busca por_url
+3. Link de social (TikTok/Insta/YT) + IA → Claude infere palavra-chave
+   (requer `ANTHROPIC_API_KEY` no Railway)
+
+Função dedicada `lote_service.postar_produto_imediato(produto_id, ...)`
+pro botão "⚡ Postar" individual — não passa pelo `rodar_lote` (que é genérico).
+
+## 🐛 Bugs críticos resolvidos nesta sessão (2026-05-16 noite)
+
+1. **`IngestProdutoItem` Pydantic descartava `url_afiliado` silenciosamente** —
+   schema não declarava o campo, `extra="ignore"` (default) cortava do payload.
+   5 meses de bug. Fix: declarei `url_afiliado` + `comissao` + `extra="allow"`.
+2. **MLB legacy 4-7 dígitos rejeitado** — regex `\d{8,15}` → `\d{4,15}`.
+3. **`/postar` 500** — função dedicada em vez de `rodar_lote`.
+4. **`dados_insuficientes` em ML por_url** — espera explícita do DOM
+   (h1/ld_json/og_title), scroll progressivo, 5 seletores de preço em cascata,
+   diagnóstico em disco quando falha.
 
 ---
 
