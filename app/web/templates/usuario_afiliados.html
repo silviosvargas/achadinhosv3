@@ -69,8 +69,11 @@
             </details>
             <form method="post" action="/usuarios/{{ target.id }}/afiliados/{{ c.plataforma }}/remover"
                   style="display:inline; margin-left:8px;"
-                  onsubmit="return confirm('Remover {{ c.nome }}?');">
-              <button type="submit" class="btn-link" style="color:#dc2626;">remover</button>
+                  data-confirm="Remover a tag de afiliado do marketplace &quot;{{ c.nome|e }}&quot;?"
+                  data-confirm-titulo="Remover afiliado?"
+                  data-confirm-ok="Sim, remover"
+                  data-confirm-perigo="1">
+              <button type="submit" class="btn-link" style="color:var(--vermelho);">remover</button>
             </form>
           </td>
           {% endif %}

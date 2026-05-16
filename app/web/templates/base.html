@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/style.css?v=2026051605">
+  <link rel="stylesheet" href="/static/style.css?v=2026051606">
 
   {# Aplica tema escolhido pelo usuário ANTES do render — evita FOUC.
      Lê de localStorage. Se vazio/inválido, deixa default (respeita sistema). #}
@@ -348,6 +348,116 @@
       '}'
     );
     document.head.appendChild(style);
+  })();
+  </script>
+
+  {# ============================================================
+     Microinterações globais (Fase 6)
+     - Auto loading state em botões de submit
+     - Modal customizado substitui confirm() do browser
+     ============================================================ #}
+  <script>
+  (function () {
+    /* ── 1. Modal de confirmação reutilizável ─────────────── */
+    let modalAtual = null;
+    function fecharModal() {
+      if (!modalAtual) return;
+      modalAtual.classList.remove('aberto');
+      const m = modalAtual;
+      modalAtual = null;
+      setTimeout(() => { if (m.parentNode) m.parentNode.removeChild(m); }, 200);
+    }
+    function abrirModal({ titulo, mensagem, confirmar, cancelar, perigo }) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = (
+          '<div class="modal-card" role="dialog" aria-modal="true">' +
+            '<div class="modal-icone ' + (perigo ? 'modal-icone-perigo' : '') + '">' +
+              (perigo ? '⚠️' : '?') +
+            '</div>' +
+            '<h3 class="modal-titulo"></h3>' +
+            '<p class="modal-mensagem"></p>' +
+            '<div class="modal-acoes">' +
+              '<button type="button" class="btn" data-acao="cancelar"></button>' +
+              '<button type="button" class="btn ' +
+                (perigo ? 'btn-perigo' : 'btn-primario') +
+                '" data-acao="confirmar"></button>' +
+            '</div>' +
+          '</div>'
+        );
+        overlay.querySelector('.modal-titulo').textContent = titulo || 'Confirmar';
+        overlay.querySelector('.modal-mensagem').textContent = mensagem || '';
+        overlay.querySelector('[data-acao=cancelar]').textContent = cancelar || 'Cancelar';
+        overlay.querySelector('[data-acao=confirmar]').textContent = confirmar || 'Confirmar';
+
+        document.body.appendChild(overlay);
+        modalAtual = overlay;
+        // Próximo frame: aplica .aberto pra animar entrada
+        requestAnimationFrame(() => overlay.classList.add('aberto'));
+
+        function decidir(ok) { fecharModal(); resolve(ok); }
+        overlay.addEventListener('click', e => {
+          if (e.target === overlay) decidir(false);  // click no backdrop
+        });
+        overlay.querySelector('[data-acao=cancelar]').addEventListener('click', () => decidir(false));
+        overlay.querySelector('[data-acao=confirmar]').addEventListener('click', () => decidir(true));
+        document.addEventListener('keydown', function onKey(e) {
+          if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); decidir(false); }
+          if (e.key === 'Enter')  { document.removeEventListener('keydown', onKey); decidir(true); }
+        });
+        // Foca no botão confirmar
+        setTimeout(() => overlay.querySelector('[data-acao=confirmar]').focus(), 50);
+      });
+    }
+
+    // Expõe globalmente — outras páginas podem usar: `await Achadinhos.confirmar(...)`.
+    window.Achadinhos = window.Achadinhos || {};
+    window.Achadinhos.confirmar = abrirModal;
+
+    /* ── 2. Intercepta forms com data-confirm pra usar o modal bonito  */
+    document.addEventListener('submit', async function (e) {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+
+      // Sem data-confirm → segue fluxo normal
+      const msg = form.dataset.confirm;
+      if (msg) {
+        e.preventDefault();
+        const perigo = (form.dataset.confirmPerigo === '1') ||
+                       form.action.includes('/excluir') ||
+                       form.action.includes('/cancelar');
+        const ok = await abrirModal({
+          titulo:    form.dataset.confirmTitulo || (perigo ? 'Tem certeza?' : 'Confirmar'),
+          mensagem:  msg,
+          confirmar: form.dataset.confirmOk || (perigo ? 'Sim, prosseguir' : 'Confirmar'),
+          cancelar:  form.dataset.confirmCancel || 'Cancelar',
+          perigo:    perigo,
+        });
+        if (ok) {
+          // Remove o data-confirm pra não loop, daí submit
+          delete form.dataset.confirm;
+          form.submit();
+        }
+        return;
+      }
+
+      /* ── 3. Loading state automático em qualquer submit ──── */
+      // Pega o botão de submit que efetivamente acionou o form
+      const btn = e.submitter || form.querySelector('button[type="submit"], button:not([type])');
+      if (btn && !btn.disabled) {
+        btn.classList.add('btn-carregando');
+        btn.dataset.textoOriginal = btn.innerHTML;
+        btn.disabled = true;
+        // Auto-recupera se demorar muito (caso o submit falhe sem redirect)
+        setTimeout(() => {
+          if (btn.classList.contains('btn-carregando')) {
+            btn.classList.remove('btn-carregando');
+            btn.disabled = false;
+          }
+        }, 15000);
+      }
+    });
   })();
   </script>
   {% endif %}

@@ -74,11 +74,12 @@
 {% endif %}
 
 {% if tarefa.status in ['pendente', 'processando'] %}
-<form method="post" action="/tarefas/{{ tarefa.id }}/cancelar" style="margin-top: 24px">
-  <button type="submit" class="btn btn-perigo"
-          onclick="return confirm('Cancelar essa tarefa? Esta ação não pode ser desfeita.')">
-    Cancelar tarefa
-  </button>
+<form method="post" action="/tarefas/{{ tarefa.id }}/cancelar" style="margin-top: 24px"
+      data-confirm="Cancelar a tarefa #{{ tarefa.id }}? Esta ação não pode ser desfeita."
+      data-confirm-titulo="Cancelar tarefa?"
+      data-confirm-ok="Sim, cancelar"
+      data-confirm-perigo="1">
+  <button type="submit" class="btn btn-perigo">Cancelar tarefa</button>
 </form>
 {% endif %}
 

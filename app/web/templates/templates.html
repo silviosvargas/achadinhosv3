@@ -51,11 +51,12 @@
       <td>{{ t.vezes_usado }}</td>
       {% if pode_criar %}
       <td>
-        <form method="post" action="/templates/{{ t.id }}/excluir" style="display:inline">
-          <button type="submit" class="btn-link btn-link-perigo"
-                  onclick="return confirm('Excluir template &quot;{{ t.nome }}&quot;?')">
-            excluir
-          </button>
+        <form method="post" action="/templates/{{ t.id }}/excluir" style="display:inline"
+              data-confirm="Excluir template &quot;{{ t.nome|e }}&quot;?"
+              data-confirm-titulo="Excluir template?"
+              data-confirm-ok="🗑 Sim, excluir"
+              data-confirm-perigo="1">
+          <button type="submit" class="btn-link" style="color:var(--vermelho);">excluir</button>
         </form>
       </td>
       {% endif %}

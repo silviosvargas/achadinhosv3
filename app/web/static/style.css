@@ -1120,3 +1120,177 @@ nav.topbar-legado {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+
+/* ============================================================
+   MICROINTERAÇÕES — Fase 6
+   Spinner em botões, modal de confirmação, animações sutis
+   ============================================================ */
+
+/* ── Botão em estado "carregando" ────────────────────────── */
+.btn-carregando {
+  pointer-events: none;
+  position: relative;
+  color: transparent !important;   /* esconde texto, mantém largura */
+}
+.btn-carregando::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 16px; height: 16px;
+  margin: -8px 0 0 -8px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  color: white;                    /* spinner branco em btn-primario */
+  animation: spinnerGirar 600ms linear infinite;
+}
+/* Botão neutro/secundário: spinner cinza */
+.btn-carregando:not(.btn-primario):not(.btn-perigo)::after {
+  color: var(--primario);
+}
+@keyframes spinnerGirar {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Modal de confirmação bonito ─────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  opacity: 0;
+  transition: opacity var(--t-base);
+}
+.modal-overlay.aberto { opacity: 1; }
+
+.modal-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-xl);
+  width: 100%;
+  max-width: 440px;
+  padding: var(--sp-6) var(--sp-6) var(--sp-5);
+  transform: translateY(20px) scale(0.96);
+  transition: transform var(--t-base), opacity var(--t-base);
+  opacity: 0;
+}
+.modal-overlay.aberto .modal-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+.modal-icone {
+  width: 48px; height: 48px;
+  border-radius: var(--r-full);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  margin-bottom: var(--sp-3);
+  background: var(--primario-50);
+  color: var(--primario);
+}
+.modal-icone-perigo {
+  background: #fee2e2;
+  color: var(--vermelho);
+}
+@media (prefers-color-scheme: dark) {
+  .modal-icone-perigo {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+  }
+}
+
+.modal-titulo {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--texto-lg);
+  font-weight: 700;
+  color: var(--texto);
+  letter-spacing: -0.01em;
+}
+.modal-mensagem {
+  margin: 0 0 var(--sp-5);
+  font-size: var(--texto-sm);
+  color: var(--texto-2);
+  line-height: 1.55;
+  white-space: pre-line;
+}
+.modal-acoes {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.modal-acoes .btn { min-width: 100px; }
+
+/* ── Toast inline (alerts com animação de entrada) ───────── */
+.alerta {
+  animation: alertaEntra 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes alertaEntra {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Botões: feedback sutil ao clicar (ripple-like) ──────── */
+.btn:not(.btn-carregando):active { transform: translateY(1px) scale(0.98); }
+
+/* ── Links da sidebar com slide sutil no hover ──────────── */
+.sidebar-item {
+  position: relative;
+}
+.sidebar-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primario);
+  opacity: 0;
+  transition: opacity var(--t-fast), transform var(--t-fast);
+  transform: scaleY(0.6);
+  border-radius: 0 2px 2px 0;
+}
+.sidebar-item.ativo::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+/* ── Cards: hover lift mais perceptível ──────────────────── */
+.card { will-change: transform; }
+
+/* ── Tabela: row enter/exit com fade ────────────────────── */
+.tabela tbody tr {
+  animation: linhaEntra 200ms ease-out backwards;
+}
+@keyframes linhaEntra {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Stagger nas primeiras linhas pra parecer cascade */
+.tabela tbody tr:nth-child(1)  { animation-delay: 0ms; }
+.tabela tbody tr:nth-child(2)  { animation-delay: 20ms; }
+.tabela tbody tr:nth-child(3)  { animation-delay: 40ms; }
+.tabela tbody tr:nth-child(4)  { animation-delay: 60ms; }
+.tabela tbody tr:nth-child(5)  { animation-delay: 80ms; }
+.tabela tbody tr:nth-child(6)  { animation-delay: 100ms; }
+.tabela tbody tr:nth-child(7)  { animation-delay: 120ms; }
+.tabela tbody tr:nth-child(8)  { animation-delay: 140ms; }
+.tabela tbody tr:nth-child(9)  { animation-delay: 160ms; }
+.tabela tbody tr:nth-child(10) { animation-delay: 180ms; }
+
+/* ── Respeita reduced motion ─────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

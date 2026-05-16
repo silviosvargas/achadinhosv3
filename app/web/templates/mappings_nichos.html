@@ -90,9 +90,12 @@
       <td class="small muted">{{ m.criado_em.strftime('%d/%m/%Y %H:%M') }}</td>
       <td>
         {% if pode_admin %}
-        <form method="post" action="/mappings-nichos/{{ m.id }}/excluir"
-              style="display:inline" onsubmit="return confirm('Remover este mapping?');">
-          <button type="submit" class="btn-link">remover</button>
+        <form method="post" action="/mappings-nichos/{{ m.id }}/excluir" style="display:inline"
+              data-confirm="Remover o mapping &quot;{{ m.categoria_ml|e }}&quot;?"
+              data-confirm-titulo="Remover mapping?"
+              data-confirm-ok="Sim, remover"
+              data-confirm-perigo="1">
+          <button type="submit" class="btn-link" style="color:var(--vermelho);">remover</button>
         </form>
         {% endif %}
       </td>

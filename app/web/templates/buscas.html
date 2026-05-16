@@ -107,7 +107,10 @@
           </form>
           {% if pode_admin %}
           <form method="post" action="/buscas/{{ b.id }}/excluir" style="display:inline"
-                onsubmit="return confirm('Excluir a busca {{ b.nome|tojson }}?\n\nA configuração será removida (produtos já achados permanecem).');">
+                data-confirm="Excluir a busca &quot;{{ b.nome|e }}&quot;?&#10;&#10;A configuração será removida (produtos já achados permanecem)."
+                data-confirm-titulo="Excluir busca?"
+                data-confirm-ok="🗑 Sim, excluir"
+                data-confirm-perigo="1">
             <button type="submit" class="btn-link" style="color:var(--vermelho);"
                     title="Excluir configuração de busca">🗑 excluir</button>
           </form>

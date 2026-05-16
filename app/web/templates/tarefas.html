@@ -84,9 +84,12 @@
       <td>
         <a href="/tarefas/{{ t.id }}" class="btn-link">detalhes</a>
         {% if t.status in ['pendente', 'processando'] %}
-        <form method="post" action="/tarefas/{{ t.id }}/cancelar" style="display:inline">
-          <button type="submit" class="btn-link btn-link-perigo"
-                  onclick="return confirm('Cancelar essa tarefa?')">cancelar</button>
+        <form method="post" action="/tarefas/{{ t.id }}/cancelar" style="display:inline"
+              data-confirm="Cancelar a tarefa #{{ t.id }}?"
+              data-confirm-titulo="Cancelar tarefa?"
+              data-confirm-ok="Sim, cancelar"
+              data-confirm-perigo="1">
+          <button type="submit" class="btn-link" style="color:var(--vermelho);">cancelar</button>
         </form>
         {% endif %}
       </td>

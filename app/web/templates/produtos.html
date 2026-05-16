@@ -14,10 +14,12 @@
     <a href="/produtos/novo" class="btn btn-primario">+ Adicionar produto</a>
     {% if produtos %}
     <form method="post" action="/produtos/regenerar-meli-la" style="display:inline"
-          onsubmit="return confirm('Re-enfileirar geração de links meli.la pros produtos pendentes?\n\nO agente vai abrir o painel ML afiliados e gerar os shortlinks. Leva ~1min por 50 produtos.');">
+          data-confirm="O agente vai abrir o painel ML afiliados e gerar os shortlinks meli.la pros produtos pendentes.&#10;&#10;Leva ~1min por 50 produtos."
+          data-confirm-titulo="Regenerar links meli.la?"
+          data-confirm-ok="Sim, regenerar">
       <button type="submit" class="btn"
-              style="background:#0ea5e9; color:white; border:none;"
-              title="Re-roda o linkbuilder ML pra produtos sem meli.la (depois de fixes de pipeline)">
+              style="background:#0ea5e9; color:white; border-color:#0ea5e9;"
+              title="Re-roda o linkbuilder ML pra produtos sem meli.la">
         🔗 Regenerar meli.la
       </button>
     </form>
@@ -212,8 +214,11 @@
             </button>
           </form>
           <form method="post" action="/produtos/{{ p.id }}/excluir" style="display:inline"
-                onsubmit="return confirmarExcluirProduto({{ p.nome[:80] | tojson }});">
-            <button type="submit" class="btn-link" style="color:#dc2626;"
+                data-confirm="Apagar este produto?&#10;&#10;{{ p.nome[:80]|e }}&#10;&#10;Isso remove também o redirect /r/{slug} e as marcações de nicho. A ação é IRREVERSÍVEL."
+                data-confirm-titulo="Apagar produto?"
+                data-confirm-ok="🗑️ Sim, apagar"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" style="color:var(--vermelho);"
                     title="Apagar produto (irreversível)">🗑️ excluir</button>
           </form>
         </div>
