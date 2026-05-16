@@ -558,6 +558,13 @@ def _processar_categoria_para_extras(
     com_extras: list[dict] = []        # acumula só os com bônus EXTRAS
     buffer_sem_meli: list[dict] = []    # com extras que ainda não tiveram meli.la
 
+    # Telemetria (v3.8.1) — pra distinguir "ML sem promoção" de "captura quebrada".
+    # Diagnóstico antes era log.debug → invisível.
+    ct_zero      = 0     # nem base nem extras (barra preta não apareceu / sessão expirou)
+    ct_so_base   = 0     # base ok, mas sem bônus EXTRAS
+    ct_com_extra = 0     # extras > 0 (passa no filtro)
+    diag_salvo   = False
+
     for i, p in enumerate(candidatos, start=1):
         if cancelamento.foi_cancelada(tarefa_id):
             log.info("ml.padrao_extra.cancelada_durante_captura",
@@ -582,10 +589,49 @@ def _processar_categoria_para_extras(
 
         com_real, com_extra, preco_real = _capturar_comissao_e_preco_no_destino(driver)
 
+        # v3.8.1: log INFO de TODOS os produtos pra diagnosticar quando 0 extras.
+        # Sem isso, o silêncio entre `categoria_iniciada` e `categoria_concluida`
+        # esconde se o ML não tem promoção ou se a captura quebrou.
+        if com_real is None and com_extra is None:
+            ct_zero += 1
+            categoria_label = "zero"
+        elif com_extra is None or com_extra <= 0:
+            ct_so_base += 1
+            categoria_label = "so_base"
+        else:
+            ct_com_extra += 1
+            categoria_label = "com_extra"
+
+        log.info("ml.padrao_extra.produto",
+                 n=i, total=len(candidatos), item_id=p.get("item_id"),
+                 efetiva=com_real, extra=com_extra, preco=preco_real,
+                 status=categoria_label)
+
+        # Diagnóstico: salva HTML+screenshot do PRIMEIRO produto da categoria
+        # quando NENHUMA comissão foi detectada (nem base). Isso indica que a
+        # barra preta de afiliados não está aparecendo (sessão expirou, layout
+        # mudou, etc). Próxima sessão analisa o HTML pra ajustar seletores.
+        if not diag_salvo and com_real is None and com_extra is None:
+            try:
+                from pathlib import Path
+                from agent.config import _config_dir
+                debug_dir = _config_dir() / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                stamp = int(time.time())
+                safe = nome_categoria.replace(" ", "_").replace(",", "")[:40]
+                driver.save_screenshot(str(debug_dir / f"ml_extras_{safe}_{stamp}.png"))
+                (debug_dir / f"ml_extras_{safe}_{stamp}.html").write_text(
+                    driver.page_source[:300_000], encoding="utf-8", errors="ignore",
+                )
+                log.warning("ml.padrao_extra.diagnostico_salvo",
+                            nome=nome_categoria, debug_dir=str(debug_dir),
+                            url_atual=(driver.current_url or "")[:200])
+                diag_salvo = True
+            except Exception as e:
+                log.warning("ml.padrao_extra.diag_falhou", erro=str(e)[:120])
+
         # FILTRO PRINCIPAL: só mantém se tem bônus EXTRAS > 0
         if not (com_extra and com_extra > 0):
-            log.debug("ml.padrao_extra.sem_bonus",
-                      item_id=p.get("item_id"), com_efetiva=com_real)
             continue
 
         p["comissao"]       = com_real
@@ -627,7 +673,8 @@ def _processar_categoria_para_extras(
     log.info("ml.padrao_extra.categoria_concluida",
              nome=nome_categoria,
              candidatos=len(candidatos),
-             com_extras=len(com_extras))
+             com_extras=len(com_extras),
+             zero=ct_zero, so_base=ct_so_base, com_extra=ct_com_extra)
     return com_extras[:faltam]
 
 
