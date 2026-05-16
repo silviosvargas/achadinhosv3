@@ -21,6 +21,76 @@
 </div>
 {% endif %}
 
+{# ── Fase 20: Tarefas em progresso (atualiza via JS a cada 3s) ───── #}
+<section id="tarefas-em-progresso"
+         style="margin-bottom:20px; display:none;">
+  {# Visível só quando JS detecta ≥1 tarefa em PROCESSANDO #}
+</section>
+
+<script>
+(function(){
+  var container = document.getElementById('tarefas-em-progresso');
+  if (!container) return;
+
+  var TIPOS_NOMES = {
+    'buscar_mercado_livre': '🛒 Busca Mercado Livre',
+    'gerar_link_afiliado':  '🔗 Gerando links de afiliado',
+    'revalidar_comissao_ml':'✅ Revalidando comissões',
+    'postar_whatsapp':      '💬 Postando no WhatsApp',
+    'postar_telegram':      '📢 Postando no Telegram',
+  };
+
+  function renderItem(t) {
+    var nome = TIPOS_NOMES[t.tipo] || t.tipo;
+    var pct = Math.max(0, Math.min(100, t.progresso_pct || 0));
+    var msg = t.progresso_mensagem || (pct === 0 ? 'Iniciando…' : '');
+    return (
+      '<div style="background:var(--bg-card); border:1px solid var(--border); ' +
+      'border-radius:var(--r-md); padding:12px 16px; margin-bottom:8px;">' +
+        '<div style="display:flex; justify-content:space-between; ' +
+                    'align-items:center; margin-bottom:6px; gap:10px;">' +
+          '<div style="font-weight:600; font-size:13px; color:var(--texto);">' +
+            nome + ' <span style="color:var(--muted); font-weight:400; font-size:11px;">#' + t.id + '</span>' +
+          '</div>' +
+          '<div style="font-weight:700; font-size:14px; color:var(--primario, #10b981);">' +
+            pct.toFixed(0) + '%' +
+          '</div>' +
+        '</div>' +
+        '<div style="background:var(--bg); height:8px; border-radius:4px; overflow:hidden;">' +
+          '<div style="background:linear-gradient(90deg, #10b981, #059669); ' +
+                       'height:100%; width:' + pct + '%; transition:width .5s ease;"></div>' +
+        '</div>' +
+        (msg ? '<div style="margin-top:6px; font-size:11px; color:var(--muted);">' +
+                  msg.replace(/[<>]/g, '') + '</div>' : '') +
+      '</div>'
+    );
+  }
+
+  function atualizar() {
+    fetch('/api/v1/tarefas/em-progresso', {credentials: 'include'})
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d || !d.items || d.items.length === 0) {
+          container.style.display = 'none';
+          container.innerHTML = '';
+          return;
+        }
+        container.style.display = '';
+        container.innerHTML =
+          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">' +
+            '<h2 style="margin:0; font-size:15px;">⚙️ Tarefas em andamento</h2>' +
+            '<span style="font-size:11px; color:var(--muted);">atualiza a cada 3s</span>' +
+          '</div>' +
+          d.items.map(renderItem).join('');
+      })
+      .catch(function() { /* silencia erro de rede */ });
+  }
+
+  atualizar();
+  setInterval(atualizar, 3000);
+})();
+</script>
+
 <section class="cards">
   <div class="card">
     <div class="card-titulo">Agentes</div>

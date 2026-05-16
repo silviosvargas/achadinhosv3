@@ -15,6 +15,7 @@ from enum import StrEnum
 from sqlalchemy import (
     JSON,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -93,4 +94,17 @@ class Tarefa(Base, TimestampMixin):
     criado_por_usuario_id: Mapped[int | None] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"),
         default=None,
+    )
+
+    # Fase 20 — Progresso em tempo real (UI mostra barra no dashboard)
+    progresso_pct: Mapped[float] = mapped_column(
+        Float, default=0.0, server_default="0",
+        comment="0..100. Agente reporta em checkpoints via WS tarefa_progresso.",
+    )
+    progresso_mensagem: Mapped[str | None] = mapped_column(
+        String(200), default=None,
+        comment="Texto curto pra UI: 'Categoria 3/8: Beleza', 'Capturando barra...'",
+    )
+    progresso_atualizado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None,
     )

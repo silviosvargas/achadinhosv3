@@ -27,7 +27,7 @@
 ; ============================================================================
 
 #define MyAppName      "Achadinhos Agent"
-#define MyAppVersion   "3.5.1"
+#define MyAppVersion   "3.6.0"
 #define MyAppPublisher "Achadinhos"
 #define MyAppURL       "https://achadinhos.maisseguidores.ia.br"
 #define MyAppExeName   "AchadinhosAgent.exe"

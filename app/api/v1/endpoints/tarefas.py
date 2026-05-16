@@ -24,6 +24,40 @@ from app.services import dispatcher
 router = APIRouter(prefix="/tarefas", tags=["tarefas"])
 
 
+@router.get("/em-progresso")
+async def em_progresso(
+    user: Usuario = Depends(usuario_atual),
+    db: AsyncSession = Depends(get_db_async),
+) -> dict:
+    """Fase 20 — tarefas PROCESSANDO da org com seu progresso atual.
+
+    Usado pela UI do dashboard pra mostrar barra de progresso em tempo
+    real (polling 3s). Retorna lista enxuta com só o necessário pro card.
+    """
+    rows = list((await db.execute(
+        select(Tarefa).where(
+            Tarefa.org_id == user.org_id,
+            Tarefa.status == StatusTarefa.PROCESSANDO,
+        ).order_by(Tarefa.iniciado_em.desc().nullslast()).limit(10)
+    )).scalars().all())
+
+    items = [
+        {
+            "id":                  t.id,
+            "tipo":                t.tipo,
+            "progresso_pct":       round(float(t.progresso_pct or 0), 1),
+            "progresso_mensagem":  t.progresso_mensagem or "",
+            "iniciado_em":         t.iniciado_em.isoformat() if t.iniciado_em else None,
+            "progresso_atualizado_em": (
+                t.progresso_atualizado_em.isoformat()
+                if t.progresso_atualizado_em else None
+            ),
+        }
+        for t in rows
+    ]
+    return {"total": len(items), "items": items}
+
+
 @router.get("", response_model=Pagina[TarefaPublica])
 async def listar(
     filtro: FiltroTarefas = Depends(),

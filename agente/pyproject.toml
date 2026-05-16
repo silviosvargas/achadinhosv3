@@ -1,6 +1,6 @@
 [project]
 name = "achadinhos-agent"
-version = "3.5.1"
+version = "3.6.0"
 description = "Agente local Achadinhos — posta no WhatsApp via WebSocket com servidor cloud"
 requires-python = ">=3.11"
 

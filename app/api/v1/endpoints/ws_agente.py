@@ -192,20 +192,46 @@ async def _h_qr_pendente(*, agente_id: int, mensagem: dict[str, Any]) -> None:
 
 async def _h_busca_progresso(*, agente_id: int, mensagem: dict[str, Any]) -> None:
     """
-    Relato parcial de busca ML. Útil pra UI mostrar 'varrendo página 3/5'.
-    Por enquanto só log — UI de progresso fica pra fase futura.
+    Relato parcial de execução. Fase 20: persiste em `tarefas.progresso_pct`
+    pra UI mostrar barra de progresso em tempo real no dashboard
+    (polling via /api/v1/tarefas/em-progresso).
 
-    Payload esperado: { tarefa_id, busca_id, pagina_atual, total_paginas,
-                        produtos_encontrados_ate_agora }
+    Payload esperado:
+        {tarefa_id, pct, mensagem}              (Fase 20 — novo padrão)
+        {tarefa_id, busca_id, pagina_atual, ...}  (legado — só loga)
     """
+    from datetime import datetime, timezone
+    from app.models import Tarefa
+
+    tarefa_id = mensagem.get("tarefa_id")
+    pct       = mensagem.get("pct")
+    msg_txt   = mensagem.get("mensagem")
+
     log.info(
         "busca.progresso",
         agente_id=agente_id,
-        tarefa_id=mensagem.get("tarefa_id"),
-        pagina=mensagem.get("pagina_atual"),
-        total=mensagem.get("total_paginas"),
-        encontrados=mensagem.get("produtos_encontrados_ate_agora"),
+        tarefa_id=tarefa_id,
+        pct=pct,
+        mensagem=msg_txt,
+        pagina=mensagem.get("pagina_atual"),       # legado
+        total=mensagem.get("total_paginas"),       # legado
     )
+
+    # Persiste no DB se o agente mandou pct (Fase 20)
+    if tarefa_id and pct is not None:
+        try:
+            pct_f = float(pct)
+        except (TypeError, ValueError):
+            return
+        pct_f = max(0.0, min(100.0, pct_f))
+        async with sessao_async() as db:
+            t = await db.get(Tarefa, int(tarefa_id))
+            if t is None:
+                return
+            t.progresso_pct = pct_f
+            t.progresso_mensagem = (msg_txt or "")[:200] if msg_txt else None
+            t.progresso_atualizado_em = datetime.now(tz=timezone.utc)
+            await db.commit()
 
 
 async def _h_aviso_user(*, agente_id: int, mensagem: dict[str, Any]) -> None:

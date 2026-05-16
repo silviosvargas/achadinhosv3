@@ -213,6 +213,12 @@ async def main_async(
     from agent import avisos
     avisos.configurar(cliente, asyncio.get_event_loop())
 
+    # Fase 20 — módulo de progresso (UI dashboard mostra barra em tempo real).
+    # `ws_progresso.reportar(tarefa_id, pct, mensagem)` pode ser chamado de
+    # qualquer thread (asyncio.to_thread) — agenda envio no loop principal.
+    from agent import ws_progresso
+    ws_progresso.configurar(cliente, asyncio.get_event_loop())
+
     # Handler de postagem WhatsApp
     async def handler_postar(msg: dict) -> dict:
         if tray:

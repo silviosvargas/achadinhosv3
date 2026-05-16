@@ -323,27 +323,43 @@ def _processar_categoria(
 
 def _varrer_padrao_completo_sync(
     cfg: Config, *, candidatos_por_categoria: int = 30,
+    tarefa_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
-    """Loop principal: itera todas as categorias hardcoded em CATEGORIAS_PADRAO.
+    """Loop principal: itera categorias em CATEGORIAS_PADRAO.
 
-    Pra cada categoria, chama `_processar_categoria` que retorna o top 10
-    com comissão real capturada. Junta tudo numa lista única e devolve.
+    Fase 20 (v3.6.0): se `tarefa_id` for fornecido, reporta progresso via
+    `ws_progresso.reportar(tarefa_id, pct, mensagem)` em checkpoints:
+    - 0% início
+    - (i/N)*100% após cada categoria
+    - 100% final
+    Servidor persiste em `tarefas.progresso_pct` → UI dashboard mostra
+    barra com polling 3s.
     """
     # Reusa lock e driver ML do módulo principal
     from agent.busca_ml import _criar_driver_ml
     from agent.linkbuilder_ml import _LOCK_CHROME_ML
+    from agent import ws_progresso
 
+    total_cat = len(CATEGORIAS_PADRAO)
     log.info("ml.padrao.iniciando",
-             categorias=len(CATEGORIAS_PADRAO),
-             candidatos_por_categoria=candidatos_por_categoria)
+             categorias=total_cat,
+             candidatos_por_categoria=candidatos_por_categoria,
+             tarefa_id=tarefa_id)
+    ws_progresso.reportar(tarefa_id, 0.0, "Iniciando busca padrão ML…")
 
     with _LOCK_CHROME_ML:
         driver = _criar_driver_ml(cfg)
         todos: list[dict[str, Any]] = []
         try:
             for i, (nome, url, com_est) in enumerate(CATEGORIAS_PADRAO, start=1):
+                # Reporta INÍCIO da categoria (mostra "Categoria X/N: nome")
+                pct_inicio = ((i - 1) / total_cat) * 100.0
+                ws_progresso.reportar(
+                    tarefa_id, pct_inicio,
+                    f"Categoria {i}/{total_cat}: {nome}",
+                )
                 log.info("ml.padrao.categoria",
-                         n=i, total=len(CATEGORIAS_PADRAO), nome=nome)
+                         n=i, total=total_cat, nome=nome)
                 try:
                     top_cat = _processar_categoria(
                         driver,
@@ -357,6 +373,12 @@ def _varrer_padrao_completo_sync(
                     log.exception("ml.padrao.categoria_crash",
                                   nome=nome, erro=str(e)[:200])
                     continue
+                # Reporta FIM da categoria
+                pct_fim = (i / total_cat) * 100.0
+                ws_progresso.reportar(
+                    tarefa_id, pct_fim,
+                    f"Categoria {i}/{total_cat} concluída — {len(todos)} produtos no total",
+                )
         finally:
             try:
                 driver.quit()
@@ -364,17 +386,22 @@ def _varrer_padrao_completo_sync(
                 pass
             time.sleep(1.5)
 
+    ws_progresso.reportar(
+        tarefa_id, 100.0,
+        f"Concluído — {len(todos)} produtos com comissão real",
+    )
     log.info("ml.padrao.concluido",
-             categorias=len(CATEGORIAS_PADRAO),
-             produtos_finais=len(todos))
+             categorias=total_cat, produtos_finais=len(todos))
     return todos
 
 
 async def varrer_padrao_completo(
     cfg: Config, *, candidatos_por_categoria: int = 30,
+    tarefa_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
     """Async wrapper — roda Selenium em thread separada."""
     return await asyncio.to_thread(
         _varrer_padrao_completo_sync, cfg,
         candidatos_por_categoria=candidatos_por_categoria,
+        tarefa_id=tarefa_id,
     )
