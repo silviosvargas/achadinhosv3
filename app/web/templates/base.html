@@ -10,7 +10,21 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/style.css?v=2026051601">
+  <link rel="stylesheet" href="/static/style.css?v=2026051602">
+
+  {# Aplica tema escolhido pelo usuário ANTES do render — evita FOUC.
+     Lê de localStorage. Se vazio/inválido, deixa default (respeita sistema). #}
+  <script>
+  (function() {
+    try {
+      var t = localStorage.getItem('achadinhos_tema');
+      var validos = ['claro', 'escuro', 'neutro', 'vibrante', 'contraste'];
+      if (t && validos.indexOf(t) !== -1) {
+        document.documentElement.setAttribute('data-theme', t);
+      }
+    } catch (e) {}
+  })();
+  </script>
 
   {# ── PWA (Fase 7) ───────────────────────────────────────── #}
   <link rel="manifest" href="/manifest.webmanifest">

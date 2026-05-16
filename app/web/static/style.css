@@ -104,9 +104,150 @@
   --t-slow: 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Dark mode refinado — usa escala 800-950 em vez de inverter brutal */
+/* ============================================================
+   TEMAS — usuário escolhe em /conta. Default: respeita prefers-color-scheme.
+   Aplicado via [data-theme="X"] no <html>, script inline antes do render.
+   ============================================================ */
+
+/* ── Tema CLARO explícito (override do prefers dark) ─────── */
+[data-theme="claro"] {
+  --bg:           var(--gray-50);
+  --bg-card:      #ffffff;
+  --bg-input:     #ffffff;
+  --bg-sidebar:   #ffffff;
+  --bg-hover:     var(--gray-100);
+  --border:       var(--gray-200);
+  --border-forte: var(--gray-300);
+  --texto:        var(--gray-900);
+  --texto-2:      var(--gray-700);
+  --muted:        var(--gray-500);
+  --primario:   var(--primario-600);
+  --primario-h: var(--primario-700);
+  color-scheme: light;
+}
+
+/* ── Tema ESCURO ─────────────────────────────────────────── */
+[data-theme="escuro"] {
+  --bg:           var(--gray-950);
+  --bg-card:      var(--gray-900);
+  --bg-input:     var(--gray-800);
+  --bg-sidebar:   var(--gray-900);
+  --bg-hover:     var(--gray-800);
+  --border:       var(--gray-800);
+  --border-forte: var(--gray-700);
+  --texto:        var(--gray-100);
+  --texto-2:      var(--gray-300);
+  --muted:        var(--gray-400);
+  --primario:   var(--primario-500);
+  --primario-h: var(--primario-400);
+  --sh-xs:  0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --sh-sm:  0 1px 3px 0 rgba(0, 0, 0, 0.4);
+  --sh-md:  0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  --sh-lg:  0 10px 15px -3px rgba(0, 0, 0, 0.6);
+  --sh-xl:  0 20px 25px -5px rgba(0, 0, 0, 0.7);
+  --sh-focus: 0 0 0 3px rgba(16, 185, 129, 0.30);
+  color-scheme: dark;
+}
+
+/* ── Tema NEUTRO (tons quentes/bege, primário menos saturado) ── */
+[data-theme="neutro"] {
+  --bg:           #faf9f7;
+  --bg-card:      #ffffff;
+  --bg-input:     #ffffff;
+  --bg-sidebar:   #f5f3ee;
+  --bg-hover:     #f0ede6;
+  --border:       #e8e4dc;
+  --border-forte: #d4cfc4;
+  --texto:        #2c2922;
+  --texto-2:      #4a463b;
+  --muted:        #7a7568;
+  --primario:   #4a7c5e;    /* verde sálvia */
+  --primario-h: #3a6649;
+  --primario-50:  #ecf3ee;
+  --primario-100: #d3e4d8;
+  --primario-200: #aacbb5;
+  --primario-300: #80b290;
+  --primario-700: #2e4f3a;
+  --primario-800: #25402f;
+  color-scheme: light;
+}
+
+/* ── Tema VIBRANTE (verde + roxo, saturação alta) ────────── */
+[data-theme="vibrante"] {
+  --bg:           #fafbff;
+  --bg-card:      #ffffff;
+  --bg-input:     #ffffff;
+  --bg-sidebar:   #faf5ff;        /* lavanda suave */
+  --bg-hover:     #f3eaff;
+  --border:       #e9d5ff;
+  --border-forte: #d8b4fe;
+  --texto:        #1e1b3f;
+  --texto-2:      #3b366b;
+  --muted:        #6b6791;
+  --primario:   #7c3aed;          /* roxo vivo */
+  --primario-h: #6d28d9;
+  --primario-50:  #f5f0ff;
+  --primario-100: #ede2ff;
+  --primario-200: #d8b4fe;
+  --primario-300: #c084fc;
+  --primario-600: #7c3aed;
+  --primario-700: #6d28d9;
+  --primario-800: #5b21b6;
+  --verde:    #10b981;
+  color-scheme: light;
+}
+
+/* ── Tema CONTRASTE (preto/branco puro com cores vivas) ──── */
+[data-theme="contraste"] {
+  --bg:           #ffffff;
+  --bg-card:      #ffffff;
+  --bg-input:     #ffffff;
+  --bg-sidebar:   #000000;
+  --bg-hover:     #f5f5f5;
+  --border:       #000000;
+  --border-forte: #000000;
+  --texto:        #000000;
+  --texto-2:      #000000;
+  --muted:        #525252;
+  --primario:   #000000;
+  --primario-h: #1a1a1a;
+  --primario-50:  #f5f5f5;
+  --primario-100: #e5e5e5;
+  --primario-200: #d4d4d4;
+  --primario-700: #000000;
+  --primario-800: #000000;
+  --sh-xs:  0 0 0 1px #000;
+  --sh-sm:  0 2px 0 0 #000;
+  --sh-md:  0 3px 0 0 #000;
+  --sh-lg:  0 4px 0 0 #000;
+  --sh-xl:  0 5px 0 0 #000;
+  --sh-focus: 0 0 0 3px #000;
+  --r-sm:   2px;
+  --r-md:   4px;
+  --r-lg:   6px;
+  --r-xl:   8px;
+  color-scheme: light;
+}
+
+/* Sidebar do tema CONTRASTE precisa de overrides explícitos
+   (texto branco no fundo preto) */
+[data-theme="contraste"] .sidebar { background: #000; border-color: #000; }
+[data-theme="contraste"] .sidebar-brand-nome,
+[data-theme="contraste"] .sidebar-item,
+[data-theme="contraste"] .sidebar-user-nome,
+[data-theme="contraste"] .sidebar-grupo-titulo,
+[data-theme="contraste"] .sidebar-user-org { color: #ffffff; }
+[data-theme="contraste"] .sidebar-grupo-titulo { color: #a3a3a3; }
+[data-theme="contraste"] .sidebar-item:hover { background: #1a1a1a; color: #fff; }
+[data-theme="contraste"] .sidebar-item.ativo { background: #ffffff; color: #000; }
+[data-theme="contraste"] .sidebar-user:hover { background: #1a1a1a; color: #fff; }
+[data-theme="contraste"] .sidebar-user-avatar { background: #fff; color: #000; }
+[data-theme="contraste"] .sidebar-brand { border-color: #1a1a1a; }
+[data-theme="contraste"] .sidebar-footer { border-color: #1a1a1a; }
+
+/* Auto: respeita prefers-color-scheme (default sem [data-theme]) */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg:           var(--gray-950);
     --bg-card:      var(--gray-900);
     --bg-input:     var(--gray-800);
@@ -117,10 +258,8 @@
     --texto:        var(--gray-100);
     --texto-2:      var(--gray-300);
     --muted:        var(--gray-400);
-
     --primario:   var(--primario-500);
     --primario-h: var(--primario-400);
-
     --sh-xs:  0 1px 2px 0 rgba(0, 0, 0, 0.3);
     --sh-sm:  0 1px 3px 0 rgba(0, 0, 0, 0.4);
     --sh-md:  0 4px 6px -1px rgba(0, 0, 0, 0.5);

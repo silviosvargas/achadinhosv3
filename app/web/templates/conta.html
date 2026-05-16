@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 {% block titulo %}Minha conta{% endblock %}
+{% block titulo_topbar %}Minha conta{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
   <h1>Minha conta</h1>
-  <p class="muted">
-    Dados do seu usuário e troca de senha.
-  </p>
+  <p>Dados do seu usuário, tema visual e troca de senha.</p>
 </header>
 
-<section class="card" style="padding:20px; margin-top:16px;">
-  <h2 style="margin-top:0; font-size:18px;">Dados</h2>
-  <dl style="display:grid; grid-template-columns: auto 1fr; gap:8px 16px; margin:0;">
+{# ── DADOS ──────────────────────────────────────────── #}
+<section class="card" style="padding:24px; margin-bottom:20px;">
+  <h2 style="margin-top:0; font-size:16px;">Dados</h2>
+  <dl style="display:grid; grid-template-columns: 140px 1fr; gap:10px 16px; margin:0;">
     <dt class="muted">Nome</dt><dd>{{ user.nome_exibicao or "(não preenchido)" }}</dd>
     <dt class="muted">Login</dt><dd><code>{{ user.login }}</code></dd>
     <dt class="muted">Email</dt><dd>{{ user.email or "(não preenchido)" }}</dd>
@@ -26,18 +26,102 @@
   </dl>
 </section>
 
-<section class="card" style="padding:20px; margin-top:16px;">
-  <h2 style="margin-top:0; font-size:18px;">Trocar senha</h2>
+{# ── TEMA VISUAL ───────────────────────────────────── #}
+<section class="card" style="padding:24px; margin-bottom:20px;">
+  <h2 style="margin-top:0; font-size:16px;">🎨 Tema visual</h2>
+  <p class="muted small" style="margin-top:0; margin-bottom:16px;">
+    Escolha uma paleta. O tema fica salvo no seu navegador.
+  </p>
+
+  <div class="temas-grid" id="temas-grid">
+    {# Cada card mostra um preview MINIATURA da paleta com sidebar + content #}
+    <button type="button" class="tema-card" data-tema="auto" aria-label="Tema automático">
+      <div class="tema-preview tema-preview-auto">
+        <div class="tema-preview-side"></div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-bar"></div>
+          <div class="tema-preview-card"></div>
+        </div>
+      </div>
+      <div class="tema-nome">Automático</div>
+      <div class="tema-desc">Segue o sistema</div>
+    </button>
+
+    <button type="button" class="tema-card" data-tema="claro" aria-label="Tema claro">
+      <div class="tema-preview tema-preview-claro">
+        <div class="tema-preview-side"></div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-bar"></div>
+          <div class="tema-preview-card"></div>
+        </div>
+      </div>
+      <div class="tema-nome">Claro</div>
+      <div class="tema-desc">Branco + verde</div>
+    </button>
+
+    <button type="button" class="tema-card" data-tema="escuro" aria-label="Tema escuro">
+      <div class="tema-preview tema-preview-escuro">
+        <div class="tema-preview-side"></div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-bar"></div>
+          <div class="tema-preview-card"></div>
+        </div>
+      </div>
+      <div class="tema-nome">Escuro</div>
+      <div class="tema-desc">Conforto à noite</div>
+    </button>
+
+    <button type="button" class="tema-card" data-tema="neutro" aria-label="Tema neutro">
+      <div class="tema-preview tema-preview-neutro">
+        <div class="tema-preview-side"></div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-bar"></div>
+          <div class="tema-preview-card"></div>
+        </div>
+      </div>
+      <div class="tema-nome">Neutro</div>
+      <div class="tema-desc">Tons quentes, sálvia</div>
+    </button>
+
+    <button type="button" class="tema-card" data-tema="vibrante" aria-label="Tema vibrante">
+      <div class="tema-preview tema-preview-vibrante">
+        <div class="tema-preview-side"></div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-bar"></div>
+          <div class="tema-preview-card"></div>
+        </div>
+      </div>
+      <div class="tema-nome">Vibrante</div>
+      <div class="tema-desc">Roxo + lavanda</div>
+    </button>
+
+    <button type="button" class="tema-card" data-tema="contraste" aria-label="Alto contraste">
+      <div class="tema-preview tema-preview-contraste">
+        <div class="tema-preview-side"></div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-bar"></div>
+          <div class="tema-preview-card"></div>
+        </div>
+      </div>
+      <div class="tema-nome">Alto contraste</div>
+      <div class="tema-desc">Acessibilidade</div>
+    </button>
+  </div>
+
+  <p class="muted small" style="margin-top:16px;">
+    Mudança é instantânea — a página inteira atualiza ao clicar.
+  </p>
+</section>
+
+{# ── TROCAR SENHA ──────────────────────────────────── #}
+<section class="card" style="padding:24px;">
+  <h2 style="margin-top:0; font-size:16px;">🔒 Trocar senha</h2>
 
   {% if mensagem %}
-    <div class="alerta alerta-sucesso" style="padding:10px; margin-bottom:12px;">
-      {{ mensagem }}
-    </div>
+    <div class="alerta alerta-ok">{{ mensagem }}</div>
   {% endif %}
   {% if erro %}
-    <div class="alerta alerta-erro" style="padding:10px; margin-bottom:12px;">
-      {{ erro }}
-    </div>
+    <div class="alerta alerta-erro">{{ erro }}</div>
   {% endif %}
 
   <form method="post" action="/conta/senha" autocomplete="off"
@@ -45,17 +129,17 @@
     <label>
       Senha atual
       <input type="password" name="senha_atual" required minlength="1"
-             autocomplete="current-password" style="width:100%;">
+             autocomplete="current-password">
     </label>
     <label>
       Nova senha (mínimo 8 caracteres)
       <input type="password" name="senha_nova" required minlength="8"
-             autocomplete="new-password" style="width:100%;">
+             autocomplete="new-password">
     </label>
     <label>
       Confirmar nova senha
       <input type="password" name="senha_nova2" required minlength="8"
-             autocomplete="new-password" style="width:100%;">
+             autocomplete="new-password">
     </label>
     <button type="submit" class="btn btn-primario" style="align-self:flex-start;">
       Trocar senha
@@ -66,5 +150,113 @@
     Dica: use senha com 12+ caracteres misturando letras, números e símbolos.
   </p>
 </section>
+
+{# ── Styles do picker de tema (escopo local) ──────── #}
+<style>
+.temas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.tema-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-card);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+}
+.tema-card:hover { border-color: var(--border-forte); transform: translateY(-2px); box-shadow: var(--sh-md); }
+.tema-card.selecionado {
+  border-color: var(--primario);
+  box-shadow: var(--sh-focus);
+}
+.tema-preview {
+  display: flex;
+  height: 70px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,0.06);
+}
+.tema-preview-side { width: 32%; background: #ffffff; }
+.tema-preview-main { flex: 1; padding: 6px; display: flex; flex-direction: column; gap: 4px; background: #f8fafc; }
+.tema-preview-bar { height: 8px; background: #e2e8f0; border-radius: 2px; }
+.tema-preview-card { flex: 1; background: #ffffff; border-radius: 3px; border: 1px solid #e2e8f0; }
+.tema-nome { font-weight: 600; font-size: 13px; color: var(--texto); }
+.tema-desc { font-size: 11px; color: var(--muted); }
+
+/* Previews por tema — colors hardcoded pra render uniforme independente
+   do tema atualmente ativo (preview deve mostrar o tema CANDIDATO, não o aplicado) */
+.tema-preview-auto .tema-preview-side { background: linear-gradient(180deg, #fff 50%, #0f172a 50%); }
+.tema-preview-auto .tema-preview-main { background: linear-gradient(180deg, #f8fafc 50%, #020617 50%); }
+.tema-preview-auto .tema-preview-bar  { background: linear-gradient(180deg, #e2e8f0 50%, #1e293b 50%); }
+.tema-preview-auto .tema-preview-card { background: linear-gradient(180deg, #fff 50%, #0f172a 50%); border-color: #cbd5e1; }
+
+.tema-preview-claro .tema-preview-side { background: #fff; }
+.tema-preview-claro .tema-preview-main { background: #f8fafc; }
+.tema-preview-claro .tema-preview-bar  { background: #10b981; }
+.tema-preview-claro .tema-preview-card { background: #fff; }
+
+.tema-preview-escuro .tema-preview-side { background: #0f172a; }
+.tema-preview-escuro .tema-preview-main { background: #020617; }
+.tema-preview-escuro .tema-preview-bar  { background: #10b981; }
+.tema-preview-escuro .tema-preview-card { background: #1e293b; border-color: #334155; }
+
+.tema-preview-neutro .tema-preview-side { background: #f5f3ee; }
+.tema-preview-neutro .tema-preview-main { background: #faf9f7; }
+.tema-preview-neutro .tema-preview-bar  { background: #4a7c5e; }
+.tema-preview-neutro .tema-preview-card { background: #fff; border-color: #e8e4dc; }
+
+.tema-preview-vibrante .tema-preview-side { background: #faf5ff; }
+.tema-preview-vibrante .tema-preview-main { background: #fafbff; }
+.tema-preview-vibrante .tema-preview-bar  { background: #7c3aed; }
+.tema-preview-vibrante .tema-preview-card { background: #fff; border-color: #e9d5ff; }
+
+.tema-preview-contraste .tema-preview-side { background: #000; }
+.tema-preview-contraste .tema-preview-main { background: #fff; }
+.tema-preview-contraste .tema-preview-bar  { background: #000; }
+.tema-preview-contraste .tema-preview-card { background: #fff; border-color: #000; border-width: 2px; }
+</style>
+
+<script>
+(function () {
+  const grid = document.getElementById('temas-grid');
+  if (!grid) return;
+
+  // Marca o tema atual como selecionado
+  function atualizarSelecionado() {
+    let atual;
+    try {
+      atual = localStorage.getItem('achadinhos_tema') || 'auto';
+    } catch (e) { atual = 'auto'; }
+    grid.querySelectorAll('.tema-card').forEach(c => {
+      c.classList.toggle('selecionado', c.dataset.tema === atual);
+    });
+  }
+
+  grid.addEventListener('click', function (e) {
+    const card = e.target.closest('.tema-card');
+    if (!card) return;
+    const tema = card.dataset.tema;
+    try {
+      if (tema === 'auto') {
+        localStorage.removeItem('achadinhos_tema');
+        document.documentElement.removeAttribute('data-theme');
+      } else {
+        localStorage.setItem('achadinhos_tema', tema);
+        document.documentElement.setAttribute('data-theme', tema);
+      }
+    } catch (err) {}
+    atualizarSelecionado();
+  });
+
+  atualizarSelecionado();
+})();
+</script>
 
 {% endblock %}
