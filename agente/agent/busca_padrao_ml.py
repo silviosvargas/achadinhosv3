@@ -191,6 +191,7 @@ def _entrar_produto_via_meli_la(driver, meli_la_url: str) -> bool:
 def _processar_categoria(
     driver, *, nome_categoria: str, url_categoria: str,
     comissao_estimada: float, candidatos_por_categoria: int,
+    tarefa_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
     """Processa UMA categoria — v3.7.0 fluxo SIMPLIFICADO:
     1. Extrai N candidatos da página de mais-vendidos
@@ -256,10 +257,29 @@ def _processar_categoria(
     log.info("ml.padrao.candidatos_extraidos",
              nome=nome_categoria, total=len(candidatos))
 
-    # 2. v3.7.0: abre URL canônica DIRETO de cada candidato, captura
-    # comissão + preço da barra preta. Sem passo meli.la/social/click.
-    capturados = 0
+    # v3.7.1: gera meli.la INCREMENTAL a cada N capturados (em vez de
+    # esperar todos terminarem). Garante que se cancelar no meio, os
+    # produtos já capturados terão link de afiliado quando voltarem.
+    from agent import cancelamento
+    BATCH_LINKBUILDER = 10
+
+    capturados_total: list[dict] = []   # todos com captura ok (pra ranking final)
+    buffer_sem_meli: list[dict] = []    # capturados que ainda não tiveram meli.la
+    cancelada_no_meio = False
+
+    # 2. Loop de captura com check de cancelamento + meli.la incremental
     for i, p in enumerate(candidatos, start=1):
+        # Check de cancelamento ANTES de processar cada produto.
+        # Pedido do user: "caso seja cancelado na busca do quarto produto
+        # por exemplo, ele deve fazer a busca do link do afiliado dos
+        # quatro produtos e depois parar".
+        if cancelamento.foi_cancelada(tarefa_id):
+            log.info("ml.padrao.cancelada_durante_captura",
+                     tarefa_id=tarefa_id, nome=nome_categoria,
+                     capturados_ate_aqui=len(capturados_total))
+            cancelada_no_meio = True
+            break
+
         url_can = p.get("url_canonica") or ""
         if not url_can:
             continue
@@ -275,7 +295,8 @@ def _processar_categoria(
         if com_real and com_real > 0:
             p["comissao"]       = com_real
             p["comissao_fonte"] = "ml_barra_afiliados"
-            capturados += 1
+            capturados_total.append(p)
+            buffer_sem_meli.append(p)
         if preco_real and preco_real > 0 and abs(preco_real - (p.get("preco") or 0)) > 0.01:
             log.info("ml.padrao.preco_atualizado",
                      item_id=p.get("item_id"),
@@ -289,39 +310,52 @@ def _processar_categoria(
                  fonte=p.get("comissao_fonte"),
                  preco=p.get("preco"))
 
+        # A cada BATCH_LINKBUILDER capturados com sucesso, gera meli.la
+        # IMEDIATAMENTE. Se cancelar antes do próximo lote completar, os
+        # produtos do buffer parcial são processados no fechamento abaixo.
+        if len(buffer_sem_meli) >= BATCH_LINKBUILDER:
+            log.info("ml.padrao.gerando_meli_la_lote",
+                     nome=nome_categoria, tamanho=len(buffer_sem_meli))
+            _gerar_meli_la_no_driver(
+                driver, buffer_sem_meli,
+                log_prefixo=f"ml.padrao[{nome_categoria}]",
+            )
+            buffer_sem_meli = []
+
         # Delay anti rate-limit
         time.sleep(random.uniform(0.3, 0.6))
 
-    # 3. FILTRO ESTRITO: só passa produtos com captura real
-    com_captura_real = [
-        p for p in candidatos
-        if p.get("comissao_fonte") == "ml_barra_afiliados"
-        and (p.get("comissao") or 0) > 0
-    ]
-    descartados = len(candidatos) - len(com_captura_real)
+    # 3. Buffer restante (parcial OU cancelamento no meio): gera meli.la
+    # pros produtos que ainda não receberam. Garante que TODO produto
+    # capturado vai pro ingest com url_afiliado válido.
+    if buffer_sem_meli:
+        log.info("ml.padrao.gerando_meli_la_resto",
+                 nome=nome_categoria, tamanho=len(buffer_sem_meli),
+                 cancelada=cancelada_no_meio)
+        _gerar_meli_la_no_driver(
+            driver, buffer_sem_meli,
+            log_prefixo=f"ml.padrao[{nome_categoria}].resto",
+        )
+        buffer_sem_meli = []
 
-    # 4. Ordena por (preço × comissão_real) DESC e mantém top N
+    # 4. Ordena capturados por (preço × comissão_real) DESC, mantém top N.
+    # Se cancelado, `capturados_total` pode ter < 10 — retorna o que tem.
     def _score_ranking(prod: dict) -> float:
         preco = prod.get("preco") or 0
         com   = prod.get("comissao") or 0
         return float(preco) * float(com) / 100.0
 
-    com_captura_real.sort(key=_score_ranking, reverse=True)
-    top = com_captura_real[:TOP_FINAL_POR_CATEGORIA]
-
-    # 5. Gera meli.la APENAS pros TOP (não pra todos os candidatos —
-    # economiza chamadas ao painel linkbuilder)
-    if top:
-        _gerar_meli_la_no_driver(
-            driver, top, log_prefixo=f"ml.padrao[{nome_categoria}]",
-        )
+    capturados_total.sort(key=_score_ranking, reverse=True)
+    top = capturados_total[:TOP_FINAL_POR_CATEGORIA]
+    descartados = max(0, len(candidatos) - len(capturados_total))
 
     log.info("ml.padrao.categoria_concluida",
              nome=nome_categoria,
              candidatos=len(candidatos),
-             com_captura_real=capturados,
+             com_captura_real=len(capturados_total),
              descartados_sem_captura=descartados,
-             top_selecionados=len(top))
+             top_selecionados=len(top),
+             cancelada_no_meio=cancelada_no_meio)
     return top
 
 
@@ -384,12 +418,23 @@ def _varrer_padrao_completo_sync(
                         url_categoria=url,
                         comissao_estimada=com_est,
                         candidatos_por_categoria=candidatos_por_categoria,
+                        tarefa_id=tarefa_id,   # v3.7.1: propaga pra check cancelamento no loop
                     )
                     todos.extend(top_cat)
                 except Exception as e:
                     log.exception("ml.padrao.categoria_crash",
                                   nome=nome, erro=str(e)[:200])
                     continue
+                # Se cancelamento foi detectado DENTRO da categoria,
+                # _processar_categoria já gerou meli.la pros parciais e
+                # retornou. Aqui propaga: para o loop e não vai pra próxima.
+                if cancelamento.foi_cancelada(tarefa_id):
+                    cancelada = True
+                    ws_progresso.reportar(
+                        tarefa_id, (i / total_cat) * 100.0,
+                        f"⏹ Cancelado durante categoria {i}/{total_cat} — {len(todos)} produtos parciais com meli.la",
+                    )
+                    break
                 # Reporta FIM da categoria
                 pct_fim = (i / total_cat) * 100.0
                 ws_progresso.reportar(
