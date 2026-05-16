@@ -482,78 +482,53 @@ def _aguardar_login(
 
 def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
     """
-    CAPTCHA: aguarda user clicar no botão "✅ CAPTCHA RESOLVIDO! Continuar..."
-    do banner no Chrome.
+    CAPTCHA: aguarda 30 SEGUNDOS OBRIGATÓRIOS — sem polling, sem clique
+    de interrupção, sem reload. `time.sleep(30)` PURO.
 
-    v3.8.11 — pedido do user (16/05/2026):
-    "deve acrescentar na mensagem um botao clicavel de 'CAPTCHA RESOLVIDO!
-    Continuar...'"
+    v3.8.14 — pedido do user (16/05/2026):
+    "nao pode continuar sem aguardar obrigatoriamente os 30 segundos!
+    independente de qualquer clique ou reload na pagina! o sistema deve
+    aguardar 30 segundos para fazer qualquer tipo de ação"
 
-    Por que botão > timer fixo:
-    - Se user resolve em 5s, clica e segue na hora (sem esperar 30s)
-    - Se user leva 60s, ainda funciona (sem desistir prematuramente)
-    - Sem reload/polling agressivo que re-dispara captcha
+    Mudança vs v3.8.13:
+    - Era polling do botão "CAPTCHA RESOLVIDO" (poderia interromper)
+    - Agora é `time.sleep(30)` puro — 30s contados no relógio, sem
+      qualquer mecanismo de interrupção
 
-    Estratégia:
-    1. Mostra banner amarelo + botão "CAPTCHA RESOLVIDO" no Chrome
-    2. Publica aviso no dashboard
-    3. Polling 1s checando `window.__shopee_captcha_resolvido`
-    4. Quando botão clicado → return True, agente continua
-    5. Timeout 5min (300s) — se user não clicou nunca, return False
-
-    Returna True se user clicou, False se timeout esgotou.
+    Retorna sempre True após os 30s. Se user não resolveu, a próxima
+    chamada à API vai falhar com status != 200 e o caller faz break.
     """
     from agent import avisos
 
-    log.warning("shopee.captcha_aguardando_clique",
-                timeout_seg=CAPTCHA_TIMEOUT_SEG,
+    ESPERA_SEG = 30
+
+    log.warning("shopee.captcha_aguardando_obrigatorio_30s",
+                espera_seg=ESPERA_SEG,
                 url_atual=(driver.current_url or "")[:200])
 
-    _mostrar_banner_chrome(driver, mensagem_usuario)
+    try:
+        _mostrar_banner_chrome(driver, mensagem_usuario)
+    except Exception:
+        pass
+
     avisos.publicar(
         "captcha", mensagem_usuario,
-        detalhe="Clique em '✅ CAPTCHA RESOLVIDO! Continuar...' no banner "
-                "amarelo do Chrome quando terminar.",
-        marketplace="shopee", ttl_seg=CAPTCHA_TIMEOUT_SEG + 30,
+        detalhe=f"Aguardando {ESPERA_SEG}s OBRIGATÓRIOS pra você resolver. "
+                "Depois sigo automaticamente.",
+        marketplace="shopee", ttl_seg=ESPERA_SEG + 30,
     )
 
-    from selenium.common.exceptions import WebDriverException
+    # 30 segundos PUROS — sem qualquer verificação intermediária.
+    # Independente de clique, reload ou qualquer ação na página.
+    time.sleep(ESPERA_SEG)
 
-    inicio = time.time()
     try:
-        while time.time() - inicio < CAPTCHA_TIMEOUT_SEG:
-            try:
-                resolvido = driver.execute_script(
-                    "return window.__shopee_captcha_resolvido === true;"
-                )
-            except WebDriverException as e:
-                # Chrome fechado/crashou — sem usuário pra clicar o botão,
-                # não adianta seguir esperando.
-                log.warning("shopee.captcha_chrome_fechado",
-                            duracao_seg=int(time.time() - inicio),
-                            erro=str(e)[:120])
-                return False
-            except Exception as e:
-                log.debug("shopee.captcha_check_falhou", erro=str(e)[:120])
-                resolvido = False
-
-            if resolvido:
-                duracao = int(time.time() - inicio)
-                log.info("shopee.captcha_usuario_clicou", duracao_seg=duracao)
-                return True
-
-            time.sleep(CAPTCHA_POLLING_SEG)
-
-        log.warning("shopee.captcha_timeout",
-                    timeout_seg=CAPTCHA_TIMEOUT_SEG)
-        return False
-    finally:
-        # Best-effort cleanup — driver pode estar morto
-        try:
-            _remover_banner_chrome(driver)
-        except Exception:
-            pass
-        avisos.limpar(marketplace="shopee")
+        _remover_banner_chrome(driver)
+    except Exception:
+        pass
+    avisos.limpar(marketplace="shopee")
+    log.info("shopee.captcha_30s_concluido")
+    return True
 
 
 def _resolver_login_ou_captcha(
