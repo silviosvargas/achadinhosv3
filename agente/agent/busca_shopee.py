@@ -543,8 +543,9 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
             log.info("shopee.url_apos_abrir_painel", url=url_inicial[:300])
 
             problema = _detectou_login_ou_captcha(driver)
-            # v3.8.10: força captcha se URL fugiu do painel (mesma lógica do
-            # retry no meio do loop). Ex: shopee.com.br/verify/captcha.
+            # v3.8.10: força captcha se URL fugiu do painel.
+            # v3.8.11: faz um ping na API pra detectar bloqueio silencioso
+            # (URL volta pro painel mas fetch retorna 0).
             if problema is None and "/offer/product_offer" not in url_inicial:
                 log.warning("shopee.bloqueio_inicial_inferido",
                             url=url_inicial[:200])
@@ -553,6 +554,21 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
                     "🤖 Shopee bloqueou esta sessão. Resolva o desafio nesta "
                     "janela do Chrome. Vou aguardar 30s e continuar.",
                 )
+            elif problema is None:
+                # URL ok — faz ping na API pra confirmar que sessão funciona
+                ping = _chamar_api(
+                    driver, list_type=ABAS_BUSCA[0]["list_type"],
+                    page_offset=0, page_limit=1, cat=None,
+                )
+                if ping.get("status") != 200:
+                    log.warning("shopee.bloqueio_inicial_via_ping",
+                                ping_status=ping.get("status"))
+                    problema = (
+                        "captcha",
+                        "🤖 Shopee bloqueou esta sessão (anti-bot silencioso). "
+                        "Verifique a janela do Chrome — vou aguardar 30s "
+                        "e continuar.",
+                    )
 
             if problema:
                 motivo, instrucao = problema
@@ -605,25 +621,25 @@ def _varrer_sync(cfg: Config, *, max_produtos: int) -> list[dict[str, Any]]:
 
                             problema = _detectou_login_ou_captcha(driver)
 
-                            # v3.8.10: FORÇA tratamento como captcha quando
-                            # status=0 + URL não está no painel afiliados.
-                            # Casos reais (log do user):
-                            # - shopee.com.br/verify/captcha?anti_bot_tracking_id=...
-                            #   → URL TEM "captcha" mas redirect ainda em curso quando
-                            #     `_detectou_login_ou_captcha` foi chamado
-                            # - Domínio diferente (shopee.com.br vs affiliate.shopee.com.br)
-                            #   pode escapar dos seletores DOM
-                            # Status 0 + fora do painel = bloqueio quase certo.
-                            if problema is None and "/offer/product_offer" not in url_apos:
+                            # v3.8.11: status != 200 SEMPRE força captcha,
+                            # mesmo que URL fique no painel. Cenário real
+                            # (log do user 21:15): fetch retorna status=0
+                            # mas a URL atual é exatamente `/offer/product_offer`.
+                            # = anti-bot silencioso / captcha invisível —
+                            # Shopee bloqueia a chamada API mas não redireciona
+                            # a página. User precisa interagir mesmo assim.
+                            if problema is None:
                                 log.warning(
-                                    "shopee.bloqueio_inferido_por_status0",
-                                    url=url_apos[:200],
+                                    "shopee.bloqueio_inferido_por_status",
+                                    url=url_apos[:200], status=status,
                                 )
                                 problema = (
                                     "captcha",
-                                    "🤖 Shopee bloqueou esta sessão (status 0). "
-                                    "Resolva o desafio nesta janela do Chrome. "
-                                    "Vou aguardar 30s e continuar.",
+                                    "🤖 Shopee bloqueou esta sessão (API "
+                                    f"retornou status {status}). Pode ser "
+                                    "captcha invisível ou anti-bot. Verifique "
+                                    "a janela do Chrome — vou aguardar 30s "
+                                    "e continuar.",
                                 )
 
                             if problema:
