@@ -358,14 +358,25 @@ def _detectou_login_ou_captcha(driver: uc.Chrome) -> tuple[str, str] | None:
     return None
 
 
-# JS que injeta um banner amarelo fixo no topo da página com instruções.
-# Mantém em strings escapadas pra passar pro driver.execute_script.
+# JS que injeta um banner amarelo fixo no topo da página com instruções
+# E um botão "CAPTCHA RESOLVIDO! Continuar..." que sinaliza pro agente
+# continuar a busca.
+#
+# v3.8.11: substituiu o sleep(30) cego por polling do clique no botão.
+# Vantagens: user pode resolver em 5s e clicar → segue na hora; OU levar
+# 60s sem o agente desistir.
+#
+# Estado global: window.__shopee_captcha_resolvido (false → true ao clicar).
 _BANNER_AVISO_JS = """
 (function(mensagem) {
+  // Inicializa estado (sempre reseta — banner novo = espera novo clique)
+  window.__shopee_captcha_resolvido = false;
+
   // Remove banner anterior se existir
   var antigo = document.getElementById('achadinhos-aviso');
   if (antigo) antigo.remove();
-  // Cria div fixo no topo
+
+  // Container fixo no topo
   var d = document.createElement('div');
   d.id = 'achadinhos-aviso';
   d.style.cssText = (
@@ -375,9 +386,36 @@ _BANNER_AVISO_JS = """
     'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
     'font-size:15px;font-weight:600;text-align:center;' +
     'box-shadow:0 4px 16px rgba(0,0,0,0.25);' +
-    'border-bottom:2px solid #d97706;'
+    'border-bottom:2px solid #d97706;' +
+    'display:flex;flex-direction:column;align-items:center;gap:10px;'
   );
-  d.textContent = mensagem;
+
+  // Mensagem
+  var msg = document.createElement('div');
+  msg.textContent = mensagem;
+  d.appendChild(msg);
+
+  // Botão "CAPTCHA RESOLVIDO! Continuar..."
+  var btn = document.createElement('button');
+  btn.id = 'achadinhos-btn-resolvido';
+  btn.textContent = '✅ CAPTCHA RESOLVIDO! Continuar...';
+  btn.style.cssText = (
+    'background:#16a34a;color:#fff;border:none;border-radius:8px;' +
+    'padding:10px 24px;font-size:14px;font-weight:700;cursor:pointer;' +
+    'box-shadow:0 2px 8px rgba(22,163,74,0.4);' +
+    'transition:background 0.15s;'
+  );
+  btn.onmouseover = function() { btn.style.background = '#15803d'; };
+  btn.onmouseout  = function() { btn.style.background = '#16a34a'; };
+  btn.onclick = function() {
+    window.__shopee_captcha_resolvido = true;
+    btn.textContent = '⏳ Continuando…';
+    btn.disabled = true;
+    btn.style.background = '#9ca3af';
+    btn.style.cursor = 'wait';
+  };
+  d.appendChild(btn);
+
   // Aguarda body existir (algumas páginas de login têm body só depois do JS)
   function attach() {
     if (document.body) {
@@ -391,9 +429,16 @@ _BANNER_AVISO_JS = """
 """
 
 
+# v3.8.11: aguarda clique no botão "CAPTCHA RESOLVIDO" do banner.
+# Polling de 1s no JS (verifica `window.__shopee_captcha_resolvido`).
+# Timeout 5min — se user não clicar, agente desiste.
+CAPTCHA_POLLING_SEG = 1
+CAPTCHA_TIMEOUT_SEG = 300
+
+# Aliases legados (não usados no fluxo novo, mantidos pra compat)
 CAPTCHA_ESPERA_FIXA_SEG = 30
 CAPTCHA_MAX_TENTATIVAS  = 3
-LOGIN_TIMEOUT_SEG       = 300   # 5 min de polling pra user logar
+LOGIN_TIMEOUT_SEG       = 300
 
 
 def _mostrar_banner_chrome(driver: uc.Chrome, mensagem: str) -> None:
@@ -472,49 +517,65 @@ def _aguardar_login(
 
 def _aguardar_captcha(driver: uc.Chrome, *, mensagem_usuario: str) -> bool:
     """
-    CAPTCHA: aguarda 30s FIXOS sem executar nada e continua a busca.
+    CAPTCHA: aguarda user clicar no botão "✅ CAPTCHA RESOLVIDO! Continuar..."
+    do banner no Chrome.
 
-    v3.8.9 — pedido explícito do user (16/05/2026):
-    "AGUARDE SEM EXECUTAR NENHUM COMANDO POR 30 SEGUNDOS. DEPOIS
-    SIMPLESMENTE CONTINUE A BUSCA PELOS PRODUTOS"
+    v3.8.11 — pedido do user (16/05/2026):
+    "deve acrescentar na mensagem um botao clicavel de 'CAPTCHA RESOLVIDO!
+    Continuar...'"
 
-    Estratégia minimalista:
-    1. Mostra banner amarelo no Chrome
+    Por que botão > timer fixo:
+    - Se user resolve em 5s, clica e segue na hora (sem esperar 30s)
+    - Se user leva 60s, ainda funciona (sem desistir prematuramente)
+    - Sem reload/polling agressivo que re-dispara captcha
+
+    Estratégia:
+    1. Mostra banner amarelo + botão "CAPTCHA RESOLVIDO" no Chrome
     2. Publica aviso no dashboard
-    3. `time.sleep(30)` — NADA mais. Sem polling, sem reload, sem checagem.
-    4. Remove banner + limpa aviso → retorna True
-    5. Caller continua a busca normalmente
+    3. Polling 1s checando `window.__shopee_captcha_resolvido`
+    4. Quando botão clicado → return True, agente continua
+    5. Timeout 5min (300s) — se user não clicou nunca, return False
 
-    Por que `time.sleep` puro funciona melhor que loops de polling/reload
-    pra captcha Shopee: cada `driver.get` em sessão marcada re-emite o
-    desafio, e polling de URL nem sempre detecta a resolução porque o
-    Shopee fecha o modal sem mudar a URL.
-
-    Returna sempre True (confia no user). Se ele não resolveu em 30s, a
-    próxima chamada de API vai falhar naturalmente.
+    Returna True se user clicou, False se timeout esgotou.
     """
     from agent import avisos
 
-    log.warning("shopee.captcha_aguardando",
-                espera_seg=CAPTCHA_ESPERA_FIXA_SEG,
+    log.warning("shopee.captcha_aguardando_clique",
+                timeout_seg=CAPTCHA_TIMEOUT_SEG,
                 url_atual=(driver.current_url or "")[:200])
 
     _mostrar_banner_chrome(driver, mensagem_usuario)
     avisos.publicar(
         "captcha", mensagem_usuario,
-        detalhe=f"Aguardando {CAPTCHA_ESPERA_FIXA_SEG}s pra você resolver. "
-                "Depois sigo automaticamente.",
-        marketplace="shopee", ttl_seg=CAPTCHA_ESPERA_FIXA_SEG + 30,
+        detalhe="Clique em '✅ CAPTCHA RESOLVIDO! Continuar...' no banner "
+                "amarelo do Chrome quando terminar.",
+        marketplace="shopee", ttl_seg=CAPTCHA_TIMEOUT_SEG + 30,
     )
 
-    # Pausa pura — sem polling, sem reload. User resolve, agente segue.
-    time.sleep(CAPTCHA_ESPERA_FIXA_SEG)
+    inicio = time.time()
+    try:
+        while time.time() - inicio < CAPTCHA_TIMEOUT_SEG:
+            try:
+                resolvido = driver.execute_script(
+                    "return window.__shopee_captcha_resolvido === true;"
+                )
+            except Exception as e:
+                log.debug("shopee.captcha_check_falhou", erro=str(e)[:120])
+                resolvido = False
 
-    _remover_banner_chrome(driver)
-    avisos.limpar(marketplace="shopee")
-    log.info("shopee.captcha_aguardou_ok",
-             espera_seg=CAPTCHA_ESPERA_FIXA_SEG)
-    return True
+            if resolvido:
+                duracao = int(time.time() - inicio)
+                log.info("shopee.captcha_usuario_clicou", duracao_seg=duracao)
+                return True
+
+            time.sleep(CAPTCHA_POLLING_SEG)
+
+        log.warning("shopee.captcha_timeout",
+                    timeout_seg=CAPTCHA_TIMEOUT_SEG)
+        return False
+    finally:
+        _remover_banner_chrome(driver)
+        avisos.limpar(marketplace="shopee")
 
 
 def _resolver_login_ou_captcha(
