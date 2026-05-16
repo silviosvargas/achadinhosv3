@@ -77,6 +77,15 @@ class Produto(Base, TimestampMixin):
         Integer, ForeignKey("usuarios.id", ondelete="CASCADE"),
         default=None, index=True,
     )
+    # Quem CADASTROU o produto (diferente do dono):
+    # - Em busca automática: NULL (ninguém especifico)
+    # - Em "Produtos Personalizados" UI: sempre preenchido. Permite o user
+    #   ver SEUS personalizados mesmo quando o produto vira público
+    #   (`usuario_dono_id = NULL` pra usuários comuns/admin com tag central).
+    criado_por_usuario_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("usuarios.id", ondelete="SET NULL"),
+        default=None, index=True,
+    )
     plataforma: Mapped[str] = mapped_column(String(20), index=True)
     item_id:    Mapped[str] = mapped_column(String(100))
 

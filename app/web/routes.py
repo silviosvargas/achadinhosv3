@@ -1568,6 +1568,270 @@ async def excluir_todos_produtos(
     )
 
 
+# ============================================================
+# Produtos Personalizados (Fase 17)
+# ============================================================
+
+@router.get("/produtos/personalizados", response_class=HTMLResponse)
+async def lista_personalizados(
+    request: Request,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Lista personalizados visíveis pro user + form pra adicionar."""
+    from app.core.config import settings
+    from app.services import personalizado_service
+
+    produtos = await personalizado_service.listar_personalizados_visiveis(db, user=user)
+
+    # Carrega criadores pra mostrar "criado por X" pro admin
+    criadores_map: dict[int, Usuario] = {}
+    if user.eh_admin and produtos:
+        ids_criadores = {p.criado_por_usuario_id for p in produtos if p.criado_por_usuario_id}
+        if ids_criadores:
+            rows = (await db.execute(
+                select(Usuario).where(Usuario.id.in_(ids_criadores))
+            )).scalars().all()
+            criadores_map = {u.id: u for u in rows}
+
+    return templates.TemplateResponse(
+        request, "produtos_personalizados.html",
+        {
+            "user":          user,
+            "produtos":      produtos,
+            "criadores_map": criadores_map,
+            "ia_disponivel": bool(settings.anthropic_api_key),
+            "mensagem":      request.query_params.get("mensagem"),
+            "erro":          request.query_params.get("erro"),
+        },
+    )
+
+
+@router.post("/produtos/personalizados/buscar", response_class=HTMLResponse)
+async def personalizado_buscar(
+    entrada:  str = Form(...),
+    usar_ia:  str | None = Form(default=None),
+    user:     Usuario = Depends(exigir_login),
+    db:       AsyncSession = Depends(get_db_async),
+):
+    """
+    Dispara busca pra cadastrar produto(s) personalizado(s).
+
+    Lógica:
+    - Entrada é URL de marketplace conhecido (mercadolivre/shopee/amazon)
+      → busca por_url no marketplace correto.
+    - Entrada é URL de social (TikTok/Insta/YT) e `usar_ia` marcado
+      → chama Claude pra extrair palavra-chave, depois busca termo_livre ML.
+    - Entrada é palavra-chave → busca termo_livre ML, limit 10 produtos.
+
+    A busca é enfileirada via Tarefa(BUSCAR_MERCADO_LIVRE) com marcadores
+    no payload — quando o agente ingerir, os produtos serão gravados com
+    `fonte=personalizado` + dono/criador apropriados.
+    """
+    from app.core.config import settings
+    from app.models import Agente, StatusTarefa, Tarefa, TipoTarefa
+    from app.services import dispatcher, personalizado_service
+
+    entrada = (entrada or "").strip()
+    if not entrada:
+        return RedirectResponse(
+            url="/produtos/personalizados?erro=Digite+uma+palavra-chave+ou+URL",
+            status_code=302,
+        )
+
+    eh_url = entrada.lower().startswith(("http://", "https://"))
+    eh_url_marketplace = eh_url and any(
+        d in entrada.lower() for d in (
+            "mercadolivre.com.br", "mercadolivre.com",
+            "shopee.com.br", "amazon.com.br",
+        )
+    )
+
+    # Se for URL de social com IA → extrai palavra-chave primeiro
+    if eh_url and not eh_url_marketplace and usar_ia and settings.anthropic_api_key:
+        palavra = await personalizado_service.extrair_palavra_chave_de_link_social(
+            entrada, anthropic_api_key=settings.anthropic_api_key,
+        )
+        if not palavra:
+            return RedirectResponse(
+                url="/produtos/personalizados?erro=N%C3%A3o+identifiquei+o+produto+no+link.+Tente+outro+ou+cole+o+nome.",
+                status_code=302,
+            )
+        entrada = palavra
+        eh_url = False
+        eh_url_marketplace = False
+
+    # Define payload da tarefa
+    if eh_url_marketplace:
+        tipo_busca   = "por_url"
+        tipo_entrada = "url"
+        max_produtos = 1
+    else:
+        tipo_busca   = "termo_livre"
+        tipo_entrada = "termo"
+        max_produtos = 10
+
+    # Pega 1º agente online da org
+    agentes_org = list((await db.execute(
+        select(Agente).where(
+            Agente.org_id == user.org_id, Agente.ativo.is_(True),
+        )
+    )).scalars().all())
+    from app.services.agente_registry import registry
+    agente = next((a for a in agentes_org if registry.esta_online(a.id)), None)
+    if agente is None:
+        return RedirectResponse(
+            url="/produtos/personalizados?erro=Nenhum+agente+online.+Abra+o+AchadinhosAgent+no+seu+PC.",
+            status_code=302,
+        )
+
+    # Cria tarefa com marcadores de "personalizado"
+    tarefa = Tarefa(
+        org_id=user.org_id,
+        tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
+        status=StatusTarefa.PENDENTE,
+        agente_id=agente.id,
+        payload={
+            "tipo_entrada":  tipo_entrada,
+            "entrada":       entrada,
+            "max_paginas":   1,
+            "max_produtos":  max_produtos,
+            "disparado_por": user.id,
+            "tipo_busca":    tipo_busca,
+            "marketplaces":  ["ml"],
+            # Marcadores pra ingest gravar como personalizado:
+            "_personalizado_criador_id": user.id,
+        },
+        criado_por_usuario_id=user.id,
+    )
+    db.add(tarefa)
+    await db.commit()
+    await db.refresh(tarefa)
+    # Entrega imediata via WS
+    await dispatcher._tentar_entrega(db, tarefa)
+    return RedirectResponse(
+        url=(
+            f"/produtos/personalizados?mensagem="
+            f"Busca+enfileirada+pra+%22{entrada[:60]}%22+%28tarefa+%23{tarefa.id}%29"
+            f"+%E2%80%94+atualiza+em+~30s"
+        ),
+        status_code=302,
+    )
+
+
+@router.post("/produtos/personalizados/{produto_id}/excluir", response_class=HTMLResponse)
+async def personalizado_excluir(
+    produto_id: int,
+    user: Usuario = Depends(exigir_login),
+    db:   AsyncSession = Depends(get_db_async),
+):
+    """Apaga 1 produto personalizado. Dono ou admin pode."""
+    p = await db.get(Produto, produto_id)
+    if p is None or p.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if not user.eh_admin and p.criado_por_usuario_id != user.id:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    await db.delete(p)
+    await db.commit()
+    return RedirectResponse(url="/produtos/personalizados", status_code=302)
+
+
+@router.post("/produtos/personalizados/limpar-todos", response_class=HTMLResponse)
+async def personalizado_limpar_todos(
+    user: Usuario = Depends(exigir_login),
+    db:   AsyncSession = Depends(get_db_async),
+):
+    """Apaga TODOS os personalizados visíveis pro user (apenas os próprios)."""
+    # Sempre filtra por criador = user (admin não apaga em massa de outros)
+    result = await db.execute(
+        Produto.__table__.delete().where(
+            Produto.org_id == user.org_id,
+            Produto.criado_por_usuario_id == user.id,
+        )
+    )
+    await db.commit()
+    n = result.rowcount or 0
+    return RedirectResponse(
+        url=f"/produtos/personalizados?mensagem=Apagados+{n}+produtos+seus",
+        status_code=302,
+    )
+
+
+@router.post("/produtos/personalizados/{produto_id}/postar", response_class=HTMLResponse)
+async def personalizado_postar(
+    produto_id: int,
+    user: Usuario = Depends(exigir_login),
+    db:   AsyncSession = Depends(get_db_async),
+):
+    """
+    Posta 1 produto personalizado imediatamente.
+
+    Truque pra forçar o lote_service a pegar ESSE produto: atualiza o
+    `atualizado_em` pra agora (a query `produtos_elegiveis` ordena por
+    `atualizado_em.desc()`). Não é determinístico em casos de empate,
+    mas resolve 99% dos casos práticos.
+    """
+    from datetime import datetime, timezone
+    from app.services import lote_service
+
+    p = await db.get(Produto, produto_id)
+    if p is None or p.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if not user.eh_admin and p.criado_por_usuario_id != user.id:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    # Sobe o produto pro topo da seleção
+    p.atualizado_em = datetime.now(tz=timezone.utc)
+    await db.commit()
+
+    try:
+        resultado = await lote_service.rodar_lote(
+            db, org_id=user.org_id, max_produtos=1, usuario=user,
+            criado_por_usuario_id=user.id,
+        )
+        n = resultado.get("tarefas_criadas", 0)
+        msg = (
+            f"mensagem=Postagem+enfileirada+%28{n}+tarefa%29"
+            if n else "erro=N%C3%A3o+achei+grupo+compat%C3%ADvel+pra+esse+produto"
+        )
+    except Exception as e:
+        log.exception("personalizado.postar_falhou", erro=str(e))
+        msg = f"erro=Erro+ao+postar%3A+{str(e)[:80]}"
+    return RedirectResponse(
+        url=f"/produtos/personalizados?{msg}",
+        status_code=302,
+    )
+
+
+@router.post("/produtos/personalizados/postar-todos", response_class=HTMLResponse)
+async def personalizado_postar_todos(
+    user: Usuario = Depends(exigir_login),
+    db:   AsyncSession = Depends(get_db_async),
+):
+    """Roda lote pegando TODOS os personalizados visíveis (max 50)."""
+    from app.services import lote_service, personalizado_service
+
+    produtos = await personalizado_service.listar_personalizados_visiveis(db, user=user)
+    if not produtos:
+        return RedirectResponse(
+            url="/produtos/personalizados?erro=Nenhum+produto+pra+postar",
+            status_code=302,
+        )
+    try:
+        resultado = await lote_service.rodar_lote(
+            db, org_id=user.org_id,
+            max_produtos=min(50, len(produtos)),
+            usuario=user,
+            criado_por_usuario_id=user.id,
+        )
+        n = resultado.get("tarefas_criadas", 0)
+        msg = f"mensagem={n}+postagens+enfileiradas"
+    except Exception as e:
+        log.exception("personalizado.postar_todos_falhou", erro=str(e))
+        msg = f"erro=Erro%3A+{str(e)[:80]}"
+    return RedirectResponse(url=f"/produtos/personalizados?{msg}", status_code=302)
+
+
 @router.get("/produtos/import-csv", response_class=HTMLResponse)
 async def pagina_import_csv(
     request: Request,

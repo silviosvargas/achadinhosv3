@@ -92,6 +92,7 @@ async def produtos_elegiveis(
     )
 
     if usuario is not None and usuario.eh_afiliado:
+        # Afiliado: vê públicos da org + os seus privados.
         base = base.where(
             or_(
                 Produto.usuario_dono_id.is_(None),
@@ -99,7 +100,11 @@ async def produtos_elegiveis(
             )
         )
     else:
-        # Admin/usuário comum: só públicos da org
+        # Admin / usuário comum: vê SÓ os públicos da org.
+        # Personalizados de afiliado (`usuario_dono_id IS NOT NULL`) ficam
+        # RESERVADOS pra esse afiliado postar com a tag dele — admin não
+        # entra no lote dele (senão usaria a tag do afiliado, comissão pra
+        # ele e não pra org). Fase 17.
         base = base.where(Produto.usuario_dono_id.is_(None))
 
     result = await db.execute(

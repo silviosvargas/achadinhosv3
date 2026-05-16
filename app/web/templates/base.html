@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/style.css?v=2026051606">
+  <link rel="stylesheet" href="/static/style.css?v=2026051607">
 
   {# Aplica tema escolhido pelo usuário ANTES do render — evita FOUC.
      Lê de localStorage. Se vazio/inválido, deixa default (respeita sistema). #}
@@ -64,9 +64,13 @@
 
       <div class="sidebar-grupo">
         <div class="sidebar-grupo-titulo">Catálogo</div>
-        <a href="/produtos" class="sidebar-item {% if _path.startswith('/produtos') %}ativo{% endif %}">
+        <a href="/produtos" class="sidebar-item {% if _path == '/produtos' or (_path.startswith('/produtos/') and not _path.startswith('/produtos/personalizados')) %}ativo{% endif %}">
           <span class="sidebar-item-icone">📦</span>
           <span>Produtos</span>
+        </a>
+        <a href="/produtos/personalizados" class="sidebar-item {% if _path.startswith('/produtos/personalizados') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">🛍️</span>
+          <span>Personalizados</span>
         </a>
         {% if _pode_buscas %}
         <a href="/buscas" class="sidebar-item {% if _path.startswith('/buscas') %}ativo{% endif %}">

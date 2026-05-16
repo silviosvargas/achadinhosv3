@@ -244,8 +244,48 @@ async def ingerir_produtos(
     )).all()
     mapping: dict[str, int] = {c.lower(): n for c, n in mapping_rows}
 
+    # 2.1. Detecta se é busca PERSONALIZADA (Fase 17). Marcador vem no
+    # payload da tarefa quando o user dispara via /produtos/personalizados.
+    # Resultado: products viram `fonte=personalizado` + dono apropriado.
+    personalizado_dono_id: int | None = None
+    personalizado_criador_id: int | None = None
+    eh_busca_personalizada = False
+    if tarefa_id:
+        tarefa = await db.get(Tarefa, tarefa_id)
+        if tarefa and tarefa.payload and tarefa.payload.get("_personalizado_criador_id"):
+            criador_id = int(tarefa.payload["_personalizado_criador_id"])
+            criador = await db.get(Usuario, criador_id)
+            if criador:
+                eh_busca_personalizada = True
+                personalizado_criador_id = criador_id
+                # Regra de dono (Fase 17):
+                # - Afiliado COM tag pra ML → produto privado dele (`dono_id=user.id`)
+                # - Senão (admin/usuário/afiliado sem tag) → público (`dono_id=NULL`)
+                # → admin posta com tag dele
+                from app.services import afiliado_service
+                tag_user = await afiliado_service.tag_com_cascata(
+                    db, plataforma="ml", usuario_id=criador.id, org_id=org_id,
+                )
+                # `tag_com_cascata` faz fallback pra admin. Pra saber se o user
+                # tem tag PRÓPRIA (não da cascata), checa direto na tabela:
+                from app.models import UsuarioAfiliado
+                tem_tag_propria = (await db.execute(
+                    select(UsuarioAfiliado).where(
+                        UsuarioAfiliado.usuario_id == criador.id,
+                        UsuarioAfiliado.plataforma == "ml",
+                    ).limit(1)
+                )).scalar_one_or_none() is not None
+                if criador.eh_afiliado and tem_tag_propria:
+                    personalizado_dono_id = criador.id  # privado
+                else:
+                    personalizado_dono_id = None        # público
+
     # 3. Upsert em loop
     for item in produtos_recebidos:
+        if eh_busca_personalizada:
+            item["fonte"] = "personalizado"
+            item["_personalizado_dono_id"] = personalizado_dono_id
+            item["_personalizado_criador_id"] = personalizado_criador_id
         try:
             criou, com_nicho = await _upsert_produto(
                 db,
@@ -477,10 +517,23 @@ async def _upsert_produto(
                  motivo=motivo, tag_esperada=tag_esperada,
                  url_afiliado_agente=(url_afiliado_agente or "")[:120])
 
+    # Personalizado (Fase 17): sobrescreve dono/criador se vier marcado.
+    # Item marcado por `personalizado_service.marcar_produtos_personalizados`.
+    eh_personalizado = item.get("fonte") == "personalizado"
+    if eh_personalizado:
+        dono_id_efetivo = item.get("_personalizado_dono_id")
+        criador_id      = item.get("_personalizado_criador_id")
+        fonte           = "personalizado"
+    else:
+        dono_id_efetivo = dono_id
+        criador_id      = None
+        fonte           = "busca_ml"
+
     if existente is None:
         produto = Produto(
             org_id=org_id,
-            usuario_dono_id=dono_id,
+            usuario_dono_id=dono_id_efetivo,
+            criado_por_usuario_id=criador_id,
             plataforma=plataforma,
             item_id=item_id,
             nome=item.get("nome", "")[:500],
@@ -492,7 +545,7 @@ async def _upsert_produto(
             url_canonica=url_canonica,
             url_afiliado=url_afiliado,
             foto_url=item.get("foto_url"),
-            fonte="busca_ml",
+            fonte=fonte,
             descoberto_em=datetime.now(tz=timezone.utc),
         )
         db.add(produto)

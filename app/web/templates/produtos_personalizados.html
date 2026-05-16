@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block titulo %}Personalizados{% endblock %}
+{% block titulo_topbar %}Personalizados{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Produtos Personalizados 🛍️</h1>
+  <p>
+    Cadastre produtos manualmente por palavra-chave ou link.
+    {% if user.eh_admin %}
+      Como admin, você vê os personalizados de todos da org.
+    {% endif %}
+  </p>
+</header>
+
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
+{# ── FORM DE BUSCA / CADASTRO ─────────────────────── #}
+<section class="card card-destaque" style="padding:20px; margin-bottom:24px;">
+  <form method="post" action="/produtos/personalizados/buscar"
+        style="display:flex; flex-direction:column; gap:12px;">
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <input type="text" name="entrada" required
+             placeholder="🔎 Digite uma palavra-chave OU cole um link de produto"
+             style="flex:1; min-width:280px; height:42px; font-size:15px;
+                    padding:0 14px;">
+      <button type="submit" class="btn btn-primario" style="height:42px; padding:0 22px;">
+        <span>＋</span><span>Adicionar</span>
+      </button>
+    </div>
+    {% if ia_disponivel %}
+    <label class="check-inline" style="display:flex; align-items:center;
+           gap:8px; font-size:13px; color:var(--texto-2);">
+      <input type="checkbox" name="usar_ia" value="1">
+      <span>🤖 Usar IA pra extrair produto de link (TikTok, Instagram, YouTube)</span>
+    </label>
+    {% endif %}
+  </form>
+</section>
+
+{# ── HEADER DA LISTA + AÇÕES EM MASSA ─────────────── #}
+{% if produtos %}
+<div style="display:flex; justify-content:space-between; align-items:center;
+            margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+  <h2 style="margin:0; font-size:16px;">
+    {{ produtos|length }} produto{{ 's' if produtos|length != 1 else '' }} personalizado{{ 's' if produtos|length != 1 else '' }}
+  </h2>
+  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+    <form method="post" action="/produtos/personalizados/postar-todos" style="display:inline"
+          data-confirm="Enfileirar postagem dos {{ produtos|length }} produtos personalizados visíveis?&#10;&#10;Cada um vai pra UM grupo compatível (algoritmo padrão do lote)."
+          data-confirm-titulo="Postar todos?"
+          data-confirm-ok="⚡ Sim, postar todos">
+      <button type="submit" class="btn btn-primario">
+        ⚡ Postar todos ({{ produtos|length }})
+      </button>
+    </form>
+    <form method="post" action="/produtos/personalizados/limpar-todos" style="display:inline"
+          data-confirm="Apagar TODOS os SEUS produtos personalizados? ({{ produtos|length }} itens)&#10;&#10;Isso só apaga os que VOCÊ cadastrou. Esta ação é irreversível."
+          data-confirm-titulo="Limpar todos?"
+          data-confirm-ok="🗑 Sim, apagar todos"
+          data-confirm-perigo="1">
+      <button type="submit" class="btn"
+              style="border-color:var(--vermelho); color:var(--vermelho);">
+        🗑 Limpar todos
+      </button>
+    </form>
+  </div>
+</div>
+
+{# ── GRID DE CARDS ─────────────────────────────────── #}
+<div class="produtos-grid">
+  {% for p in produtos %}
+  <div class="produto-card">
+    {% if p.foto_url %}
+      <img class="produto-foto" src="{{ p.foto_url }}" alt="" loading="lazy">
+    {% else %}
+      <div class="produto-foto-placeholder">📦</div>
+    {% endif %}
+
+    <div class="produto-info">
+      {# Badges plataforma + status #}
+      <div class="produto-badges">
+        <span class="badge badge-cinza">{{ p.plataforma }}</span>
+        {% if p.url_afiliado and ('meli.la/' in p.url_afiliado or 'shopee.com.br/' in p.url_afiliado or 'amzn.to/' in p.url_afiliado) %}
+          <span class="badge badge-verde">● catálogo</span>
+        {% else %}
+          <span class="badge badge-amarelo">○ fallback</span>
+        {% endif %}
+        {% if user.eh_admin and p.criado_por_usuario_id and criadores_map.get(p.criado_por_usuario_id) %}
+          {% set _criador = criadores_map.get(p.criado_por_usuario_id) %}
+          <span class="badge badge-azul" title="Cadastrado por {{ _criador.nome_exibicao or _criador.login }}">
+            por {{ _criador.login }}
+          </span>
+        {% endif %}
+        {% if p.usuario_dono_id %}
+          <span class="badge badge-vermelho" title="Produto privado — só o dono posta">🔒 privado</span>
+        {% endif %}
+      </div>
+
+      {# Nome #}
+      <div class="produto-nome">
+        {{ p.nome[:80] }}{% if p.nome|length > 80 %}…{% endif %}
+      </div>
+
+      {# Preço #}
+      <div class="produto-preco">
+        {% if p.preco_orig and p.preco_orig > p.preco %}
+          <span class="produto-preco-old">R$ {{ "%.2f"|format(p.preco_orig)|replace('.', ',') }}</span>
+        {% endif %}
+        <strong>R$ {{ "%.2f"|format(p.preco)|replace('.', ',') }}</strong>
+        {% if p.desconto and p.desconto > 0 %}
+          <span class="badge badge-verde" style="font-size:10px;">-{{ p.desconto|int }}%</span>
+        {% endif %}
+      </div>
+
+      {# Comissão + ganho estimado #}
+      {% if p.comissao %}
+      <div class="produto-comissao">
+        Comissão: <strong>{{ p.comissao }}%</strong>
+        · Ganho: <strong>R$ {{ "%.2f"|format(p.preco * p.comissao / 100)|replace('.', ',') }}</strong>
+      </div>
+      {% endif %}
+
+      {# Ações #}
+      <div class="produto-acoes">
+        <form method="post" action="/produtos/personalizados/{{ p.id }}/postar" style="flex:1; display:flex;"
+              data-confirm="Enfileirar postagem deste produto?&#10;&#10;{{ p.nome[:60]|e }}"
+              data-confirm-titulo="Postar agora?"
+              data-confirm-ok="⚡ Sim, postar">
+          <button type="submit" class="btn btn-primario" style="flex:1; height:34px; padding:0 12px; font-size:13px;">
+            ⚡ Postar
+          </button>
+        </form>
+        {% set _link = p.url_afiliado or p.url_canonica %}
+        {% if _link %}
+        <a href="{{ _link }}" target="_blank" rel="noopener noreferrer"
+           class="btn produto-btn-icon" title="Abrir produto" style="height:34px;">
+          🔗
+        </a>
+        {% endif %}
+        <a href="/produtos/{{ p.id }}/editar"
+           class="btn produto-btn-icon" title="Editar" style="height:34px;">
+          ✏️
+        </a>
+        <form method="post" action="/produtos/personalizados/{{ p.id }}/excluir" style="display:inline"
+              data-confirm="Apagar este produto personalizado?&#10;&#10;{{ p.nome[:60]|e }}"
+              data-confirm-titulo="Apagar produto?"
+              data-confirm-ok="🗑 Apagar"
+              data-confirm-perigo="1">
+          <button type="submit" class="btn produto-btn-icon" title="Apagar"
+                  style="height:34px; color:var(--vermelho);">
+            🗑
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+{# ── EMPTY STATE ───────────────────────────────────── #}
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">🛍️</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">
+    Nenhum produto personalizado cadastrado
+  </h2>
+  <p style="max-width:520px; margin:0 auto;">
+    Use o campo acima pra adicionar produtos pelo nome (palavra-chave busca no
+    Mercado Livre) ou colando um link específico do produto. Você também pode
+    colar links de TikTok/Insta — a IA infere o produto do contexto.
+  </p>
+</div>
+{% endif %}
+
+<style>
+.produtos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.produto-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--sh-xs);
+  display: flex;
+  flex-direction: column;
+  transition: box-shadow var(--t-base), transform var(--t-base);
+}
+.produto-card:hover {
+  box-shadow: var(--sh-md);
+  transform: translateY(-2px);
+}
+.produto-foto {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.produto-foto-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--gray-300);
+}
+.produto-info {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.produto-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.produto-badges .badge { font-size: 10px; padding: 2px 7px; }
+.produto-nome {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--texto);
+  min-height: 36px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.produto-preco {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  color: var(--texto);
+}
+.produto-preco-old {
+  text-decoration: line-through;
+  color: var(--muted);
+  font-size: 12px;
+}
+.produto-comissao {
+  font-size: 11px;
+  color: var(--muted);
+}
+.produto-acoes {
+  display: flex;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.produto-btn-icon {
+  width: 34px;
+  padding: 0;
+  font-size: 14px;
+  min-width: 34px;
+}
+</style>
+
+{% endblock %}
