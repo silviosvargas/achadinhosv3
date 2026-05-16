@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block titulo %}Mappings categoria → nicho{% endblock %}
+{% block titulo %}Nichos{% endblock %}
+{% block titulo_topbar %}Nichos{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Mapping categoria do ML → nicho</h1>
-  <p class="muted">
-    Quando o agente extrai produtos do ML, ele captura a categoria
-    (ex: "Eletrônicos &gt; Áudio &gt; Fones"). O servidor olha aqui pra
-    decidir o nicho do produto automaticamente.
+  <h1>Mapping categoria → nicho 🏷️</h1>
+  <p>
+    Quando o agente extrai produtos do ML com categoria (ex: "Eletrônicos &gt; Áudio &gt; Fones"),
+    o servidor usa esta tabela pra decidir o nicho automaticamente.
   </p>
 </header>
 

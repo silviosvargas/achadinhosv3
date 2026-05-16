@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Nova busca{% endblock %}
+{% block titulo_topbar %}Nova busca{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Nova busca</h1>
-  <p class="muted"><a href="/buscas">← voltar</a></p>
+  <h1>Nova busca 🔎</h1>
+  <p><a href="/buscas" class="btn-link">← voltar</a></p>
 </header>
 
 {% if erro %}

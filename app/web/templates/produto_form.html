@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% set _editando = produto is not none %}
 {% block titulo %}{% if _editando %}Editar produto{% else %}Novo produto{% endif %}{% endblock %}
+{% block titulo_topbar %}{% if _editando %}Editar produto{% else %}Novo produto{% endif %}{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>{% if _editando %}Editar produto{% else %}Novo produto{% endif %}</h1>
-  <p class="muted"><a href="/produtos">← voltar</a></p>
+  <h1>{% if _editando %}Editar produto ✏️{% else %}Novo produto 📦{% endif %}</h1>
+  <p><a href="/produtos" class="btn-link">← voltar</a></p>
 </header>
 
 {% if erro %}

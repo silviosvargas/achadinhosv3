@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Afiliados{% endblock %}
+{% block titulo_topbar %}Afiliados{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Tags de afiliado</h1>
-  <p class="muted">
+  <h1>Tags de afiliado 🔗</h1>
+  <p>
     Para o usuário <strong>{{ target.nome_exibicao or target.login }}</strong>
     (<code>{{ target.login }}</code>) ·
     <a href="/usuarios" class="btn-link">← voltar</a>

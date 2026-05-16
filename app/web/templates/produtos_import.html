@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block titulo %}Importar produtos (CSV){% endblock %}
+{% block titulo %}Importar CSV{% endblock %}
+{% block titulo_topbar %}Importar CSV{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Importar produtos via CSV</h1>
-  <p class="muted"><a href="/produtos">← voltar pra lista</a></p>
+  <h1>Importar produtos via CSV 📥</h1>
+  <p><a href="/produtos" class="btn-link">← voltar pra lista</a></p>
 </header>
 
 {% if erro %}
