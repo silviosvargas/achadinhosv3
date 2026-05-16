@@ -192,13 +192,17 @@ def _processar_categoria(
     driver, *, nome_categoria: str, url_categoria: str,
     comissao_estimada: float, candidatos_por_categoria: int,
 ) -> list[dict[str, Any]]:
-    """Processa UMA categoria de cabo a rabo:
+    """Processa UMA categoria — v3.7.0 fluxo SIMPLIFICADO:
     1. Extrai N candidatos da página de mais-vendidos
-    2. Gera meli.la pra todos
-    3. Pra cada um, abre meli.la → /social/ → produto → captura comissão e preço REAIS
-    4. Ordena por (preço × comissão_real) DESC, mantém TOP_FINAL_POR_CATEGORIA
+    2. Pra cada um: abre `url_canonica` DIRETO → captura comissão+preço da barra
+    3. Filtra só os que tiveram captura real
+    4. Ordena por (preço × comissão_real) DESC, mantém top N
+    5. Gera meli.la NO FINAL (só pros que vão entrar no catálogo)
 
-    Retorna lista de produtos prontos pra ingest (com `comissao_fonte=ml_barra_afiliados`).
+    Decisão do user (v3.7.0): pulamos o passo meli.la → /social/ → clicar
+    "Ir para produto". Chrome do agente está logado como afiliado, então
+    abrir URL canônica direto já mostra a barra com a comissão correta.
+    Mais rápido (~1.5s/produto vs ~3s antes).
     """
     # Imports tardios pra reusar lógica de busca_ml SEM duplicar
     from agent.busca_ml import (
@@ -252,22 +256,18 @@ def _processar_categoria(
     log.info("ml.padrao.candidatos_extraidos",
              nome=nome_categoria, total=len(candidatos))
 
-    # 2. Gera meli.la inline pra todos (reusa fluxo conhecido)
-    _gerar_meli_la_no_driver(
-        driver, candidatos, log_prefixo=f"ml.padrao[{nome_categoria}]",
-    )
-
-    # 3. Pra cada com meli.la, abre → /social/ → produto → captura comissão e preço REAIS
+    # 2. v3.7.0: abre URL canônica DIRETO de cada candidato, captura
+    # comissão + preço da barra preta. Sem passo meli.la/social/click.
     capturados = 0
     for i, p in enumerate(candidatos, start=1):
-        meli = p.get("url_afiliado") or ""
-        if "meli.la/" not in meli:
-            log.info("ml.padrao.sem_meli_la_pula",
-                     item_id=p.get("item_id"), n=i, total=len(candidatos))
+        url_can = p.get("url_canonica") or ""
+        if not url_can:
             continue
 
-        ok = _entrar_produto_via_meli_la(driver, meli)
-        if not ok:
+        try:
+            driver.get(url_can)
+            time.sleep(1.5)
+        except Exception:
             continue
 
         com_real, preco_real = _capturar_comissao_e_preco_no_destino(driver)
@@ -290,12 +290,9 @@ def _processar_categoria(
                  preco=p.get("preco"))
 
         # Delay anti rate-limit
-        time.sleep(random.uniform(0.4, 0.9))
+        time.sleep(random.uniform(0.3, 0.6))
 
-    # 4. FILTRO ESTRITO (v3.5.1): só passa adiante produtos com comissão
-    # capturada DA BARRA. Decisão do user: "todos os que não são pegos da
-    # barra estão sendo informados errado". Resto é descartado — o catálogo
-    # não recebe valores estimados/categoria pra esses produtos novos.
+    # 3. FILTRO ESTRITO: só passa produtos com captura real
     com_captura_real = [
         p for p in candidatos
         if p.get("comissao_fonte") == "ml_barra_afiliados"
@@ -303,14 +300,21 @@ def _processar_categoria(
     ]
     descartados = len(candidatos) - len(com_captura_real)
 
-    # 5. Ordena por (preço × comissão_real) DESC e mantém top N
+    # 4. Ordena por (preço × comissão_real) DESC e mantém top N
     def _score_ranking(prod: dict) -> float:
         preco = prod.get("preco") or 0
         com   = prod.get("comissao") or 0
-        return float(preco) * float(com) / 100.0  # ganho R$ estimado
+        return float(preco) * float(com) / 100.0
 
     com_captura_real.sort(key=_score_ranking, reverse=True)
     top = com_captura_real[:TOP_FINAL_POR_CATEGORIA]
+
+    # 5. Gera meli.la APENAS pros TOP (não pra todos os candidatos —
+    # economiza chamadas ao painel linkbuilder)
+    if top:
+        _gerar_meli_la_no_driver(
+            driver, top, log_prefixo=f"ml.padrao[{nome_categoria}]",
+        )
 
     log.info("ml.padrao.categoria_concluida",
              nome=nome_categoria,

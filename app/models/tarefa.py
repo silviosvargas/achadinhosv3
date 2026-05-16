@@ -108,3 +108,8 @@ class Tarefa(Base, TimestampMixin):
     progresso_atualizado_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None,
     )
+    # Fase 20.2 — Duração total (preenchido ao concluir/falhar/cancelar)
+    duracao_seg: Mapped[int | None] = mapped_column(
+        Integer, default=None,
+        comment="(concluido_em - iniciado_em).total_seconds(). NULL enquanto rodando.",
+    )

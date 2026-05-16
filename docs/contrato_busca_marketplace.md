@@ -393,29 +393,32 @@ MESMO driver Chrome, mesmo perfil, mesmas estratégias de extração de card.
    `_upsert_produto`) OU **substring com a tag do admin**. Senão, gera
    fallback genérico com a tag via `linkbuilder.gerar_url_afiliado`.
 
-8. **Pra CAPTURAR comissão da barra de afiliados ML** (padrão Fase 18.3):
-   o agente DEVE **abrir o shortener (`meli.la/XXX`) → ML redireciona pra
-   `/social/<usuario>` → clicar no botão "Ir para produto" → CHEGAR na
-   página completa do produto → captura barra preta** ("GANHOS X%" ou
-   "GANHOS EXTRAS X%").
+8. **Pra CAPTURAR comissão da barra de afiliados ML** (decisão atual v3.7.0):
+   o agente abre a **URL CANÔNICA do produto direto** (não o `meli.la`).
+   Chrome do agente está logado como afiliado em sessão persistente
+   (`chrome_perfil_ml`) → a barra preta aparece automaticamente em
+   qualquer página de produto com a comissão real (incluindo bônus
+   EXTRAS).
 
-   Por quê? Abrir o `meli.la` carrega o contexto do afiliado correto
-   (tag + tool + ref do shortlink). Abrir URL canônica direto pega
-   comissão genérica do Chrome logado, NÃO a comissão real do programa
-   daquele link específico.
+   ```python
+   driver.get(url_canonica)          # ex: produto.mercadolivre.com.br/MLB-...
+   time.sleep(1.5)                    # aguarda barra renderizar
+   pct = driver.execute_script(...)   # regex "GANHOS EXTRAS X%" no body
+   ```
 
-   A página `/social/` mostra um card resumo + botão "Ir para produto"
-   — a barra preta só aparece DEPOIS do clique nesse botão.
+   Implementação: `agente/agent/busca_ml.py:_capturar_comissao_da_barra(driver, url_canonica)`.
 
-   Implementação ML: `agente/agent/busca_ml.py:_capturar_comissao_da_barra(driver, url_meli_la)`.
+   **Histórico (não repetir o ping-pong)**: nesta sessão tentamos 3
+   fluxos diferentes (URL canônica → meli.la com clique → URL canônica
+   de novo). User decidiu: canônica direto.
 
-   Pra outros marketplaces com fluxo similar (Shopee `s.shopee.com.br`,
-   Amazon `amzn.to`): adaptar o mesmo princípio — abre shortener, segue
-   redirects/cliques até chegar onde a comissão real está exposta.
+   Pra outros marketplaces: padrão similar — abrir URL canônica
+   diretamente quando Chrome do agente está logado como afiliado.
 
-   **Regra de ouro**: o user OPERA o painel de afiliados — ele é a
-   fonte de verdade sobre o fluxo real. Se a captura voltar vazia, NÃO
-   inventar abordagem nova; perguntar ao user qual é o caminho correto.
+   **Regra de ouro**: o user OPERA o painel de afiliados diariamente,
+   ele é a fonte de verdade sobre como a interface se comporta. Se
+   captura falhar, **PERGUNTAR ao user qual é o caminho correto**.
+   NÃO inventar uma abordagem nova baseada em raciocínio.
 
 ---
 

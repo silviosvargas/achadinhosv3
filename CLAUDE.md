@@ -408,73 +408,51 @@ URL do ML tem variantes:
 legacy. Aplica tanto em `_extrair_item_id` (agente) quanto em
 `afiliado_ml_writer._RE_MLB` (servidor).
 
-### Comissão real do ML: fluxo OBRIGATÓRIO `meli.la → /social/ → clicar "Ir para produto" → barra`
+### Comissão real do ML: abrir URL CANÔNICA direto (revisão 2026-05-16 tarde, v3.7.0)
 
-A comissão REAL do produto (que considera o programa do afiliado +
-bônus EXTRAS temporários) só aparece corretamente na barra preta quando
-o agente **entra pelo link de afiliado e clica o botão "Ir para produto"**.
-
-**Fluxo correto** (decisão do user, registrada em v3.4.3):
+**Decisão ATUAL do user** (16/05/2026 — REVERTEU a orientação anterior
+desta mesma sessão): pra capturar a barra preta de afiliados ML com
+GANHOS EXTRAS, abrir a URL canônica do produto DIRETO. Chrome do
+agente já está logado como afiliado em `chrome_perfil_ml` (sessão
+persistente) → a barra preta aparece automática em qualquer página
+de produto que abrir, com a comissão correta incluindo bônus EXTRAS.
 
 ```python
-# 1. Abre o link de afiliado (não a URL canônica do produto)
-driver.get("https://meli.la/XXXXX")
-# 2. ML redireciona pra página de "perfil social" do afiliado:
-#    mercadolivre.com.br/social/<usuario>?matt_word=<usuario>&matt_tool=...
-#    Essa página mostra um CARD do produto + botão "Ir para produto"
-#    A barra preta de afiliados AINDA NÃO ESTÁ visível aqui.
-time.sleep(2)
-
-# 3. Procura e CLICA no botão "Ir para produto"
-href = driver.execute_script("""
-    var els = document.querySelectorAll('a, button');
-    for (var el of els) {
-        var t = (el.textContent || '').trim().toLowerCase();
-        if (t.includes('ir para produto')) {
-            return el.tagName === 'A' && el.href ? el.href : null;
-        }
-    }
-    return null;
-""")
-if href:
-    driver.get(href)
-else:
-    # Fallback: clicar via JS (caso seja button, não anchor)
-    driver.execute_script("""...el.click()...""")
-time.sleep(2)
-
-# 4. AGORA está na página do produto com a barra preta visível:
-#    "GANHOS EXTRAS 24%" (ou "GANHOS 5%" se não tem programa Mais por Mais)
-# 5. Captura via regex `GANHOS\s+(?:EXTRAS\s+)?(\d+(?:[.,]\d+)?)\s*%`
+def _capturar_comissao_da_barra(driver, url_canonica):
+    driver.get(url_canonica)   # ex: produto.mercadolivre.com.br/MLB-...
+    time.sleep(1.5)             # ML renderiza barra após DOM load
+    pct = driver.execute_script(r"""
+        // Prefere "GANHOS EXTRAS X%" sobre "GANHOS X%" base
+        var txt = document.body.textContent || '';
+        var mE = txt.match(/GANHOS\s+EXTRAS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+        if (mE) return parseFloat(mE[1].replace(',','.'));
+        var mB = txt.match(/GANHOS\s+(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
+        if (mB) return parseFloat(mB[1].replace(',','.'));
+        return null;
+    """)
+    return pct
 ```
 
-**Por que esse fluxo e não outros**:
+**Por que canônica e não meli.la**:
+- Chrome está logado como afiliado → barra mostra contexto correto em
+  qualquer página de produto, sem precisar passar pelo shortlink
+- ~3x mais rápido: 1 navegação vs 3 (meli.la → social → clicar → produto)
+- Mesmo resultado: comissão com EXTRAS já aparece
 
-1. **`meli.la` em vez de URL canônica direta**: o `meli.la` carrega o
-   contexto de afiliado certo (tag + tool + ref específicos daquele
-   shortlink). Abrir URL canônica direta pode pegar comissão genérica
-   do Chrome logado, **não a comissão real** do programa daquele link.
+**Histórico de reviravoltas nesta sessão (não repetir o ping-pong)**:
+- v3.4.0: usei URL canônica → user reclamou
+- v3.4.1-3: mudei pra meli.la → /social/ → clicar "Ir para produto"
+- **v3.7.0**: user observou na prática que canônica funciona perfeito,
+  voltamos pra canônica (esta versão atual)
 
-2. **Página `/social/` NÃO mostra a barra**: o ML usa essa página como
-   "perfil social" do afiliado, com card resumo do produto. A barra
-   preta com a comissão só aparece depois de clicar **"Ir para produto"**
-   e ir pra página completa do produto.
+**Pré-requisito CRÍTICO**: Chrome do agente PRECISA estar logado em
+`mercadolivre.com.br/afiliados` via `python -m agent.login_ml` —
+sessão persistente em `chrome_perfil_ml`. Sem isso, barra não aparece.
 
-3. **Erro a NÃO cometer (v3.4.2 e revisões anteriores)**: tentar abrir
-   só o `meli.la` e tentar capturar a barra ali mesmo — a barra não
-   existe na `/social/`. Resultado: captura `null`, todos os produtos
-   ficam com `(estimativa)`.
-
-**Implementação**:
-- Função: `agente/agent/busca_ml.py:_capturar_comissao_da_barra(driver, url)`
-  recebe URL meli.la, faz fluxo completo (redirect → clica botão → captura).
-- Servidor manda `items=[{produto_id, url_afiliado}]` (sempre meli.la).
-  Servidor: `app/services/curadoria_service.py:disparar_revalidacao_comissoes_via_agente`.
-
-**ATENÇÃO PRA SESSÕES FUTURAS**: se algo "errou", NUNCA inventar uma
-abordagem nova. Pergunte ao user qual o fluxo correto. O user é a fonte
-de verdade sobre o comportamento do painel ML afiliados — ele OPERA o
-sistema, não a Claude.
+**Pra sessões futuras**: se algo falhar (captura volta null, valores
+errados, etc), **PERGUNTAR ao user qual o comportamento ATUAL do painel**
+antes de mexer no código. User é fonte de verdade — opera o painel
+diariamente. Já fui corrigido 3+ vezes neste assunto.
 
 
 ### Hierarquia de `comissao_fonte`: NÃO sobrescrever fonte alta com baixa

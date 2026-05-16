@@ -40,10 +40,21 @@
     'postar_telegram':      '📢 Postando no Telegram',
   };
 
+  function formatarDuracao(seg) {
+    // 0..59: "12s" ; 60+: "Xmin Ys"
+    if (!seg && seg !== 0) return '';
+    seg = Math.max(0, Math.floor(seg));
+    if (seg < 60) return seg + 's';
+    var m = Math.floor(seg / 60);
+    var s = seg % 60;
+    return m + 'min ' + (s < 10 ? '0' + s : s) + 's';
+  }
+
   function renderItem(t) {
     var nome = TIPOS_NOMES[t.tipo] || t.tipo;
     var pct = Math.max(0, Math.min(100, t.progresso_pct || 0));
     var msg = t.progresso_mensagem || (pct === 0 ? 'Iniciando…' : '');
+    var decorrido = formatarDuracao(t.decorrido_seg);
     return (
       '<div style="background:var(--bg-card); border:1px solid var(--border); ' +
       'border-radius:var(--r-md); padding:12px 16px; margin-bottom:8px;">' +
@@ -53,6 +64,11 @@
             nome + ' <span style="color:var(--muted); font-weight:400; font-size:11px;">#' + t.id + '</span>' +
           '</div>' +
           '<div style="display:flex; align-items:center; gap:10px;">' +
+            (decorrido ?
+              '<div style="font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums;" ' +
+                   'title="Tempo decorrido desde o início">' +
+                '⏱ ' + decorrido +
+              '</div>' : '') +
             '<div style="font-weight:700; font-size:14px; color:var(--primario, #10b981);">' +
               pct.toFixed(0) + '%' +
             '</div>' +

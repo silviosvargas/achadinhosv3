@@ -29,10 +29,10 @@ BUSCAS_PADRAO: list[dict] = [
         "descricao":    (
             "Top 10 por categoria do ML, filtrados pela COMBINAÇÃO de melhor "
             "preço + maior comissão REAL (capturada da barra preta de afiliados). "
-            "Pega ~30 candidatos por categoria, abre cada um pelo meli.la pra "
-            "extrair comissão real, e DESCARTA produtos onde a captura falha "
-            "(sem estimativa errada no catálogo). Mantém os 10 melhores que "
-            "tiveram captura real. Demora ~12min."
+            "v3.7.0: agora abre URL canônica DIRETO (sem passar pelo meli.la). "
+            "Pega ~30 candidatos por categoria, abre cada um, captura comissão "
+            "+ preço da barra, descarta produtos onde captura falha, mantém os "
+            "10 melhores. Demora ~6min (era ~12min com fluxo antigo)."
         ),
         "marketplaces": ["ml"],
         "tipo_busca":   "padrao_mais_vendidos_completo",

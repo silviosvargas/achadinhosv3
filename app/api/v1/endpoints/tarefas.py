@@ -41,6 +41,16 @@ async def em_progresso(
         ).order_by(Tarefa.iniciado_em.desc().nullslast()).limit(10)
     )).scalars().all())
 
+    from datetime import datetime, timezone
+    agora = datetime.now(tz=timezone.utc)
+
+    def _decorrido(iniciado):
+        """Segundos decorridos desde `iniciado_em` (server-side, evita
+        problemas de clock skew no cliente)."""
+        if iniciado is None:
+            return 0
+        return max(0, int((agora - iniciado).total_seconds()))
+
     items = [
         {
             "id":                  t.id,
@@ -48,6 +58,7 @@ async def em_progresso(
             "progresso_pct":       round(float(t.progresso_pct or 0), 1),
             "progresso_mensagem":  t.progresso_mensagem or "",
             "iniciado_em":         t.iniciado_em.isoformat() if t.iniciado_em else None,
+            "decorrido_seg":       _decorrido(t.iniciado_em),
             "progresso_atualizado_em": (
                 t.progresso_atualizado_em.isoformat()
                 if t.progresso_atualizado_em else None

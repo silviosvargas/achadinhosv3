@@ -235,6 +235,14 @@ async def reentregar_pendentes(db: AsyncSession, *, agente_id: int) -> int:
 # Callbacks do agente (recebidos via WS)
 # ============================================================
 
+def _calcular_duracao_seg(tarefa: Tarefa) -> int | None:
+    """Fase 20.2: int((concluido_em - iniciado_em).total_seconds()) ou None."""
+    if tarefa.iniciado_em is None or tarefa.concluido_em is None:
+        return None
+    delta = tarefa.concluido_em - tarefa.iniciado_em
+    return max(0, int(delta.total_seconds()))
+
+
 async def marcar_concluida(
     db: AsyncSession, *, tarefa_id: int, resultado: dict[str, Any] | None = None,
 ) -> None:
@@ -246,8 +254,14 @@ async def marcar_concluida(
     tarefa.status = StatusTarefa.CONCLUIDA
     tarefa.resultado = resultado or {}
     tarefa.concluido_em = datetime.now(tz=timezone.utc)
+    tarefa.duracao_seg = _calcular_duracao_seg(tarefa)
+    # Marca progresso 100% pra UI mostrar "concluído" antes de sumir
+    tarefa.progresso_pct = 100.0
+    if tarefa.duracao_seg is not None:
+        mins, secs = divmod(tarefa.duracao_seg, 60)
+        tarefa.progresso_mensagem = f"✓ Concluído em {mins}min {secs}s"
     await db.commit()
-    log.info("tarefa.concluida", tarefa_id=tarefa_id)
+    log.info("tarefa.concluida", tarefa_id=tarefa_id, duracao_seg=tarefa.duracao_seg)
 
     # Hook por tipo: tarefas com side-effect pós-conclusão.
     # GERAR_LINK (Fase 15): aplica o mapping retornado pelo linkbuilder
@@ -308,6 +322,7 @@ async def cancelar(
     tarefa.status = StatusTarefa.CANCELADA
     tarefa.erro = "Cancelada pelo usuário"
     tarefa.concluido_em = datetime.now(tz=timezone.utc)
+    tarefa.duracao_seg = _calcular_duracao_seg(tarefa)   # Fase 20.2
     await db.commit()
 
     log.info("tarefa.cancelada",
@@ -347,6 +362,7 @@ async def marcar_falhou(
         tarefa.status = StatusTarefa.FALHOU
         tarefa.erro = erro
         tarefa.concluido_em = datetime.now(tz=timezone.utc)
+        tarefa.duracao_seg = _calcular_duracao_seg(tarefa)   # Fase 20.2
         log.warning("tarefa.falhou_definitivo", tarefa_id=tarefa_id, erro=erro)
 
     await db.commit()

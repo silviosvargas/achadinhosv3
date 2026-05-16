@@ -236,18 +236,19 @@ async def disparar_revalidacao_comissoes_via_agente(
                 incluir_postados_recentemente=True,
             )
 
-    # 2. Filtra ML com meli.la em url_afiliado + sem revalidação ainda
+    # 2. v3.7.0: filtra ML com url_canonica (não exige mais meli.la,
+    # agente abre direto na canônica)
     items: list[dict] = []
-    sem_meli_la = 0
+    sem_url = 0
     for p in produtos_top:
         if p.plataforma != "ml":
             continue
-        if not p.url_afiliado or "meli.la/" not in p.url_afiliado:
-            sem_meli_la += 1
+        if not p.url_canonica:
+            sem_url += 1
             continue
         if p.comissao_fonte == "ml_barra_afiliados":
             continue  # já revalidado
-        items.append({"produto_id": p.id, "url_afiliado": p.url_afiliado})
+        items.append({"produto_id": p.id, "url_canonica": p.url_canonica})
 
     if not items:
         return {
@@ -255,9 +256,8 @@ async def disparar_revalidacao_comissoes_via_agente(
             "tarefa_id":         None,
             "items_enfileirados": 0,
             "mensagem":          (
-                f"Nenhum produto do TOP pra revalidar. "
-                f"({sem_meli_la} sem meli.la — rode '🔄 Regenerar meli.la' primeiro; "
-                "outros já tem ✅ ML barra)"
+                f"Nenhum produto do TOP pra revalidar "
+                f"(outros já tem ✅ ML barra ou sem URL canônica: {sem_url})"
             ),
         }
 
