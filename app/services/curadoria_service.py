@@ -190,30 +190,29 @@ async def disparar_revalidacao_comissoes_via_agente(
     org_id: int,
     limite: int = 50,
 ) -> dict:
-    """Fase 18.3 (v3.4.2) — dispara tarefa pro agente abrir cada produto
-    DO TOP atual via seu LINK DE AFILIADO (meli.la), capturando a comissão
-    real da barra preta de afiliados ML no destino do redirect.
+    """Fase 18.3 (v3.4.3) — dispara tarefa pro agente abrir o LINK DE AFILIADO
+    (meli.la) de cada produto DO TOP, navegar via "Ir para produto" na
+    /social/, capturar a comissão real da barra preta no destino.
 
-    Estratégia:
-    1. Pega os produtos do TOP atual da org (ordenados por nota DESC)
-    2. Filtra ML com `url_afiliado LIKE '%meli.la/%'` (sem link real não dá)
-    3. Filtra os que ainda não têm `comissao_fonte=ml_barra_afiliados`
-       (não revalida o que já foi)
-    4. Cria 1 tarefa `REVALIDAR_COMISSAO_ML` com payload `items=[{produto_id, url_afiliado}]`
-    5. Entrega via dispatcher
-    6. Hook em `marcar_concluida` aplica resultado via
-       `afiliado_ml_writer.aplicar_mapping_comissoes_por_id`
+    Fluxo no agente (definido pelo user):
+    1. Abre `meli.la/XXX` → ML redireciona pra `/social/<usuario>`
+    2. Acha botão "Ir para produto" → navega pra página completa
+    3. Captura `GANHOS [EXTRAS] X%` da barra preta
 
-    Por que `meli.la` em vez da URL canônica:
-    O ML registra como clique afiliado real → barra mostra a comissão
-    correta do programa. URL canônica direta pode mostrar comissão
-    genérica ou nenhuma.
+    Estratégia servidor:
+    1. Pega os produtos do TOP atual (ordenados por nota DESC)
+    2. Filtra ML COM `meli.la/` em `url_afiliado` + sem comissao_fonte=ml_barra_afiliados
+    3. Cria 1 tarefa `REVALIDAR_COMISSAO_ML` com `items=[{produto_id, url_afiliado}]`
+    4. Hook `marcar_concluida` aplica via `aplicar_mapping_comissoes_por_id`
 
-    Por que filtrar pelo TOP:
-    Faz sentido revalidar prioridade nos produtos que vão ser POSTADOS —
-    se não está no TOP, não vai pra grupo, não precisa ter comissão precisa.
+    ⚠ Lições:
+    - SEMPRE envia `url_afiliado` (meli.la), NUNCA `url_canonica`. O user
+      diz: "buscar pelo link de afiliado, clicar Ir para produto, ler
+      comissão". Documentado em CLAUDE.md.
+    - SE produto não tem meli.la, é skipado (linkbuilder falhou antes —
+      revalidar isso não dá; precisaria regenerar meli.la primeiro).
 
-    Custo: ~2s por produto. TOP de 50 = ~1.5min.
+    Custo: ~3s por produto. TOP de 50 com meli.la = ~2.5min.
 
     Returns:
         {"ok": bool, "tarefa_id": N, "items_enfileirados": M, "mensagem": "..."}
@@ -237,15 +236,17 @@ async def disparar_revalidacao_comissoes_via_agente(
                 incluir_postados_recentemente=True,
             )
 
-    # 2-3. Filtra ML com meli.la + sem revalidação ainda
+    # 2. Filtra ML com meli.la em url_afiliado + sem revalidação ainda
     items: list[dict] = []
+    sem_meli_la = 0
     for p in produtos_top:
         if p.plataforma != "ml":
             continue
         if not p.url_afiliado or "meli.la/" not in p.url_afiliado:
+            sem_meli_la += 1
             continue
         if p.comissao_fonte == "ml_barra_afiliados":
-            continue  # já revalidado, pula
+            continue  # já revalidado
         items.append({"produto_id": p.id, "url_afiliado": p.url_afiliado})
 
     if not items:
@@ -253,7 +254,11 @@ async def disparar_revalidacao_comissoes_via_agente(
             "ok":                True,
             "tarefa_id":         None,
             "items_enfileirados": 0,
-            "mensagem":          "Nenhum produto do TOP pra revalidar (ou todos já tem ✅ ML barra, ou não tem meli.la)",
+            "mensagem":          (
+                f"Nenhum produto do TOP pra revalidar. "
+                f"({sem_meli_la} sem meli.la — rode '🔄 Regenerar meli.la' primeiro; "
+                "outros já tem ✅ ML barra)"
+            ),
         }
 
     # 4. Pega 1º agente online da org
@@ -290,7 +295,7 @@ async def disparar_revalidacao_comissoes_via_agente(
         "items_enfileirados": len(items),
         "mensagem":          (
             f"Tarefa #{tarefa.id} enfileirada com {len(items)} produtos do TOP. "
-            f"Agente leva ~{len(items) * 2}s. Recarregue a página em ~"
-            f"{max(1, len(items) // 30)}min."
+            f"Agente leva ~{len(items) * 3}s (abre meli.la → social → produto → captura). "
+            f"Recarregue em ~{max(1, len(items) // 20)}min."
         ),
     }

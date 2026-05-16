@@ -741,22 +741,68 @@ _RE_BARRA_GANHOS = re.compile(
 
 
 def _capturar_comissao_da_barra(driver, url: str) -> float | None:
-    """Abre URL de produto ML e captura % comissão da barra de afiliados.
+    """Captura comissão real do programa de afiliados ML pra UM produto.
 
-    Pré-condição: Chrome do agente já logado como afiliado em sessão
-    persistente (`chrome_perfil_ml`). Sem isso, a barra preta não aparece
-    e a captura retorna None.
+    Fluxo OBRIGATÓRIO (decisão do user, registrada em CLAUDE.md):
+    1. Abre `meli.la/XXX` (link de afiliado — carrega contexto correto)
+    2. ML redireciona pra `mercadolivre.com.br/social/<usuario>?...`
+       (página de perfil social do afiliado com card resumo do produto)
+    3. **Procura botão "Ir para produto"** na página /social/ e navega
+       (extrai href do anchor OU clica via JS se for button)
+    4. Aguarda carregar a página completa do produto
+    5. Captura "GANHOS X%" ou "GANHOS EXTRAS X%" via regex no body
 
-    Retorna float (0.5..50) ou None se barra não apareceu.
-    Não levanta exceção — chamado em loop, falha individual = skip.
+    Por que NÃO abrir URL canônica direto:
+    - Carrega só o contexto de afiliado do Chrome logado (cookies)
+    - Pode mostrar comissão GENÉRICA, não a do meli.la específico
+    - Decisão do user: SEMPRE entrar pelo link de afiliado
+
+    Args:
+        url: deve ser link `meli.la/XXX` (não URL canônica)
+
+    Returns:
+        float (0.5..50) capturado da barra, ou None se falhou.
+        Não levanta exceção — chamado em loop, falha individual = skip.
     """
     try:
+        # 1. Abre o link de afiliado
         driver.get(url)
-        # Espera curta — a barra é renderizada server-side, aparece rápido
-        time.sleep(1.5)
-        # Captura % da barra de afiliados via JS (mais rápido que iterar DOM)
+        time.sleep(2.0)  # aguarda redirect do meli.la pra /social/
+
+        # 2-3. Se caiu na /social/, navega pelo botão "Ir para produto"
+        url_atual = (driver.current_url or "").lower()
+        if "/social/" in url_atual:
+            # Tenta extrair href do anchor (preferido — mais rápido que clicar)
+            destino = driver.execute_script(r"""
+                var els = document.querySelectorAll('a, button');
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    var t = (el.textContent || '').trim().toLowerCase();
+                    if (t.indexOf('ir para produto') !== -1
+                            || t.indexOf('ver produto') !== -1) {
+                        if (el.tagName === 'A' && el.href) return el.href;
+                        // É button — clica via JS, sinaliza com 'CLICKED'
+                        el.click();
+                        return 'CLICKED';
+                    }
+                }
+                return null;
+            """)
+
+            if isinstance(destino, str) and destino.startswith("http"):
+                # Anchor com href — navega
+                driver.get(destino)
+            elif destino == "CLICKED":
+                pass  # clicou via JS, aguarda navegação naturalmente
+            else:
+                log.warning("ml.barra.botao_ir_para_produto_ausente",
+                            url_atual=url_atual[:200])
+                return None
+            time.sleep(2.0)  # aguarda página do produto carregar
+
+        # 4-5. Captura "GANHOS [EXTRAS] X%" via regex
         pct = driver.execute_script(r"""
-            // Procura primeiro em elementos prováveis (header/banner de afiliados)
+            // Procura primeiro em elementos prováveis (header/banner afiliados)
             var seletores = [
                 'header', '[class*="affiliate"]', '[class*="afiliad"]',
                 '[class*="banner"]', '[id*="banner"]',
@@ -772,7 +818,7 @@ def _capturar_comissao_da_barra(driver, url: str) -> float | None:
                     }
                 }
             }
-            // Fallback: scanea body inteiro (mais lento mas robusto)
+            // Fallback: body inteiro
             var txt = document.body.textContent || '';
             var m = txt.match(/GANHOS\s+(?:EXTRAS\s+)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/i);
             if (m) {
@@ -796,40 +842,50 @@ def _capturar_comissoes_da_barra_em_lote(
     driver, produtos: list[dict[str, Any]], *, log_prefixo: str,
     max_capturas: int | None = None,
 ) -> None:
-    """Itera produtos, abre cada URL canônica no MESMO driver, captura
-    comissão da barra de afiliados. Atualiza IN-PLACE:
+    """Itera produtos, abre cada `url_afiliado` (meli.la) no MESMO driver,
+    captura comissão da barra preta de afiliados ML.
+
+    Atualiza IN-PLACE quando captura ok:
         produto["comissao"]        = float capturado
         produto["comissao_fonte"]  = "ml_barra_afiliados"
 
-    Custo: ~2s por produto (1.5s get + 0.5s ramdom delay anti-rate-limit).
-    Pra lote de 50 produtos: ~1.5min adicional.
+    Fluxo por produto (em `_capturar_comissao_da_barra`):
+    1. Abre `meli.la/XXX` → ML redireciona pra /social/<usuario>
+    2. Clica "Ir para produto" → vai pra página do produto
+    3. Captura `GANHOS [EXTRAS] X%` da barra preta
 
-    Falha individual (sessão expirou meio do loop, captcha, rede) = skip
-    do produto, mantém o que já tinha (ml_painel/estimativa).
+    Pré-requisito: produto DEVE ter `url_afiliado` contendo `meli.la/`.
+    Produtos sem meli.la (linkbuilder falhou) ficam fora — mantém a
+    comissão estimada/categoria_ml_v2 que já estava.
 
-    `max_capturas` limita quantos produtos passam pela captura (default None
-    = todos). Útil pra debug ou pra lotes grandes onde só os top N
-    importam.
+    Custo: ~3s por produto (get meli.la + redirect + clique + get produto
+    + captura). Pra lote de 50 produtos = ~2.5min.
     """
     import random
 
-    alvos = [p for p in produtos if p.get("url_canonica")]
+    # Só passa produtos COM meli.la (decisão do user: sempre entrar pelo afiliado)
+    alvos = [
+        p for p in produtos
+        if p.get("url_afiliado") and "meli.la/" in p["url_afiliado"]
+    ]
     if max_capturas is not None:
         alvos = alvos[:max_capturas]
 
     if not alvos:
+        log.info(f"{log_prefixo}.barra_afiliados.sem_alvos",
+                 total_produtos=len(produtos),
+                 motivo="nenhum produto tem meli.la (linkbuilder pode ter falhado)")
         return
 
     log.info(f"{log_prefixo}.barra_afiliados.iniciado",
-             total=len(alvos), max_capturas=max_capturas)
+             alvos=len(alvos), total_produtos=len(produtos),
+             max_capturas=max_capturas)
 
     capturados = 0
     falhas = 0
     for i, p in enumerate(alvos, start=1):
-        url = p.get("url_canonica")
-        if not url:
-            continue
-        pct = _capturar_comissao_da_barra(driver, url)
+        url_aff = p["url_afiliado"]
+        pct = _capturar_comissao_da_barra(driver, url_aff)
         if pct is not None and pct > 0:
             antes = p.get("comissao")
             p["comissao"]       = pct
@@ -841,9 +897,8 @@ def _capturar_comissoes_da_barra_em_lote(
                      antes=antes, depois=pct)
         else:
             falhas += 1
-        # Delay aleatório curto pra não estourar rate limit do ML
-        # (cada produto = 1 page load, 50 produtos seguidos é suspeito)
-        time.sleep(random.uniform(0.3, 0.8))
+        # Delay anti rate-limit do ML
+        time.sleep(random.uniform(0.4, 0.9))
 
     log.info(f"{log_prefixo}.barra_afiliados.concluido",
              total=len(alvos), capturados=capturados, falhas=falhas)
@@ -852,28 +907,29 @@ def _capturar_comissoes_da_barra_em_lote(
 def _revalidar_comissoes_sync(
     cfg: Config, items: list[dict],
 ) -> dict[int, float]:
-    """Fase 18.3 (v3.4.2) — abre o link de afiliado (`meli.la/XXX`) de cada
-    produto do TOP, deixa o ML redirecionar (registra clique afiliado) e
-    captura a comissão da barra preta no destino.
+    """Fase 18.3 (v3.4.3) — pra cada produto do TOP, abre o LINK DE AFILIADO
+    (meli.la), navega via "Ir para produto" na /social/, captura comissão
+    da barra preta no destino. Decisão do user em CLAUDE.md.
 
-    Por que `meli.la` em vez da URL canônica:
-    Abrir o `meli.la` registra a sessão como entrada via afiliado real —
-    a barra preta de afiliados aparece com a comissão CORRETA do programa
-    pra aquele produto (incluindo bônus EXTRAS temporários). URL canônica
-    pura mostra comissão genérica (ou nenhuma) dependendo de cookies.
+    Fluxo por produto (implementado em `_capturar_comissao_da_barra`):
+    1. `driver.get(meli.la/XXX)` — link de afiliado
+    2. ML redireciona → `/social/<usuario>` (página perfil + card produto)
+    3. Acha botão "Ir para produto" → extrai href → `driver.get(href)`
+    4. Página do produto carrega COM barra preta → JS captura "GANHOS X%"
+
+    ⚠ NÃO abrir URL canônica direto — pega comissão genérica do Chrome
+    logado, não a real do meli.la específico (ver CLAUDE.md armadilha).
 
     Args:
         items: lista `[{"produto_id": int, "url_afiliado": "https://meli.la/XXX"}, ...]`
 
     Returns:
         Mapping `{produto_id: comissao_pct}` só dos que conseguiu capturar.
-        Match por ID (não URL) — mais robusto pra updates no DB.
     """
     if not items:
         return {}
 
-    # Lock global do ML (1 Chrome por vez — compartilha com linkbuilder
-    # e busca normal). Import dentro da função pra evitar circular.
+    # Lock global do ML (1 Chrome por vez). Import dentro pra evitar circular.
     from agent.linkbuilder_ml import _LOCK_CHROME_ML
 
     log.info("ml.revalidar_comissoes.aguardando_lock", items=len(items))
@@ -887,10 +943,10 @@ def _revalidar_comissoes_sync(
                 produto_id = item.get("produto_id")
                 url_aff    = item.get("url_afiliado") or ""
                 if not produto_id or "meli.la/" not in url_aff:
+                    log.info("ml.revalidar.sem_meli_la",
+                             produto_id=produto_id, url_aff=url_aff[:80])
                     continue
 
-                # Abre o meli.la — ML redireciona pra mercadolivre.com.br/...
-                # com tag de afiliado. A barra preta aparece nessa página.
                 pct = _capturar_comissao_da_barra(driver, url_aff)
                 if pct is not None and pct > 0:
                     mapping[int(produto_id)] = float(pct)
