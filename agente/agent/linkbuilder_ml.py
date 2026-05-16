@@ -68,17 +68,24 @@ def _normalizar_url(url: str) -> str:
     return urlunparse(parts._replace(query="", fragment=""))
 
 
-def _gerar_lote_sync(driver: uc.Chrome, urls: list[str]) -> dict[str, str]:
+def _gerar_lote_sync(driver: uc.Chrome, urls: list[str]) -> dict[str, dict]:
     """Submete UM lote de até 10 URLs ao linkbuilder e captura os meli.la.
 
-    Retorna mapping `{url_original: meli.la_link}`. URLs que não geraram
-    link ficam ausentes do dict (não vazias). Caller pode detectar com `get`.
+    **Retorno expandido na Fase 18**:
+        `{url_original: {"link": "https://meli.la/XXX", "comissao_pct": 12.5 | None}}`
+
+    A comissão é a % REAL que o ML paga pra você naquele produto, extraída
+    da tabela de resultados do painel após "Gerar". `None` quando o painel
+    não exibe (raro, mas pode acontecer em produtos sem programa).
+
+    URLs que não geraram link ficam ausentes do dict (não vazias). Caller
+    pode detectar com `.get(url)`.
 
     URLs enviadas ao painel são NORMALIZADAS (sem fragment/query) pra evitar
     rejeição silenciosa. Mas a chave do mapping é a URL ORIGINAL, pra match
     exato com `produtos.url_canonica` no servidor.
     """
-    resultado: dict[str, str] = {}
+    resultado: dict[str, dict] = {}
     url_anterior = driver.current_url
 
     # Limpa URLs pra submissão (mantém URLs originais pra chave do mapping)
@@ -127,36 +134,73 @@ def _gerar_lote_sync(driver: uc.Chrome, urls: list[str]) -> dict[str, str]:
         )
         time.sleep(ESPERA_GERACAO)
 
-        # Captura meli.la dos textareas (alguns lugares ML mostra), depois
-        # fallback pro innerHTML completo. Regex `[A-Za-z0-9]+` (sem hífens)
-        # bate o formato oficial do shortener do ML.
-        links = driver.execute_script(r"""
-            var links = [];
-            document.querySelectorAll('textarea').forEach(function(el){
-                var m = (el.value||'').match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/g);
-                if(m) links = links.concat(m);
+        # Captura meli.la + comissão das linhas da tabela de resultados.
+        # ML mostra após "Gerar" uma tabela com (URL original, meli.la, comissão%).
+        # Estratégia: itera elementos que provavelmente são "rows" e busca
+        # `https://meli.la/XXX` + `N%` no mesmo container. Sobra fallback pra
+        # extrair só os meli.la (sem comissão) do innerHTML completo.
+        capturas = driver.execute_script(r"""
+            var resultado = [];
+            var seletores = [
+                'tr', 'li', '[role="row"]',
+                'div[class*="row"]', 'div[class*="item"]', 'div[class*="card"]',
+            ];
+            var visto = new Set();
+            seletores.forEach(function(sel) {
+                document.querySelectorAll(sel).forEach(function(row) {
+                    var html = row.innerHTML || '';
+                    var m_link = html.match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/);
+                    if (!m_link || visto.has(m_link[0])) return;
+                    var texto = row.textContent || '';
+                    var m_pct = texto.match(/(\d+(?:[.,]\d+)?)\s*%/);
+                    var pct = null;
+                    if (m_pct) {
+                        var num = parseFloat(m_pct[1].replace(',', '.'));
+                        if (!isNaN(num) && num > 0 && num < 100) pct = num;
+                    }
+                    visto.add(m_link[0]);
+                    resultado.push({link: m_link[0], comissao_pct: pct});
+                });
             });
-            if(!links.length){
-                var m = document.body.innerHTML.match(
-                    /https?:\/\/meli\.la\/[A-Za-z0-9]+/g
-                );
-                if(m) links = links.concat(m);
+            // Fallback: se NENHUMA row foi achada, varre textareas + innerHTML
+            // só pelos meli.la (sem comissão)
+            if (resultado.length === 0) {
+                var todos_links = [];
+                document.querySelectorAll('textarea').forEach(function(el){
+                    var m = (el.value||'').match(/https?:\/\/meli\.la\/[A-Za-z0-9]+/g);
+                    if(m) todos_links = todos_links.concat(m);
+                });
+                if (todos_links.length === 0) {
+                    var m = document.body.innerHTML.match(
+                        /https?:\/\/meli\.la\/[A-Za-z0-9]+/g
+                    );
+                    if(m) todos_links = todos_links.concat(m);
+                }
+                [...new Set(todos_links)].forEach(function(l) {
+                    resultado.push({link: l, comissao_pct: null});
+                });
             }
-            return [...new Set(links)];
+            return resultado;
         """) or []
 
+        com_comissao = sum(1 for c in capturas if c.get("comissao_pct"))
         log.info("linkbuilder_ml.lote_capturado",
-                 enviadas=len(urls_limpas), capturadas=len(links),
-                 amostra=links[:3])
+                 enviadas=len(urls_limpas), capturadas=len(capturas),
+                 com_comissao=com_comissao,
+                 amostra=[(c["link"], c.get("comissao_pct")) for c in capturas[:3]])
 
         # ML retorna na MESMA ORDEM das URLs submetidas. Assume índice.
         # Mapping usa a URL ORIGINAL como chave (não a limpa) pra bater
         # com `produtos.url_canonica` no servidor.
         for i, url_original in enumerate(urls):
-            if i < len(links):
-                resultado[url_original] = links[i]
+            if i < len(capturas):
+                c = capturas[i]
+                resultado[url_original] = {
+                    "link":         c["link"],
+                    "comissao_pct": c.get("comissao_pct"),
+                }
 
-        if len(links) == 0:
+        if not capturas:
             log.warning("linkbuilder_ml.zero_meli_la",
                         provavel="sessão ML expirou — rode `python -m agent.login_ml` "
                                  "ou abra o painel afiliados ML no Chrome do agente uma vez")
@@ -174,12 +218,14 @@ def _gerar_lote_sync(driver: uc.Chrome, urls: list[str]) -> dict[str, str]:
     return resultado
 
 
-def _gerar_todos_sync(cfg: Config, urls: list[str]) -> dict[str, str]:
+def _gerar_todos_sync(cfg: Config, urls: list[str]) -> dict[str, dict]:
     """Loop blocking — abre Chrome, processa lotes, devolve mapping completo.
 
     Protegido por `_LOCK_CHROME_ML`: se outra GERAR_LINK estiver rodando,
     espera ela terminar antes de criar o driver. Evita conflito de
     `--user-data-dir` que crasha undetected-chromedriver.
+
+    Retorna mapping rico: `{url: {"link", "comissao_pct"}}` (Fase 18).
     """
     if not urls:
         return {}
@@ -192,7 +238,7 @@ def _gerar_todos_sync(cfg: Config, urls: list[str]) -> dict[str, str]:
         # Reaproveita o driver setup do busca_ml.py
         from agent.busca_ml import _criar_driver_ml
         driver = _criar_driver_ml(cfg)
-        mapa_total: dict[str, str] = {}
+        mapa_total: dict[str, dict] = {}
         try:
             for i in range(0, len(urls), LOTE_TAMANHO):
                 lote = urls[i:i + LOTE_TAMANHO]
@@ -217,6 +263,13 @@ async def gerar_links_em_lote(
     """Async wrapper — roda Selenium em thread separada pra não bloquear
     o event loop do agente.
 
+    ⚠ Retorna formato LEGADO `{url: link_meli_la}` (sem comissão) pra manter
+    compatibilidade com `handler_gerar_links_ml` (main.py) que envia o
+    mapping pro servidor via WS — servidor consome em `afiliado_ml_writer
+    .aplicar_mapping` que espera strings.
+
+    Pra obter o mapping com comissão (Fase 18), use `gerar_links_completos_em_lote`.
+
     Args:
         cfg: Config (precisa cfg.chrome_perfil_ml + sessão ML afiliados logada).
         urls: lista de URLs canônicas (ex: mercadolivre.com.br/.../p/MLB...).
@@ -227,7 +280,36 @@ async def gerar_links_em_lote(
     if not urls:
         return {}
     log.info("linkbuilder_ml.iniciado", total=len(urls))
-    mapa = await asyncio.to_thread(_gerar_todos_sync, cfg, urls)
+    mapa_rico = await asyncio.to_thread(_gerar_todos_sync, cfg, urls)
+    # Reduz pra formato legado
+    mapa: dict[str, str] = {
+        url: info["link"]
+        for url, info in mapa_rico.items()
+        if info.get("link")
+    }
     log.info("linkbuilder_ml.concluido",
              pedidos=len(urls), gerados=len(mapa))
+    return mapa
+
+
+async def gerar_links_completos_em_lote(
+    cfg: Config, urls: list[str],
+) -> dict[str, dict]:
+    """Versão rica do `gerar_links_em_lote` — retorna comissão também.
+
+    Returns:
+        mapping `{url_canonica: {"link": meli_la, "comissao_pct": float | None}}`.
+
+    Use no FLUXO INLINE (busca_ml.py) onde o agente precisa anotar
+    `comissao` + `comissao_fonte=ml_painel` direto no dict do produto antes
+    do ingest. NÃO use no fluxo WS legado (handler_gerar_links_ml) — esse
+    espera `dict[str, str]`.
+    """
+    if not urls:
+        return {}
+    log.info("linkbuilder_ml.iniciado_rico", total=len(urls))
+    mapa = await asyncio.to_thread(_gerar_todos_sync, cfg, urls)
+    com_pct = sum(1 for info in mapa.values() if info.get("comissao_pct"))
+    log.info("linkbuilder_ml.concluido_rico",
+             pedidos=len(urls), gerados=len(mapa), com_comissao=com_pct)
     return mapa

@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     auth,
     buscas,
     canais,
+    curadoria,
     grupos,
     health,
     lote,
@@ -55,6 +56,9 @@ router.include_router(mappings_nichos.router)
 
 # /api/v1/lote/rodar
 router.include_router(lote.router)
+
+# /api/v1/curadoria/top + recalcular-notas + revalidar-comissoes (Fase 18)
+router.include_router(curadoria.router)
 
 # /api/v1/tarefas/...
 router.include_router(tarefas.router)

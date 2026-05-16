@@ -249,6 +249,22 @@ def _item_pra_produto_v3(
         if link_prod:
             link_prod = link_prod.split("?", 1)[0].split("#", 1)[0]
 
+        # Fase 18 — captura precisa de vendas. Shopee API expõe múltiplos
+        # campos de sold; tentamos do mais granular pro mais agregado.
+        sold = (
+            card.get("historical_sold")
+            or card.get("global_sold_count")
+            or card.get("sold")
+            or card.get("total_sold")
+            or item.get("historical_sold")
+            or item.get("sold")
+            or 0
+        )
+        try:
+            sold = int(sold)
+        except (TypeError, ValueError):
+            sold = 0
+
         return {
             "plataforma":   "shopee",
             "item_id":      item_id,
@@ -262,6 +278,12 @@ def _item_pra_produto_v3(
             "url_canonica": link_prod or None,
             "url_afiliado": long_link or None,   # Shopee devolve PRONTO!
             "foto_url":     imagem if isinstance(imagem, str) and imagem.startswith("http") else None,
+            # Fase 18 — Shopee API é a FONTE OFICIAL da comissão (rate exato)
+            # e do volume vendido. Todo produto vindo daqui é "em alta" porque
+            # vem do endpoint de ofertas afiliadas.
+            "total_vendidos": sold,
+            "is_em_alta":     True,
+            "comissao_fonte": "shopee_api",
         }
     except Exception as e:
         log.debug("shopee.item_falhou", erro=str(e)[:120])

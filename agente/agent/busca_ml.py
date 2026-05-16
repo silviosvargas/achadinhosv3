@@ -145,6 +145,14 @@ SELETORES_FRETE = [
     ".poly-component__shipping",
     ".ui-search-item__shipping",
 ]
+# Fase 18 — texto "+X vendidos" no card. ML varia muito esse seletor,
+# fallback final: varre todo .text do card procurando "vendid".
+SELETORES_VENDIDOS = [
+    ".poly-component__reviews .poly-reviews__total",
+    ".ui-search-item__group--reviews",
+    ".poly-component__seller .poly-seller__sold",
+    "span.ui-search-item__sold",
+]
 
 
 def _primeiro(elem, seletores: list[str]):
@@ -261,6 +269,57 @@ def _achar_frete_gratis(card) -> bool:
     if el is None:
         return False
     return "grátis" in _texto(el).lower() or "gratis" in _texto(el).lower()
+
+
+# Regex pra parsear "+5 mil vendidos" | "+1,2 mil vendidos" | "+100 vendidos"
+# | "10 mil vendidos" | "150 vendidos". Captura número + multiplicador opcional.
+_RE_VENDIDOS = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(mil|mi|k|m)?\s*vendid",
+    flags=re.IGNORECASE,
+)
+
+
+def _parse_qtd_vendidos(texto: str) -> int | None:
+    """Converte 'mais de 5 mil vendidos' → 5000. None se não casa."""
+    if not texto:
+        return None
+    m = _RE_VENDIDOS.search(texto)
+    if not m:
+        return None
+    try:
+        numero = float(m.group(1).replace(",", "."))
+    except ValueError:
+        return None
+    mult = (m.group(2) or "").lower()
+    if mult in ("mil", "k"):
+        numero *= 1_000
+    elif mult in ("mi", "m"):
+        numero *= 1_000_000
+    return int(numero)
+
+
+def _achar_vendidos(card) -> int | None:
+    """Procura quantidade vendida no card. Tenta seletores específicos,
+    fallback pra texto completo do card.
+
+    Retorna número absoluto OU None se não achou. ML mostra "+ X mil vendidos"
+    em alguns produtos (geralmente os mais populares); produtos novos /
+    pouco vendidos não exibem.
+    """
+    # 1. Seletores específicos
+    for sel in SELETORES_VENDIDOS:
+        try:
+            for el in card.find_elements(By.CSS_SELECTOR, sel):
+                qtd = _parse_qtd_vendidos(_texto(el))
+                if qtd is not None:
+                    return qtd
+        except Exception:
+            continue
+    # 2. Fallback: texto inteiro do card (caro mas robusto)
+    try:
+        return _parse_qtd_vendidos(card.text or "")
+    except Exception:
+        return None
 
 
 def _categoria_de_jsonld(driver) -> str | None:
@@ -453,6 +512,8 @@ def _extrair_cards_da_pagina(driver) -> list[dict[str, Any]]:
                 "categoria":    categoria,
                 "url_canonica": url,
                 "foto_url":     _achar_imagem(card),
+                # Fase 18 — captura precisa de vendas (None se ML não exibe)
+                "total_vendidos": _achar_vendidos(card),
             }
             produtos.append(produto)
         except Exception as e:
@@ -547,6 +608,11 @@ def _gerar_meli_la_no_driver(
     sem conflito de perfil, sem tarefa GERAR_LINK separada.
     Produto fica com `url_afiliado=meli.la/XXX` ANTES do ingest.
 
+    **Fase 18**: também propaga a `comissao` REAL exibida pelo painel ML
+    + marca `comissao_fonte = "ml_painel"`. Se o painel não exibir % por
+    qualquer motivo, mantém a estimativa que já veio dos cards/categoria
+    e marca fonte como "estimativa".
+
     Falhas (sessão expirada, painel mudou) deixam `url_afiliado` ausente —
     servidor aplica fallback genérico `?matt_word=...` no ingest.
     """
@@ -560,7 +626,8 @@ def _gerar_meli_la_no_driver(
         return
 
     log.info(f"{log_prefixo}.linkbuilder_inline", urls=len(urls))
-    mapa: dict[str, str] = {}
+    # Fase 18: mapping agora é dict[url, {"link", "comissao_pct"}]
+    mapa: dict[str, dict] = {}
     for i in range(0, len(urls), LOTE_TAMANHO):
         lote = urls[i:i + LOTE_TAMANHO]
         try:
@@ -570,14 +637,30 @@ def _gerar_meli_la_no_driver(
                         n=i // LOTE_TAMANHO + 1, erro=str(e)[:120])
 
     aplicados = 0
+    com_comissao_real = 0
     for p in produtos:
         url_c = p.get("url_canonica")
-        meli = mapa.get(url_c) if url_c else None
-        if meli and "meli.la/" in meli:
-            p["url_afiliado"] = meli
+        info = mapa.get(url_c) if url_c else None
+        if not info:
+            continue
+        link = info.get("link")
+        if link and "meli.la/" in link:
+            p["url_afiliado"] = link
             aplicados += 1
+        # Comissão real do painel — sobrescreve a estimativa só se valor válido
+        com_real = info.get("comissao_pct")
+        if com_real and com_real > 0:
+            p["comissao"] = com_real
+            p["comissao_fonte"] = "ml_painel"
+            com_comissao_real += 1
+        else:
+            # Sem comissão real, mantém estimativa (que já veio do card/categoria)
+            p.setdefault("comissao_fonte", "estimativa")
+
     log.info(f"{log_prefixo}.linkbuilder_aplicado",
-             gerados=len(mapa), aplicados=aplicados, total_produtos=len(produtos))
+             gerados=len(mapa), aplicados=aplicados,
+             com_comissao_real=com_comissao_real,
+             total_produtos=len(produtos))
 
 
 def _varrer_lista_urls_sync(
@@ -908,18 +991,30 @@ def _varrer_produto_unico_sync(
             pass
 
 
+def _marcar_flag(produtos: list[dict[str, Any]], chave: str) -> list[dict[str, Any]]:
+    """Marca todos produtos com flag (Fase 18): is_bestseller / is_em_alta."""
+    for p in produtos:
+        p[chave] = True
+    return produtos
+
+
 def _varrer_mais_vendidos_sync(
     cfg: Config,
     *,
     max_produtos: int,
 ) -> list[dict[str, Any]]:
-    """Itera as 8 categorias de 'mais vendidos' do ML, balanceando produtos."""
-    return _varrer_lista_urls_sync(
+    """Itera as 8 categorias de 'mais vendidos' do ML, balanceando produtos.
+
+    Fase 18: marca todos como `is_bestseller=True` (foram extraídos da landing
+    /mais-vendidos/MLBxxxx — o ML já ordenou por venda).
+    """
+    produtos = _varrer_lista_urls_sync(
         cfg,
         urls_com_meta=CATEGORIAS_MAIS_VENDIDOS,
         max_produtos=max_produtos,
         log_prefixo="ml.mais_vendidos",
     )
+    return _marcar_flag(produtos, "is_bestseller")
 
 
 def _varrer_melhor_comissao_sync(
@@ -931,14 +1026,16 @@ def _varrer_melhor_comissao_sync(
 
     Mesma URL pattern das mais_vendidos, filtrado por comissão DESC. Resultado:
     produtos que tendem a render mais R$ por click (priorização explícita).
+    Fase 18: também marca `is_bestseller=True` (mesma landing).
     """
     top = sorted(CATEGORIAS_MAIS_VENDIDOS, key=lambda x: -x[2])[:4]
-    return _varrer_lista_urls_sync(
+    produtos = _varrer_lista_urls_sync(
         cfg,
         urls_com_meta=top,
         max_produtos=max_produtos,
         log_prefixo="ml.melhor_comissao",
     )
+    return _marcar_flag(produtos, "is_bestseller")
 
 
 def _varrer_em_alta_sync(
@@ -946,13 +1043,17 @@ def _varrer_em_alta_sync(
     *,
     max_produtos: int,
 ) -> list[dict[str, Any]]:
-    """Produtos em alta / ofertas relâmpago — usa landing de ofertas do ML."""
-    return _varrer_lista_urls_sync(
+    """Produtos em alta / ofertas relâmpago — usa landing de ofertas do ML.
+
+    Fase 18: marca todos como `is_em_alta=True` (vieram de /ofertas).
+    """
+    produtos = _varrer_lista_urls_sync(
         cfg,
         urls_com_meta=URLS_EM_ALTA,
         max_produtos=max_produtos,
         log_prefixo="ml.em_alta",
     )
+    return _marcar_flag(produtos, "is_em_alta")
 
 
 def _varrer_termo_livre_sync(

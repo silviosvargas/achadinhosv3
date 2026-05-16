@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block titulo %}TOP por nota{% endblock %}
+{% block titulo_topbar %}TOP por nota{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>🏆 TOP por nota</h1>
+  <p>
+    Produtos ranqueados pela <strong>nota</strong> (0–100), calculada no momento
+    da busca: 30% preço (desconto), 40% comissão (validada), 30% popularidade
+    (vendas + bestseller/em alta).
+    {% if fonte == 'admin_org' %}
+      <br><small style="color:var(--muted);">
+        Mostrando catálogo Achadinhos (sua org ainda não tem produtos com nota suficiente).
+      </small>
+    {% endif %}
+  </p>
+</header>
+
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
+{# ── HEADER DA LISTA + FILTRO + AÇÕES ADMIN ────────── #}
+<div style="display:flex; justify-content:space-between; align-items:center;
+            margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+  <h2 style="margin:0; font-size:16px;">
+    {% if produtos %}
+      {{ produtos|length }} produto{{ 's' if produtos|length != 1 else '' }}
+      {% if nota_min > 0 %}
+        <span style="color:var(--muted); font-weight:normal; font-size:13px;">
+          · nota ≥ {{ nota_min|int }}
+        </span>
+      {% endif %}
+    {% else %}
+      Nenhum produto no TOP
+    {% endif %}
+  </h2>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <form method="get" action="/curadoria/top" style="display:flex; gap:6px; align-items:center;">
+      <label style="font-size:12px; color:var(--muted);">nota mínima:</label>
+      <input type="number" name="nota_min" value="{{ nota_min|int }}"
+             min="0" max="100" step="5"
+             style="height:32px; width:70px; font-size:13px; padding:0 8px;">
+      <button type="submit" class="btn" style="height:32px; padding:0 12px; font-size:13px;">
+        filtrar
+      </button>
+    </form>
+    {% if user.eh_admin %}
+    <form method="post" action="/curadoria/recalcular-notas" style="display:inline"
+          data-confirm="Re-aplicar fórmula de nota em TODOS os produtos da org? Útil após mudança de pesos ou primeira vez após deploy."
+          data-confirm-titulo="Recalcular notas?"
+          data-confirm-ok="🔄 Sim, recalcular">
+      <button type="submit" class="btn" style="height:32px; padding:0 12px; font-size:13px;"
+              title="Re-aplica calcular_nota() em todos">
+        🔄 Recalcular notas
+      </button>
+    </form>
+    <form method="post" action="/curadoria/revalidar-comissoes" style="display:inline"
+          data-confirm="Re-validar TODAS comissões contra os ranges esperados? Comissões fora do range perdem score_comissao (caem no TOP)."
+          data-confirm-titulo="Revalidar comissões?"
+          data-confirm-ok="✓ Sim, revalidar">
+      <button type="submit" class="btn" style="height:32px; padding:0 12px; font-size:13px;"
+              title="Re-passa todas comissões pela validação de range">
+        ✓ Revalidar comissões
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if produtos %}
+{# ── GRID DE CARDS ─────────────────────────────────── #}
+<div class="produtos-grid">
+  {% for p in produtos %}
+  <div class="produto-card produto-card-top">
+    <div class="top-nota" title="Nota 0..100: 30% preço + 40% comissão + 30% vendas">
+      ⭐ {{ p.nota|int }}
+    </div>
+
+    {% if p.foto_url %}
+      <img class="produto-foto" src="{{ p.foto_url }}" alt="" loading="lazy">
+    {% else %}
+      <div class="produto-foto-placeholder">📦</div>
+    {% endif %}
+
+    <div class="produto-info">
+      <div class="produto-badges">
+        <span class="badge badge-cinza">{{ p.plataforma }}</span>
+        {% if p.is_bestseller %}
+          <span class="badge badge-amarelo" title="Veio de lista de mais vendidos">🏆</span>
+        {% endif %}
+        {% if p.is_em_alta %}
+          <span class="badge badge-vermelho" title="Veio de ofertas">🔥</span>
+        {% endif %}
+        {% if p.url_afiliado and ('meli.la/' in p.url_afiliado or 'shopee.com.br/' in p.url_afiliado or 'amzn.to/' in p.url_afiliado) %}
+          <span class="badge badge-verde" title="Link de afiliado oficial">●</span>
+        {% else %}
+          <span class="badge badge-amarelo" title="Fallback genérico (sem shortlink oficial)">○</span>
+        {% endif %}
+      </div>
+
+      <div class="produto-nome">
+        {{ p.nome[:80] }}{% if p.nome|length > 80 %}…{% endif %}
+      </div>
+
+      <div class="produto-preco">
+        {% if p.preco_orig and p.preco_orig > p.preco %}
+          <span class="produto-preco-old">R$ {{ "%.2f"|format(p.preco_orig)|replace('.', ',') }}</span>
+        {% endif %}
+        <strong>R$ {{ "%.2f"|format(p.preco)|replace('.', ',') }}</strong>
+        {% if p.desconto and p.desconto > 0 %}
+          <span class="badge badge-verde" style="font-size:10px;">-{{ p.desconto|int }}%</span>
+        {% endif %}
+      </div>
+
+      {# Comissão com fonte de procedência #}
+      <div class="produto-comissao">
+        {% if p.comissao %}
+          Comissão:
+          <strong>{{ "%.1f"|format(p.comissao) }}%</strong>
+          {% if p.comissao_validada %}
+            <span title="Comissão dentro do range esperado pra {{ p.plataforma }}">✓</span>
+          {% else %}
+            <span class="badge badge-vermelho" style="font-size:9px;"
+                  title="Comissão fora do range esperado — score_comissao zerado">⚠</span>
+          {% endif %}
+          <small style="color:var(--muted);">
+            ({{ p.comissao_fonte or 'estimativa' }})
+          </small>
+        {% else %}
+          <span style="color:var(--muted);">Sem comissão</span>
+        {% endif %}
+      </div>
+
+      {# Vendas + idade dos dados #}
+      <div class="produto-meta">
+        {% if p.total_vendidos %}
+          🛒 <strong>{{ p.total_vendidos }}</strong> vendidos
+        {% endif %}
+        {% if p.preco_atualizado_em %}
+          <small style="color:var(--muted);">
+            · preço de {{ p.preco_atualizado_em.strftime('%d/%m %H:%M') }}
+          </small>
+        {% endif %}
+      </div>
+
+      <div class="produto-acoes">
+        <form method="post" action="/curadoria/top/{{ p.id }}/postar" style="flex:1; display:flex;"
+              data-confirm="Enfileirar postagem deste produto?&#10;&#10;{{ p.nome[:60]|e }}"
+              data-confirm-titulo="Postar agora?"
+              data-confirm-ok="⚡ Sim, postar">
+          <button type="submit" class="btn btn-primario" style="flex:1; height:34px; padding:0 12px; font-size:13px;">
+            ⚡ Postar
+          </button>
+        </form>
+        {% set _link = p.url_afiliado or p.url_canonica %}
+        {% if _link %}
+        <a href="{{ _link }}" target="_blank" rel="noopener noreferrer"
+           class="btn produto-btn-icon" title="Abrir produto" style="height:34px;">
+          🔗
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">🏆</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">
+    Nenhum produto com nota ≥ {{ nota_min|int }}
+  </h2>
+  <p style="max-width:520px; margin:0 auto;">
+    A nota é calculada quando produtos chegam via busca. Se você acabou de
+    fazer deploy ou ajustou a fórmula, rode <strong>🔄 Recalcular notas</strong>
+    pra aplicar nos produtos antigos.
+    {% if not user.eh_admin %}
+      Só admins podem recalcular.
+    {% endif %}
+  </p>
+</div>
+{% endif %}
+
+<style>
+.produtos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.produto-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--sh-xs);
+  display: flex;
+  flex-direction: column;
+  transition: box-shadow var(--t-base), transform var(--t-base);
+  position: relative;
+}
+.produto-card:hover {
+  box-shadow: var(--sh-md);
+  transform: translateY(-2px);
+}
+.top-nota {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  z-index: 1;
+  box-shadow: var(--sh-sm);
+}
+.produto-foto {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.produto-foto-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--gray-300);
+}
+.produto-info {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+.produto-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.produto-badges .badge { font-size: 10px; padding: 2px 7px; }
+.produto-nome {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--texto);
+  min-height: 36px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.produto-preco {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  color: var(--texto);
+}
+.produto-preco-old {
+  text-decoration: line-through;
+  color: var(--muted);
+  font-size: 12px;
+}
+.produto-comissao {
+  font-size: 11px;
+  color: var(--texto);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.produto-meta {
+  font-size: 11px;
+  color: var(--texto);
+}
+.produto-acoes {
+  display: flex;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.produto-btn-icon {
+  width: 34px;
+  padding: 0;
+  font-size: 14px;
+  min-width: 34px;
+}
+</style>
+
+{% endblock %}

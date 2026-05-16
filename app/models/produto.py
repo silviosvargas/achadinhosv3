@@ -53,6 +53,8 @@ class Produto(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_produtos_atualizado", "atualizado_em"),
         Index("ix_produtos_org_plat", "org_id", "plataforma"),
+        # Fase 18: query principal da curadoria — TOP por nota DESC dentro da org
+        Index("ix_produtos_org_nota", "org_id", text("nota DESC")),
         Index(
             "uq_produtos_publico",
             "org_id", "plataforma", "item_id",
@@ -108,6 +110,47 @@ class Produto(Base, TimestampMixin):
     # Bloqueio rápido: admin marcou como "não postar"
     bloqueado:        Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     bloqueado_motivo: Mapped[str | None] = mapped_column(String(500), default=None)
+
+    # ── Curadoria automática (Fase 18) ────────────────────
+    # Nota 0..100 calculada no ingest. Score composto:
+    # 30% preço (desconto), 40% comissão (validada), 30% vendas/popularidade.
+    # Ver app/services/scoring.py:calcular_nota
+    nota:          Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    is_bestseller: Mapped[bool]  = mapped_column(
+        Boolean, default=False, server_default=text("false"),
+        comment="veio de mais_vendidos ML / bestsellers Amazon",
+    )
+    is_em_alta:    Mapped[bool]  = mapped_column(
+        Boolean, default=False, server_default=text("false"),
+        comment="veio de /ofertas ML / API Shopee ofertas",
+    )
+    total_vendidos: Mapped[int]  = mapped_column(
+        Integer, default=0, server_default="0",
+        comment="capturado do scraper: ML '+X vendidos', Shopee 'sold', Amazon proxy de rank",
+    )
+
+    # Procedência + validação da comissão (Fase 18)
+    comissao_fonte:    Mapped[str]  = mapped_column(
+        String(30), default="estimativa", server_default="estimativa",
+        comment="ml_painel | shopee_api | amazon_tabela | estimativa",
+    )
+    comissao_validada: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"),
+        comment="True se comissao cai no range esperado pra plataforma (app/core/comissoes.py)",
+    )
+
+    # 3 timestamps específicos pra UI mostrar idade de cada campo separadamente.
+    # Mudam só quando o campo concreto sofre update (≠ `atualizado_em` que muda em
+    # qualquer UPDATE da row inteira).
+    preco_atualizado_em:    Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None,
+    )
+    comissao_atualizada_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None,
+    )
+    vendidos_atualizado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None,
+    )
 
     # Diagnóstico
     fonte:        Mapped[str | None] = mapped_column(String(50), default=None,

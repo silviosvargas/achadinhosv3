@@ -41,6 +41,7 @@ from app.models import (
 )
 from app.services import linkbuilder
 from app.services.agente_registry import registry
+from app.services.scoring import calcular_nota
 
 log = get_logger(__name__)
 
@@ -529,6 +530,35 @@ async def _upsert_produto(
         criador_id      = None
         fonte           = "busca_ml"
 
+    # ── Fase 18: dados de curadoria + validação de comissão ─────────
+    # Cada scraper agora envia (quando disponível):
+    #   comissao        — % real (ML painel, Shopee API) ou estimativa
+    #   comissao_fonte  — "ml_painel" | "shopee_api" | "amazon_tabela" | "estimativa"
+    #   total_vendidos  — número absoluto (ML, Shopee) ou proxy (Amazon rank)
+    #   is_bestseller   — True se veio de busca tipo mais_vendidos/bestsellers
+    #   is_em_alta      — True se veio de /ofertas ML ou API Shopee ofertas
+    comissao_pct   = item.get("comissao")
+    comissao_fonte = (item.get("comissao_fonte") or "").strip() or _fonte_default_por_plataforma(plataforma)
+    total_vendidos = item.get("total_vendidos")
+    is_bestseller  = bool(item.get("is_bestseller"))
+    is_em_alta     = bool(item.get("is_em_alta"))
+
+    # Calcula nota + valida comissão (função pura)
+    info_nota = calcular_nota({
+        "plataforma":     plataforma,
+        "preco":          item.get("preco"),
+        "preco_orig":     item.get("preco_orig"),
+        "desconto":       item.get("desconto"),
+        "comissao":       comissao_pct,
+        "total_vendidos": total_vendidos,
+        "is_bestseller":  is_bestseller,
+        "is_em_alta":     is_em_alta,
+    })
+    nota              = info_nota["nota"]
+    comissao_validada = info_nota["comissao_validada"]
+
+    agora = datetime.now(tz=timezone.utc)
+
     if existente is None:
         produto = Produto(
             org_id=org_id,
@@ -541,12 +571,23 @@ async def _upsert_produto(
             preco=float(item.get("preco") or 0),
             preco_orig=item.get("preco_orig"),
             desconto=item.get("desconto"),
+            comissao=comissao_pct,
             frete_gratis=bool(item.get("frete_gratis")),
             url_canonica=url_canonica,
             url_afiliado=url_afiliado,
             foto_url=item.get("foto_url"),
             fonte=fonte,
-            descoberto_em=datetime.now(tz=timezone.utc),
+            descoberto_em=agora,
+            # Fase 18
+            nota=nota,
+            is_bestseller=is_bestseller,
+            is_em_alta=is_em_alta,
+            total_vendidos=int(total_vendidos) if total_vendidos else 0,
+            comissao_fonte=comissao_fonte,
+            comissao_validada=comissao_validada,
+            preco_atualizado_em=agora,
+            comissao_atualizada_em=agora if comissao_pct else None,
+            vendidos_atualizado_em=agora if total_vendidos else None,
         )
         db.add(produto)
         await db.flush()
@@ -556,11 +597,36 @@ async def _upsert_produto(
         produto.nome = item.get("nome", produto.nome)[:500]
         if item.get("categoria"):
             produto.categoria = item["categoria"]
-        produto.preco = float(item.get("preco") or produto.preco)
+        # Preço — só carimba `preco_atualizado_em` se mudou de fato
+        novo_preco = float(item.get("preco") or produto.preco)
+        if novo_preco != produto.preco:
+            produto.preco = novo_preco
+            produto.preco_atualizado_em = agora
         if item.get("preco_orig") is not None:
             produto.preco_orig = item["preco_orig"]
         if item.get("desconto") is not None:
             produto.desconto = item["desconto"]
+        # Comissão — só atualiza se veio (não sobrescreve valor existente com None)
+        if comissao_pct is not None and comissao_pct > 0:
+            if comissao_pct != produto.comissao:
+                produto.comissao = comissao_pct
+                produto.comissao_atualizada_em = agora
+            # Atualiza fonte se mudou (ex: passou de "estimativa" pra "ml_painel")
+            if comissao_fonte and comissao_fonte != produto.comissao_fonte:
+                produto.comissao_fonte = comissao_fonte
+        produto.comissao_validada = comissao_validada
+        # Total vendidos — só atualiza se veio e mudou
+        if total_vendidos is not None and total_vendidos > 0:
+            tv = int(total_vendidos)
+            if tv != produto.total_vendidos:
+                produto.total_vendidos = tv
+                produto.vendidos_atualizado_em = agora
+        # Flags is_bestseller / is_em_alta: marca True se veio True
+        # (não desmarca — produto pode estar em múltiplas listas)
+        if is_bestseller:
+            produto.is_bestseller = True
+        if is_em_alta:
+            produto.is_em_alta = True
         produto.frete_gratis = bool(item.get("frete_gratis", produto.frete_gratis))
         if url_canonica:
             produto.url_canonica = url_canonica
@@ -572,6 +638,18 @@ async def _upsert_produto(
             produto.url_afiliado = url_afiliado
         if item.get("foto_url"):
             produto.foto_url = item["foto_url"]
+        # Recalcula nota com valores ATUALIZADOS do produto (após updates acima)
+        info_nota_atualizada = calcular_nota({
+            "plataforma":     produto.plataforma,
+            "preco":          produto.preco,
+            "preco_orig":     produto.preco_orig,
+            "desconto":       produto.desconto,
+            "comissao":       produto.comissao,
+            "total_vendidos": produto.total_vendidos,
+            "is_bestseller":  produto.is_bestseller,
+            "is_em_alta":     produto.is_em_alta,
+        })
+        produto.nota = info_nota_atualizada["nota"]
         criou = False
 
     # Auto-classificação por categoria
@@ -591,6 +669,24 @@ async def _upsert_produto(
             recebeu_nicho = True
 
     return criou, recebeu_nicho
+
+
+# ── Helper Fase 18 ───────────────────────────────────────────
+def _fonte_default_por_plataforma(plataforma: str) -> str:
+    """Fonte default quando o scraper não enviou explicitamente.
+
+    - amazon → 'amazon_tabela' (todo Amazon vem com comissão da tabela oficial)
+    - shopee → 'shopee_api' (todo Shopee vem da API)
+    - ml     → 'estimativa' (estimativa do card; sobrescrita pra 'ml_painel'
+               quando o linkbuilder inline captura % real)
+    - outros → 'estimativa'
+    """
+    plat = (plataforma or "").lower()
+    if plat == "amazon":
+        return "amazon_tabela"
+    if plat == "shopee":
+        return "shopee_api"
+    return "estimativa"
 
 
 async def _tem_algum_nicho(db: AsyncSession, *, produto_id: int) -> bool:

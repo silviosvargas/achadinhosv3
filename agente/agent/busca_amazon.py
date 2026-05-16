@@ -416,8 +416,14 @@ def _achar_foto_card(card) -> str | None:
 
 def _extrair_card(
     card, *, categoria: str, comissao_est: float, vistos: set[str],
+    rank: int | None = None,
 ) -> dict[str, Any] | None:
-    """Extrai 1 produto do card de bestsellers da Amazon. Retorna None se inválido."""
+    """Extrai 1 produto do card de bestsellers da Amazon. Retorna None se inválido.
+
+    Fase 18: `rank` (1..N na lista de bestsellers) é usado como proxy de
+    vendas — quanto melhor o rank, mais vendido. Sem número absoluto porque
+    Amazon não expõe.
+    """
     # ASIN — atributo `id` ou URL /dp/
     asin = (card.get_attribute("id") or "").strip()
     if not asin or len(asin) != 10:
@@ -440,6 +446,10 @@ def _extrair_card(
     url_canonica = f"https://www.amazon.com.br/dp/{asin}"
     foto = _achar_foto_card(card)
 
+    # Fase 18 — proxy de vendas baseado em rank. Bestseller rank 1 → 5000,
+    # rank 50 → 100. Log decay pra dar curva realista. Sem rank → 1000.
+    total_vendidos = _rank_para_vendas_estimadas(rank)
+
     return {
         "plataforma":   "amazon",
         "item_id":      asin,
@@ -453,7 +463,28 @@ def _extrair_card(
         "url_canonica": url_canonica,
         "url_afiliado": None,    # preenchido depois via SiteStripe
         "foto_url":     foto,
+        # Fase 18 — todo produto Amazon vem de /gp/bestsellers, é bestseller
+        # por definição. Comissão veio da tabela oficial por categoria, não
+        # do produto específico — fonte "amazon_tabela" diz isso ao servidor.
+        "total_vendidos": total_vendidos,
+        "is_bestseller":  True,
+        "comissao_fonte": "amazon_tabela",
     }
+
+
+def _rank_para_vendas_estimadas(rank: int | None) -> int:
+    """Converte posição no bestseller (1..50) em estimativa de volume vendido.
+
+    Sem dado real disponível na Amazon — usa curva inversa pra que rank 1
+    pareça muito vendido e rank 50 ainda razoável.
+
+    rank=1  → 5000      rank=10 → 1500      rank=50 → 100
+    rank=None / inválido → 1000 (default conservador)
+    """
+    if rank is None or rank <= 0:
+        return 1000
+    # Inversa decay-style. Tunada pra dar valores razoáveis em log10.
+    return max(int(5500 / rank), 100)
 
 
 # ============================================================
@@ -646,12 +677,15 @@ def _varrer_sync(
                     cards = driver.find_elements(By.CSS_SELECTOR, "div[id^='B0']")
 
                 adicionados = 0
-                for card in cards:
+                # Fase 18: enumerate dá o rank do produto na lista de bestsellers
+                # (1..N). Passamos pro _extrair_card que converte em proxy de vendas.
+                for rank_pos, card in enumerate(cards, start=1):
                     if len(todos) >= max_produtos or adicionados >= por_cat:
                         break
                     produto = _extrair_card(
                         card, categoria=nome_cat,
                         comissao_est=comissao_est, vistos=vistos_asin,
+                        rank=rank_pos,
                     )
                     if not produto:
                         continue

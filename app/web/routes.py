@@ -566,6 +566,8 @@ async def dashboard(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    from app.services import curadoria_service
+
     org = await db.get(Organizacao, user.org_id)
 
     counts = {
@@ -591,10 +593,15 @@ async def dashboard(
         ) or 0,
     }
 
+    # Fase 18 — preview do TOP por nota
+    top_preview, _ = await curadoria_service.listar_top_com_fallback(
+        db, org_id=user.org_id, limite=6, nota_minima=30.0,
+    )
+
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        {"user": user, "org": org, "counts": counts},
+        {"user": user, "org": org, "counts": counts, "top_preview": top_preview},
     )
 
 
@@ -1829,6 +1836,124 @@ async def personalizado_postar_todos(
         log.exception("personalizado.postar_todos_falhou", erro=str(e))
         msg = f"erro=Erro%3A+{str(e)[:80]}"
     return RedirectResponse(url=f"/produtos/personalizados?{msg}", status_code=302)
+
+
+# ============================================================
+# Curadoria — TOP por nota (Fase 18)
+# ============================================================
+
+@router.get("/curadoria/top", response_class=HTMLResponse)
+async def pagina_curadoria_top(
+    request: Request,
+    nota_min: float = 30.0,
+    user: Usuario = Depends(exigir_login),
+    db:   AsyncSession = Depends(get_db_async),
+):
+    """Página completa do TOP por nota.
+
+    Lê `produtos.nota` direto — sem snapshot, sem beat task. Always live.
+    """
+    from app.services import curadoria_service
+
+    produtos, fonte = await curadoria_service.listar_top_com_fallback(
+        db, org_id=user.org_id, limite=50, nota_minima=nota_min,
+    )
+
+    return templates.TemplateResponse(
+        request, "curadoria_top.html",
+        {
+            "user":     user,
+            "produtos": produtos,
+            "fonte":    fonte,
+            "nota_min": nota_min,
+            "mensagem": request.query_params.get("mensagem"),
+            "erro":     request.query_params.get("erro"),
+        },
+    )
+
+
+@router.post("/curadoria/top/{produto_id}/postar", response_class=HTMLResponse)
+async def curadoria_postar_um(
+    produto_id: int,
+    user: Usuario = Depends(exigir_login),
+    db:   AsyncSession = Depends(get_db_async),
+):
+    """Posta 1 produto do TOP imediatamente. Reusa serviço da Fase 17."""
+    from urllib.parse import quote_plus
+
+    try:
+        resultado = await lote_service.postar_produto_imediato(
+            db,
+            produto_id=produto_id,
+            org_id=user.org_id,
+            criado_por_usuario_id=user.id,
+        )
+    except Exception as e:
+        msg = f"erro={quote_plus('Erro ao postar: ' + str(e)[:120])}"
+        return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
+
+    if resultado.get("ok"):
+        msg = (
+            "mensagem="
+            + quote_plus(
+                "Postagem enfileirada pro grupo "
+                + resultado.get("grupo_nome", "?")
+                + " (tarefa #" + str(resultado.get("tarefa_id")) + ")"
+            )
+        )
+    else:
+        msg = f"erro={quote_plus(resultado.get('erro', 'erro_desconhecido'))}"
+    return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
+
+
+@router.post("/curadoria/recalcular-notas", response_class=HTMLResponse)
+async def curadoria_recalcular_notas_form(
+    admin: Usuario = Depends(exigir_admin),
+    db:    AsyncSession = Depends(get_db_async),
+):
+    """Admin: re-aplica fórmula de nota em todos produtos da org."""
+    from urllib.parse import quote_plus
+    from app.services import curadoria_service
+
+    try:
+        resultado = await curadoria_service.recalcular_notas_da_org(
+            db, org_id=admin.org_id,
+        )
+        await db.commit()
+        msg = (
+            "mensagem="
+            + quote_plus(
+                f"Recalculou {resultado['atualizados']}/{resultado['total']} produtos"
+            )
+        )
+    except Exception as e:
+        msg = f"erro={quote_plus('Falha recalculando: ' + str(e)[:120])}"
+    return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
+
+
+@router.post("/curadoria/revalidar-comissoes", response_class=HTMLResponse)
+async def curadoria_revalidar_comissoes_form(
+    admin: Usuario = Depends(exigir_admin),
+    db:    AsyncSession = Depends(get_db_async),
+):
+    """Admin: re-valida comissões + recalcula notas."""
+    from urllib.parse import quote_plus
+    from app.services import curadoria_service
+
+    try:
+        resultado = await curadoria_service.revalidar_comissoes_da_org(
+            db, org_id=admin.org_id,
+        )
+        await db.commit()
+        msg = (
+            "mensagem="
+            + quote_plus(
+                f"Revalidou comissões: {resultado['atualizados']}/{resultado['total']} ajustados"
+            )
+        )
+    except Exception as e:
+        msg = f"erro={quote_plus('Falha revalidando: ' + str(e)[:120])}"
+    return RedirectResponse(url=f"/curadoria/top?{msg}", status_code=302)
 
 
 @router.get("/produtos/import-csv", response_class=HTMLResponse)

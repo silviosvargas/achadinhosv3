@@ -64,6 +64,10 @@
 
       <div class="sidebar-grupo">
         <div class="sidebar-grupo-titulo">Catálogo</div>
+        <a href="/curadoria/top" class="sidebar-item {% if _path.startswith('/curadoria') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">🏆</span>
+          <span>Top por nota</span>
+        </a>
         <a href="/produtos" class="sidebar-item {% if _path == '/produtos' or (_path.startswith('/produtos/') and not _path.startswith('/produtos/personalizados')) %}ativo{% endif %}">
           <span class="sidebar-item-icone">📦</span>
           <span>Produtos</span>

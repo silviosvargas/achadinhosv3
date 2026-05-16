@@ -111,6 +111,10 @@ class IngestProdutoItem(BaseModel):
 
     Aceita campos extras (ex: `_personalizado_dono_id`) que o ingest do
     busca_service consome. Por isso `model_config = {"extra": "allow"}`.
+
+    ⚠ LIÇÃO v3.21.1: Pydantic com `extra="ignore"` (default) descarta campos
+    não declarados SEM warning. Sempre declarar TODOS os campos que o agente
+    pode mandar.
     """
     plataforma:   str   = Field(default="ml", min_length=2, max_length=20)
     item_id:      str   = Field(min_length=1, max_length=100,
@@ -120,7 +124,7 @@ class IngestProdutoItem(BaseModel):
     preco_orig:   float | None = Field(default=None, ge=0)
     desconto:     float | None = Field(default=None, ge=0, le=100)
     comissao:     float | None = Field(default=None, ge=0, le=100,
-                                       description="% de comissão (estimada por categoria)")
+                                       description="% de comissão real ou estimada")
     frete_gratis: bool  = False
     categoria:    str | None = Field(default=None, max_length=200,
                                      description="Caminho completo do ML")
@@ -131,6 +135,26 @@ class IngestProdutoItem(BaseModel):
                                                  "s.shopee.com.br, amzn.to. None = "
                                                  "servidor calcula fallback.")
     foto_url:     str | None = Field(default=None, max_length=2000)
+
+    # ── Fase 18: precisão de dados + curadoria ────────────
+    total_vendidos: int | None = Field(
+        default=None, ge=0,
+        description="Capturado do scraper: ML '+X vendidos', Shopee 'sold', "
+                    "Amazon proxy baseado em rank. None = não capturado.",
+    )
+    is_bestseller: bool = Field(
+        default=False,
+        description="Veio de busca tipo mais_vendidos ML / bestsellers Amazon",
+    )
+    is_em_alta: bool = Field(
+        default=False,
+        description="Veio de /ofertas ML / API Shopee de ofertas",
+    )
+    comissao_fonte: str | None = Field(
+        default=None, max_length=30,
+        description="ml_painel | shopee_api | amazon_tabela | estimativa. "
+                    "None = servidor decide com base na plataforma.",
+    )
 
     model_config = {"extra": "allow"}
 

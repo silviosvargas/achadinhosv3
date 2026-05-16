@@ -4,9 +4,10 @@
 > abre nova e diz: *"Lê CLAUDE.md + docs/sessao_continuacao.md + docs/decisoes.md"*.
 > Próxima Claude pega do zero sem perder tempo redescobrindo coisas.
 
-**Última atualização:** 2026-05-16 (Produtos Personalizados Fase 17 + fixes scraper)
-**Versão do agente em prod:** `3.2.2` (ML + Shopee + Amazon + Personalizados validados)
-**Migration head:** `0011_prod_criado_por`
+**Última atualização:** 2026-05-17 (Fase 18 Curadoria via nota + precisão de dados)
+**Versão do agente:** `3.3.0` (em código; release ainda não publicada — testar local antes)
+**Versão em prod:** `3.2.2` (anterior — pré-Fase 18)
+**Migration head:** `0012_curadoria`
 
 ## 🔥 LEITURA OBRIGATÓRIA antes de mexer em busca/linkbuilder
 
@@ -31,6 +32,67 @@
 | **📦 Amazon** | v3.2.1+ | Scraping `/gp/bestsellers/` + SiteStripe | `amzn.to/XXX` (fallback `?tag=`) | `agent.login_amazon` |
 
 Modo interativo (banner Chrome + aviso dashboard) universal nos 3 — 30s×3 retry.
+
+## 🏆 Curadoria via nota + precisão de dados (Fase 18 — v3.22 / agente 3.3.0)
+
+**A nota é calculada NO INGEST** (`busca_service._upsert_produto`). Os
+endpoints de TOP apenas filtram `produtos.nota >= 30 ORDER BY nota DESC`.
+Sem snapshot, sem beat task — live.
+
+### Fórmula `app/services/scoring.py:calcular_nota` (0..100)
+
+```
+score_preco    = 0..30  (desconto: ≥30% → 30; 15-29% → 20; 1-14% → 10; 0% → 0)
+score_comissao = 0..40  (comissao/15 × 40, cap 40; **ZERO se !validada**)
+score_vendas   = 0..30  (bestseller → +20; em_alta → +10;
+                         total_vendidos: log10(v+1) × 10, cap 30)
+```
+
+### Captura precisa por marketplace
+
+| Marketplace | Comissão real | Total vendido | Implementação |
+|---|---|---|---|
+| **🛒 ML** | Painel linkbuilder mostra % por URL → `linkbuilder_ml._gerar_lote_sync` extrai e propaga via `_gerar_meli_la_no_driver` → `comissao_fonte="ml_painel"` | `_achar_vendidos(card)` parseia "+5 mil vendidos" do card | busca_ml.py + linkbuilder_ml.py |
+| **🛍️ Shopee** | API `seller_commission_rate` (já existia) | API `historical_sold`/`sold` | busca_shopee.py |
+| **📦 Amazon** | Tabela oficial por categoria (3-12%) → `comissao_fonte="amazon_tabela"` | Proxy de rank no `/gp/bestsellers/` (rank 1 = 5000 vendas, rank 50 = 100) | busca_amazon.py |
+
+### Validação de comissão
+
+`app/core/comissoes.py:validar_comissao(plat, pct)` confere ranges:
+- ML: 0.5–25%
+- Shopee: 0.5–30%
+- Amazon: 1–12%
+
+Fora do range → `comissao_validada = False` → `score_comissao = 0` (produto
+sai do TOP automaticamente). Útil pra detectar:
+- Painel ML pifou (retornou 0% por sessão expirada)
+- Bug no scraper (parseou unidade errada)
+
+### Tools admin
+
+`POST /api/v1/curadoria/recalcular-notas` — re-aplica `calcular_nota` em
+todos produtos da org. Necessário: (1) primeira vez após deploy (produtos
+antigos têm nota=0); (2) ao mudar pesos da fórmula.
+
+`POST /api/v1/curadoria/revalidar-comissoes` — passa todas comissões pela
+validação de range + recalcula notas. Útil quando suspeita de batch ruim.
+
+### UI
+
+- `/curadoria/top` — grid com badge ⭐ N/100 + breakdown (preço, comissão
+  com fonte e ✓/⚠ de validação, vendas, idade do preço)
+- Sidebar grupo Catálogo: item **🏆 Top por nota**
+- Dashboard: mini-grid de 6 cards "🏆 TOP por nota" + link "Ver todos"
+
+### 3 timestamps específicos (cada campo separadamente)
+
+- `preco_atualizado_em` — só muda quando preço efetivamente mudou
+- `comissao_atualizada_em` — idem
+- `vendidos_atualizado_em` — idem
+
+Diferente do `atualizado_em` (TimestampMixin, muda em qualquer UPDATE).
+UI mostra "preço de 3 dias atrás" mesmo quando produto sofreu outro update
+mais recente (ex: re-tag de afiliado).
 
 ## 🛍️ Produtos Personalizados (Fase 17 — v3.21+)
 

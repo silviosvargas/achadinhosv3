@@ -159,6 +159,7 @@ python -m agent.main --sem-tray   # roda
 - **3.21.1** — Hotfix Fase 17: **schema Pydantic descartava `url_afiliado` silenciosamente**. `IngestProdutoItem` em `app/schemas/produto.py` não declarava `url_afiliado` nem `comissao` → Pydantic com `extra="ignore"` (default) cortava esses campos do payload do agente, fazendo `meli.la/XXX` capturado pelo linkbuilder NUNCA chegar ao `_upsert_produto` → DB salvava sempre o fallback `?matt_word=`. Fix: declara ambos os campos + `model_config = {"extra": "allow"}` pra aceitar marcadores internos (`_personalizado_dono_id`, `_personalizado_criador_id`). **Lição registrada em armadilhas conhecidas.**
 - **3.21.2** — Fix Fase 17 robustez: 500 no `/postar` (rota chamava `rodar_lote(max_produtos=1)` esperando pegar produto específico, mas é genérico). Nova função dedicada `lote_service.postar_produto_imediato(produto_id, ...)` — carrega produto + nichos, acha 1 grupo compatível não-postado-recentemente, renderiza template + late-binding tag, enfileira via dispatcher. Retorna `{ok, erro}` explícito mostrado no redirect.
 - **3.21.3** — Fix Fase 17 scraper por_url ML (v3.2.2): produtos legacy com MLB curto (`MLB6087`, 4-7 dígitos) eram rejeitados pelo regex `\d{8,15}` → **regex permissivo** `MLB[A-Z]?-?\d{4,15}`. Página de catálogo com layout diferente do produto único tinha `dados_insuficientes preco=None tem_nome=False` → **espera explícita** com `WebDriverWait` até `h1.ui-pdp-title` OU `<script type="application/ld+json">` OU `meta og:title` (12s timeout), `_scroll_lazy_load` agressivo, **cascata de 5 seletores de preço** (PDP + catálogo + meta Schema.org), **diagnóstico em disco** (HTML+screenshot em `%APPDATA%\Achadinhos\debug\ml_porurl_*.png,html`) quando extração falha.
+- **3.22.0** — Fase 18: **Curadoria via nota no produto + precisão de dados** (v3.3.0). Reformulação total da Fase 18 anterior (descartada — usava snapshot diário). Migration 0012 adiciona em `produtos`: `nota` (0..100), `is_bestseller`, `is_em_alta`, `total_vendidos`, `comissao_fonte` (`ml_painel`/`shopee_api`/`amazon_tabela`/`estimativa`), `comissao_validada`, `preco_atualizado_em`, `comissao_atualizada_em`, `vendidos_atualizado_em` + índice `(org_id, nota DESC)`. **Captura precisa de dados nos 3 scrapers**: (a) `busca_ml.py:_achar_vendidos` parseia "+5 mil vendidos" do card; (b) `linkbuilder_ml.py:_gerar_lote_sync` agora extrai % comissão real da tabela do painel ML e propaga via `_gerar_meli_la_no_driver` → `comissao_fonte="ml_painel"`; (c) `busca_shopee.py` adiciona `historical_sold`/`sold` + marca `is_em_alta=True` + `comissao_fonte="shopee_api"` (comissão já era real); (d) `busca_amazon.py` marca `is_bestseller=True` + usa rank como proxy de vendas (`_rank_para_vendas_estimadas`). Servidor: `app/core/comissoes.py` tem ranges esperados por marketplace (ML 0.5-25%, Shopee 0.5-30%, Amazon 1-12%) usados em `validar_comissao`. `app/services/scoring.py:calcular_nota` é função pura: 30% preço × 40% comissão (zerado se !validada) × 30% vendas. Aplicada em `busca_service._upsert_produto` no ingest. `app/services/curadoria_service.py` faz `listar_top` via query direta (`SELECT FROM produtos WHERE nota >= 30 ORDER BY nota DESC LIMIT 50` + filtro NOT EXISTS postagem últimos 7d) — **sem snapshot, sem beat task, live**. Cascata de fallback Fase 11 (admin_org). Endpoints `GET /curadoria/top` + `POST /recalcular-notas` + `POST /revalidar-comissoes` (admin). UI: página `/curadoria/top` com badge ⭐ N/100 + breakdown comissão/fonte/vendas + filtro de nota mínima. Sidebar grupo Catálogo ganha **🏆 Top por nota**. Dashboard mini-grid de 6 cards.
 
 ---
 
@@ -200,6 +201,14 @@ Migrations atuais:
 - 0002 produtos por org + templates
 - 0003 buscas_ml + nicho_categoria_ml + produtos.usuario_dono_id
 - 0004 credenciais cifradas (usuario_ml + senha_ml_cifrada)
+- 0005 planos flags restrição (signup free)
+- 0006 agentes índice único partial (UPSERT)
+- 0007 mappings nichos ML (backfill 21 entries)
+- 0008 usuarios_afiliados (multi-marketplace)
+- 0009 redirects curto (Fase 14 encurtador)
+- 0010 busca tipo + marketplaces (Fase 16)
+- 0011 produto criado_por (Fase 17 Personalizados)
+- 0012 produtos nota + flags vendas + comissao_fonte + 3 timestamps (Fase 18)
 
 Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
