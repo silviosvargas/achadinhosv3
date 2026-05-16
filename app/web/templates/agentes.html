@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Agentes{% endblock %}
+{% block titulo_topbar %}Agentes{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Agentes</h1>
-  <p class="muted">PCs locais que executam postagens no WhatsApp.</p>
+  <h1>Agentes 🖥️</h1>
+  <p>PCs locais que executam buscas e postagens. Cada agente roda em background no PC do afiliado.</p>
 </header>
 
 {% if token_recem %}
@@ -74,11 +75,11 @@ python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localh
       </td>
       <td>
         {% if not a.ativo %}
-          <span class="badge badge-cinza">desativado</span>
+          <span class="badge badge-cinza">○ desativado</span>
         {% elif a.online %}
           <span class="badge badge-verde">● online</span>
         {% else %}
-          <span class="badge badge-cinza">offline</span>
+          <span class="badge badge-cinza">○ offline</span>
         {% endif %}
       </td>
       <td>{{ a.versao_app or '—' }}</td>
@@ -90,9 +91,13 @@ python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localh
   </tbody>
 </table>
 {% else %}
-<div class="vazio">
-  <p>Você ainda não tem agentes cadastrados.</p>
-  <p class="muted">Use o formulário acima pra criar o primeiro.</p>
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">🖥️</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">Nenhum agente cadastrado</h2>
+  <p style="max-width:480px; margin:0 auto;">
+    Crie um agente pra cada PC que vai postar no WhatsApp.
+    Cada agente recebe um token único que você cola no app instalado no PC.
+  </p>
 </div>
 {% endif %}
 

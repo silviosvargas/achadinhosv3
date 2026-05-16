@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Tarefas{% endblock %}
+{% block titulo_topbar %}Tarefas{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Tarefas</h1>
-  <p class="muted">Histórico de comandos enfileirados (últimas 100).</p>
+  <h1>Tarefas ⌛</h1>
+  <p>Histórico de comandos enfileirados — postagens, buscas, geração de links. Últimas 100 entradas.</p>
 </header>
 
 <details class="card-form">
@@ -94,8 +95,18 @@
   </tbody>
 </table>
 {% else %}
-<div class="vazio">
-  <p>Nenhuma tarefa enfileirada ainda{% if status_filtro %} com status "{{ status_filtro }}"{% endif %}.</p>
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">⌛</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">
+    {% if status_filtro %}Nenhuma tarefa "{{ status_filtro }}"{% else %}Nenhuma tarefa enfileirada{% endif %}
+  </h2>
+  <p style="max-width:480px; margin:0 auto;">
+    {% if status_filtro %}
+      <a href="/tarefas">Ver todas as tarefas</a> ou rode um lote em <a href="/lote">Lote</a>.
+    {% else %}
+      Rode um <a href="/lote">lote</a> ou poste manualmente acima pra começar a enfileirar tarefas.
+    {% endif %}
+  </p>
 </div>
 {% endif %}
 

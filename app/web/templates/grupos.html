@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Grupos{% endblock %}
+{% block titulo_topbar %}Grupos{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Grupos</h1>
-  <p class="muted">Destinos onde as postagens são enviadas.</p>
+  <h1>Grupos 👥</h1>
+  <p>Destinos onde as postagens são enviadas — grupos do WhatsApp ou chats do Telegram.</p>
 </header>
 
 {% if pode_criar %}
@@ -84,8 +85,12 @@
   </tbody>
 </table>
 {% else %}
-<div class="vazio">
-  <p>Nenhum grupo cadastrado ainda.</p>
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">👥</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">Nenhum grupo cadastrado</h2>
+  <p style="max-width:480px; margin:0 auto;">
+    Cadastre os grupos onde quer postar. Vincule cada um a um canal (WhatsApp ou Telegram).
+  </p>
 </div>
 {% endif %}
 

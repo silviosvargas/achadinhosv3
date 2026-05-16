@@ -2,8 +2,13 @@
 {% block titulo %}Criar conta{% endblock %}
 {% block conteudo %}
 <div class="login-card">
+  <div class="login-brand">
+    <div class="login-brand-logo">🛒</div>
+    <div class="login-brand-nome">Achadinhos</div>
+  </div>
+
   <h1>Criar conta</h1>
-  <p class="login-sub">Comece grátis no plano Free — 5 grupos, 100 postagens/mês.</p>
+  <p class="login-sub">Grátis no plano Free — 5 grupos, 100 postagens/mês.</p>
 
   {% if erro %}
   <div class="alerta alerta-erro">{{ erro }}</div>

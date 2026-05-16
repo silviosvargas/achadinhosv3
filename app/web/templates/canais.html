@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block titulo %}Canais{% endblock %}
+{% block titulo_topbar %}Canais{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Canais</h1>
-  <p class="muted">Conexões pra postar: WhatsApp via agente local ou Telegram via bot.</p>
+  <h1>Canais 📡</h1>
+  <p>Conexões pra postar: WhatsApp via agente local ou Telegram via bot da nuvem.</p>
 </header>
 
 {% if pode_criar %}
@@ -127,9 +128,13 @@ function trocarTipo(tipo) {
   </tbody>
 </table>
 {% else %}
-<div class="vazio">
-  <p>Nenhum canal cadastrado ainda.</p>
-  <p class="muted">Crie um canal pra começar a postar.</p>
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">📡</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">Nenhum canal cadastrado</h2>
+  <p style="max-width:480px; margin:0 auto;">
+    Adicione um canal pra começar a postar. WhatsApp usa um agente local;
+    Telegram roda direto da nuvem com bot do @BotFather.
+  </p>
 </div>
 {% endif %}
 

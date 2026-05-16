@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block titulo %}Usuários{% endblock %}
+{% block titulo %}Equipe{% endblock %}
+{% block titulo_topbar %}Equipe{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Usuários</h1>
-  <p class="muted">Pessoas que podem entrar nesta organização.</p>
+  <h1>Equipe 👤</h1>
+  <p>Pessoas com acesso a esta organização. Defina o papel pra controlar permissões.</p>
 </header>
 
 {% if pode_criar %}
@@ -80,8 +81,13 @@
   </tbody>
 </table>
 {% else %}
-<div class="vazio">
-  <p>Nenhum usuário cadastrado ainda.</p>
+<div class="vazio" style="padding:60px 24px;">
+  <div style="font-size:48px; margin-bottom:12px;">👤</div>
+  <h2 style="margin:0 0 8px; font-size:20px; color:var(--texto);">Nenhum usuário cadastrado</h2>
+  <p style="max-width:480px; margin:0 auto;">
+    Adicione membros à sua equipe. Cada usuário tem um papel: admin (gerencia tudo),
+    afiliado (posta no próprio PC), ou usuário (só visualiza).
+  </p>
 </div>
 {% endif %}
 

@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block titulo %}Templates{% endblock %}
+{% block titulo_topbar %}Templates{% endblock %}
 {% block conteudo %}
 
-<header class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+<header class="page-header" style="display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;">
   <div>
-    <h1>Templates de mensagem</h1>
-    <p class="muted">Como o sistema vai escrever cada postagem. Use placeholders como <code>{nome}</code> e <code>{bloco_preco}</code>.</p>
+    <h1>Templates de mensagem ✦</h1>
+    <p>Como o sistema escreve cada postagem. Use placeholders como <code>{nome}</code> e <code>{bloco_preco}</code>.</p>
   </div>
   {% if pode_criar %}
-  <a href="/templates/novo" class="btn btn-primario">+ Criar template</a>
+  <a href="/templates/novo" class="btn btn-primario"><span>＋</span><span>Criar template</span></a>
   {% endif %}
 </header>
 

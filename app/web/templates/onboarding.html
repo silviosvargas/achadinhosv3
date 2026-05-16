@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block titulo %}Bem-vindo{% endblock %}
+{% block titulo_topbar %}Bem-vindo{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Bem-vindo ao Achadinhos, {{ user.nome_exibicao or user.login }}!</h1>
-  <p class="muted">
+  <h1>Bem-vindo, {{ user.nome_exibicao or user.login }}! 👋</h1>
+  <p>
     Sua conta da organização <strong>{{ org.nome }}</strong> está pronta.
-    Pra começar a postar, complete os 4 passos abaixo. Pode fazer agora ou depois —
-    nada bloqueia o acesso.
+    Complete os passos abaixo pra começar a postar — pode fazer agora ou depois.
   </p>
 </header>
 
