@@ -189,6 +189,29 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
     }
   }
 
+  // Valida no SERVIDOR se o agente_id do token local realmente existe no DB.
+  // Cenário do bug: depois de limpar_banco.py o agente é apagado do DB mas o
+  // config.json no PC continua com o token velho. /ping local diz "agente_id=1"
+  // (lê do JWT, não consulta DB), o JS confiava e mostrava "Agente conectado"
+  // — quando na verdade o WS está em loop infinito tentando reconectar e o
+  // badge no header e /canais reclamam "sem agente".
+  // Retorna: true se existe e pertence à org do user; false se órfão.
+  async function agenteExisteNoServidor(agente_id) {
+    try {
+      const r = await fetch('/api/v1/agentes/status', {
+        credentials: 'include',
+      });
+      if (!r.ok) return false;
+      const d = await r.json();
+      const lista = d.agentes || [];
+      return lista.some(a => a.id === agente_id);
+    } catch (e) {
+      // Sem rede com o servidor — assume que existe pra não pedir re-pair
+      // toda vez que a internet cai
+      return true;
+    }
+  }
+
   async function fetchComTimeout(url, opts) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -327,6 +350,31 @@ python -m agent.login_whatsapp   # escaneia QR do WhatsApp Web</code></pre>
     }
 
     if (agente.agente_id) {
+      // Token local diz "pareado" — mas confere se o agente_id existe MESMO
+      // no servidor. Após limpar_banco.py o registro vai pro lixo enquanto o
+      // config.json no PC continua com o token velho → /ping retorna
+      // agente_id=N mas N foi apagado. Sem essa checagem, a página mostrava
+      // "Agente conectado" enquanto o WS estava em loop infinito tentando
+      // reconectar com token órfão.
+      const existeNoServidor = await agenteExisteNoServidor(agente.agente_id);
+      if (!existeNoServidor) {
+        setStatus(
+          `<strong style="color:#b45309;">⚠ Token local inválido</strong> · ` +
+          `<span class="muted">ID ${agente.agente_id} (não existe mais no servidor)</span>`,
+        );
+        setMsg(
+          'Seu agente está rodando, mas o token salvo aponta pra um registro ' +
+          'que não existe mais no servidor (banco foi limpo ou agente foi ' +
+          'removido). Clique em <strong>"Conectar meu agente"</strong> ' +
+          'pra re-parear agora — o token novo é salvo automaticamente e o ' +
+          'WS reconecta na hora (sem precisar reiniciar o .exe).',
+          'info',
+        );
+        esconderTodosOsBotoes();
+        mostrarBotao(elBtnConectar, fluxoConectar);
+        return;
+      }
+
       // Pareado e ativo — confere se versão tá atualizada
       const versaoAtual = await buscarVersaoAtual();
       const desatualizado = versaoAtual && compararVersoes(agente.versao, versaoAtual) < 0;
