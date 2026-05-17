@@ -135,7 +135,7 @@
       </td>
       <td>
         {% if b.ultima_exec_em %}
-          <span class="small">{{ b.ultima_exec_em.strftime('%d/%m %H:%M') }}</span>
+          <span class="small">{{ b.ultima_exec_em|formatlocal('%d/%m %H:%M') }}</span>
         {% else %}
           <span class="muted small">nunca</span>
         {% endif %}

@@ -164,11 +164,11 @@
       <td>{{ u.email or '—' }}</td>
       <td>
         {% if u.criado_em %}
-          {{ u.criado_em.strftime('%d/%m/%Y') }}
-          <div class="muted small">{{ u.criado_em.strftime('%H:%M') }}</div>
+          {{ u.criado_em|formatlocal('%d/%m/%Y') }}
+          <div class="muted small">{{ u.criado_em|formatlocal('%H:%M') }}</div>
         {% else %}—{% endif %}
       </td>
-      <td>{{ u.ultimo_login.strftime('%d/%m %H:%M') if u.ultimo_login else 'nunca' }}</td>
+      <td>{{ u.ultimo_login|formatlocal('%d/%m %H:%M') if u.ultimo_login else 'nunca' }}</td>
       <td>
         {% if u.ativo %}
           <span class="badge badge-verde">ativo</span>

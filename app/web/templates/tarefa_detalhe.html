@@ -45,12 +45,12 @@
 
   <div class="card">
     <div class="card-titulo">Criado em</div>
-    <div>{{ tarefa.criado_em.strftime('%d/%m/%Y %H:%M:%S') }}</div>
+    <div>{{ tarefa.criado_em|formatlocal('%d/%m/%Y %H:%M:%S') }}</div>
   </div>
 
   <div class="card">
     <div class="card-titulo">Concluído em</div>
-    <div>{{ tarefa.concluido_em.strftime('%d/%m/%Y %H:%M:%S') if tarefa.concluido_em else '—' }}</div>
+    <div>{{ tarefa.concluido_em|formatlocal('%d/%m/%Y %H:%M:%S') if tarefa.concluido_em else '—' }}</div>
   </div>
 </div>
 

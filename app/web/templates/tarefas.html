@@ -86,8 +86,8 @@
         {% endif %}
       </td>
       <td>{{ t.tentativas }}/{{ t.max_tentativas }}</td>
-      <td>{{ t.criado_em.strftime('%d/%m %H:%M:%S') }}</td>
-      <td>{{ t.concluido_em.strftime('%d/%m %H:%M:%S') if t.concluido_em else '—' }}</td>
+      <td>{{ t.criado_em|formatlocal('%d/%m %H:%M:%S') }}</td>
+      <td>{{ t.concluido_em|formatlocal('%d/%m %H:%M:%S') if t.concluido_em else '—' }}</td>
       <td>
         <a href="/tarefas/{{ t.id }}" class="btn-link">detalhes</a>
         {% if t.status in ['pendente', 'processando'] %}

@@ -165,7 +165,7 @@ function trocarTipo(tipo) {
           </div>
         {% endif %}
       </td>
-      <td>{{ c.ultima_postagem_em.strftime('%d/%m %H:%M') if c.ultima_postagem_em else '—' }}</td>
+      <td>{{ c.ultima_postagem_em|formatlocal('%d/%m %H:%M') if c.ultima_postagem_em else '—' }}</td>
       <td>
         {% if _pode_mexer %}
         <div style="display:flex; gap:6px;">

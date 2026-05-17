@@ -101,7 +101,7 @@ python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localh
         </div>
       </td>
       <td>{{ a.versao_app or '—' }}</td>
-      <td>{{ a.ultimo_ping.strftime('%d/%m %H:%M') if a.ultimo_ping else 'nunca' }}</td>
+      <td>{{ a.ultimo_ping|formatlocal('%d/%m %H:%M') if a.ultimo_ping else 'nunca' }}</td>
     </tr>
     {% endfor %}
   </tbody>

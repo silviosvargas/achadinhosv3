@@ -87,7 +87,7 @@
           <span class="muted small">nicho #{{ m.nicho_id }} (não achado)</span>
         {% endif %}
       </td>
-      <td class="small muted">{{ m.criado_em.strftime('%d/%m/%Y %H:%M') }}</td>
+      <td class="small muted">{{ m.criado_em|formatlocal('%d/%m/%Y %H:%M') }}</td>
       <td>
         {% if pode_admin %}
         <form method="post" action="/mappings-nichos/{{ m.id }}/excluir" style="display:inline"

@@ -10,7 +10,7 @@ Logout limpa o cookie.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import jwt
@@ -74,6 +74,42 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 COOKIE_NAME = "achadinhos_session"
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Timezone helpers — servidor armazena tudo em UTC (boa prática),
+#  templates Jinja convertem pra horário Brasil na hora de exibir.
+#  Railway roda em UTC; logs do user mostravam "22:01" UTC quando local
+#  era "19:01" (-03). Filtros abaixo resolvem.
+# ─────────────────────────────────────────────────────────────────────
+try:
+    from zoneinfo import ZoneInfo
+    _TZ_DISPLAY = ZoneInfo("America/Sao_Paulo")  # Brasil padrão (UTC-3, sem DST)
+except Exception:
+    _TZ_DISPLAY = timezone(timedelta(hours=-3))  # fallback estático
+
+
+def _filter_localtime(dt):
+    """`{{ x|localtime }}` → datetime na timezone Brasil. Naive vira UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_TZ_DISPLAY)
+
+
+def _filter_formatlocal(dt, fmt="%d/%m/%Y %H:%M"):
+    """`{{ x|formatlocal }}` ou `{{ x|formatlocal('%H:%M') }}` —
+    converte pra local Brasil e formata em uma chamada só."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_TZ_DISPLAY).strftime(fmt)
+
+
+templates.env.filters["localtime"]   = _filter_localtime
+templates.env.filters["formatlocal"] = _filter_formatlocal
 
 
 # ============================================================
