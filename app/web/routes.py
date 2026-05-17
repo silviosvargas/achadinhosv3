@@ -3598,6 +3598,25 @@ async def fila_personalizados(
     )
 
 
+@router.get("/admin/logs", response_class=HTMLResponse)
+async def admin_logs(
+    request: Request,
+    admin: Usuario = Depends(exigir_admin_central),
+):
+    """Console de logs em tempo real (admin central / super only).
+
+    UI estilo terminal: viewport com fundo escuro mostrando logs INFO+
+    via SSE (`/api/v1/_diag/logs/stream`). Dropdown lateral lista jobs
+    antigos (via `/api/v1/_diag/logs/jobs`) pra carregar histórico de
+    uma tarefa específica. Útil pra diagnosticar bugs sem SSH.
+    """
+    return templates.TemplateResponse(
+        request, "admin_logs.html",
+        {"user": admin},
+    )
+
+
+
 @router.post("/admin/fila-personalizados/{solicitacao_id}/processar",
              response_class=HTMLResponse)
 async def fila_processar(

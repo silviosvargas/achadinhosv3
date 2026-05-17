@@ -12,16 +12,19 @@ USO:
 `org_id` opcional. Default = org do user logado. Admin central pode
 passar qualquer org.
 """
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import usuario_admin
 from app.db import get_db_async
-from app.models import Agente, Produto, StatusTarefa, Tarefa, Usuario
+from app.models import Agente, LogEntry, Produto, StatusTarefa, Tarefa, Usuario
 from app.services.agente_registry import registry
 
 router = APIRouter(prefix="/_diag", tags=["diagnóstico"])
@@ -250,3 +253,226 @@ async def diagnostico_busca(
         "tarefas_falhou_recentes":              tarefas_falhou_recentes,
         "tarefas_recentes":                     tarefas_recentes,
     }
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  LOGS PERSISTENTES (alimentados pelo processor structlog + worker
+#  em `app/core/log_buffer.py`)
+# ═════════════════════════════════════════════════════════════════════
+
+def _entry_dict(e: LogEntry) -> dict[str, Any]:
+    return {
+        "id":         e.id,
+        "ts":         e.ts.isoformat() if e.ts else None,
+        "nivel":      e.nivel,
+        "evento":     e.evento,
+        "mensagem":   e.mensagem,
+        "contexto":   e.contexto or {},
+        "source":     e.source,
+        "tarefa_id":  e.tarefa_id,
+        "org_id":     e.org_id,
+        "agente_id":  e.agente_id,
+    }
+
+
+@router.get("/logs/jobs")
+async def logs_jobs_recentes(
+    org_id: int | None = None,
+    janela_horas: int = Query(72, ge=1, le=720),
+    limite: int = Query(50, ge=1, le=200),
+    user: Usuario = Depends(usuario_admin),
+    db: AsyncSession = Depends(get_db_async),
+) -> dict[str, Any]:
+    """Lista de "jobs" recentes — agrupado por tarefa_id pra UI estilo
+    Railway: dropdown 'Logs de jobs antigos'. Cada entry traz primeiro/último
+    timestamp, count de linhas e tipo da tarefa.
+    """
+    org_alvo = _resolver_org_id(user, org_id)
+    desde = datetime.now(tz=timezone.utc) - timedelta(hours=janela_horas)
+
+    rows = list((await db.execute(
+        select(
+            LogEntry.tarefa_id,
+            func.count().label("linhas"),
+            func.min(LogEntry.ts).label("primeiro"),
+            func.max(LogEntry.ts).label("ultimo"),
+            func.max(LogEntry.nivel).label("nivel_max"),
+        )
+        .where(
+            LogEntry.tarefa_id.is_not(None),
+            LogEntry.ts >= desde,
+        )
+        .group_by(LogEntry.tarefa_id)
+        .order_by(desc(func.max(LogEntry.ts)))
+        .limit(limite * 3)  # margem pra filtrar por org depois
+    )).all())
+
+    # Pega info das tarefas referenciadas pra mostrar tipo
+    tarefa_ids = [r.tarefa_id for r in rows if r.tarefa_id]
+    tarefas_info: dict[int, Tarefa] = {}
+    if tarefa_ids:
+        t_rows = (await db.execute(
+            select(Tarefa).where(Tarefa.id.in_(tarefa_ids))
+        )).scalars().all()
+        for t in t_rows:
+            tarefas_info[t.id] = t
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        t = tarefas_info.get(r.tarefa_id)
+        if t is None:
+            continue
+        # Filtra por org (admin central vê tudo, demais só a própria)
+        if not user.eh_admin_central and t.org_id != user.org_id:
+            continue
+        if org_id is not None and t.org_id != org_alvo:
+            continue
+        out.append({
+            "tarefa_id": r.tarefa_id,
+            "tipo":      t.tipo.value if hasattr(t.tipo, "value") else str(t.tipo),
+            "status":    t.status.value if hasattr(t.status, "value") else str(t.status),
+            "org_id":    t.org_id,
+            "linhas":    r.linhas,
+            "primeiro":  r.primeiro.isoformat() if r.primeiro else None,
+            "ultimo":    r.ultimo.isoformat() if r.ultimo else None,
+            "nivel_max": r.nivel_max,
+            "criado_em": t.criado_em.isoformat() if t.criado_em else None,
+        })
+        if len(out) >= limite:
+            break
+
+    return {"jobs": out, "total": len(out), "janela_horas": janela_horas}
+
+
+@router.get("/logs")
+async def listar_logs(
+    org_id:    int | None = None,
+    tarefa_id: int | None = None,
+    nivel:     str | None = Query(None, pattern="^(INFO|WARNING|ERROR|CRITICAL)$"),
+    janela_horas: int = Query(24, ge=1, le=720),
+    limite: int = Query(500, ge=1, le=5000),
+    user: Usuario = Depends(usuario_admin),
+    db: AsyncSession = Depends(get_db_async),
+) -> dict[str, Any]:
+    """Histórico de logs (ordem ts ASC pra leitura como terminal)."""
+    org_alvo = _resolver_org_id(user, org_id)
+    desde = datetime.now(tz=timezone.utc) - timedelta(hours=janela_horas)
+
+    base = select(LogEntry).where(LogEntry.ts >= desde)
+
+    if tarefa_id is not None:
+        # Pra mostrar logs de UMA tarefa, ignora filtro de org (admin pode
+        # pedir tarefa de outra org se sabe o id). Mas valida visibilidade:
+        t = await db.get(Tarefa, tarefa_id)
+        if t is None:
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+        if not user.eh_admin_central and t.org_id != user.org_id:
+            raise HTTPException(status_code=403, detail="Sem acesso a esta tarefa")
+        base = base.where(LogEntry.tarefa_id == tarefa_id)
+    else:
+        # Sem tarefa específica: filtra por org (admin central vê tudo se
+        # não passar org_id; passou org_id → respeitado).
+        if user.eh_admin_central:
+            if org_id is not None:
+                base = base.where(LogEntry.org_id == org_alvo)
+            # Senão: vê tudo (org_id pode ser NULL pra logs do sistema)
+        else:
+            base = base.where(LogEntry.org_id == user.org_id)
+
+    if nivel is not None:
+        # Inclui o nível pedido + acima (ERROR ⊃ CRITICAL).
+        ordem = ["INFO", "WARNING", "ERROR", "CRITICAL"]
+        try:
+            i = ordem.index(nivel)
+            base = base.where(LogEntry.nivel.in_(ordem[i:]))
+        except ValueError:
+            pass
+
+    # Ordem ASC pra UI rolar de cima pra baixo igual terminal.
+    rows = list((await db.execute(
+        base.order_by(LogEntry.ts.desc()).limit(limite)
+    )).scalars().all())
+    rows.reverse()  # devolve ASC pro client (já limitado)
+
+    return {
+        "logs":          [_entry_dict(e) for e in rows],
+        "total":         len(rows),
+        "janela_horas":  janela_horas,
+        "tarefa_id":     tarefa_id,
+        "org_id":        org_alvo if org_id is not None else None,
+        "nivel_minimo":  nivel,
+    }
+
+
+async def _gerar_eventos_sse(request: Request, canais: list[str]):
+    """Generator async pra StreamingResponse — yield "data: <json>\\n\\n"
+    pra cada mensagem publicada no Redis."""
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    pubsub = r.pubsub()
+    try:
+        await pubsub.subscribe(*canais)
+        # Heartbeat inicial pro client saber que conectou
+        yield ": connected\n\n"
+
+        while True:
+            # Se client fechou a aba, sai
+            if await request.is_disconnected():
+                break
+
+            # Timeout curto pra checar disconnected periodicamente
+            msg = await pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=5.0,
+            )
+            if msg is None:
+                # Heartbeat (comentário SSE) pra manter conexão viva
+                yield ": ping\n\n"
+                continue
+
+            # data = string (decode_responses=True no Redis)
+            data = msg.get("data")
+            if not data:
+                continue
+            # Já está em JSON do publisher. Envia como single line.
+            yield f"data: {data}\n\n"
+    finally:
+        try:
+            await pubsub.unsubscribe()
+            await pubsub.aclose()
+        except Exception:
+            pass
+
+
+@router.get("/logs/stream")
+async def stream_logs(
+    request: Request,
+    org_id: int | None = None,
+    user: Usuario = Depends(usuario_admin),
+):
+    """Server-Sent Events: stream de logs em tempo real via Redis pub/sub.
+
+    Frontend conecta com `new EventSource('/api/v1/_diag/logs/stream')`.
+    Cada event tem payload JSON serializado igual a `_entry_dict`.
+
+    Filtragem por org: admin central pode passar `?org_id=N` ou ver TUDO
+    (canal "logs:all"). Demais: força no próprio org_id.
+    """
+    if user.eh_admin_central:
+        if org_id is not None:
+            canais = [f"logs:org:{org_id}"]
+        else:
+            canais = ["logs:all"]
+    else:
+        canais = [f"logs:org:{user.org_id}"]
+
+    return StreamingResponse(
+        _gerar_eventos_sse(request, canais),
+        media_type="text/event-stream",
+        headers={
+            # SSE precisa desses headers pra funcionar atrás de proxy
+            "Cache-Control":   "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection":      "keep-alive",
+        },
+    )

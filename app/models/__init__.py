@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.models.agente import Agente, Canal
 from app.models.busca import BuscaML, NichoCategoriaML
 from app.models.grupo import Grupo, GrupoNicho, Postagem
+from app.models.log_entry import LogEntry
 from app.models.organizacao import Organizacao, Plano
 from app.models.produto import (
     Nicho,
@@ -60,4 +61,6 @@ __all__ = [
     "SolicitacaoPersonalizada",
     "StatusSolicitacao",
     "TipoSolicitacao",
+    # Logs persistentes (admin diagnóstico)
+    "LogEntry",
 ]

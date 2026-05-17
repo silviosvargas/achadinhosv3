@@ -28,8 +28,28 @@ log = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Startup/shutdown da aplicação."""
     log.info("app.startup", env=settings.app_env, debug=settings.app_debug)
-    yield
-    log.info("app.shutdown")
+
+    # Worker que persiste logs INFO+ em batch no Postgres + publica no Redis
+    # pra streaming SSE em /admin/logs. Lazy import pra não puxar SQLAlchemy
+    # antes do configurar_logging (que roda no import-time deste módulo).
+    from app.core.log_buffer import iniciar_worker, parar_worker
+    await iniciar_worker()
+
+    try:
+        yield
+    finally:
+        log.info("app.shutdown")
+        # Drena buffer + para worker ordeiramente
+        try:
+            await parar_worker()
+        except Exception as e:
+            log.exception("app.shutdown.parar_worker_falhou", erro=str(e))
+        # Fecha conexão Redis se foi aberta
+        try:
+            from app.core.redis import fechar_redis
+            await fechar_redis()
+        except Exception:
+            pass
 
 
 def criar_app() -> FastAPI:

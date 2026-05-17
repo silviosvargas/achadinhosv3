@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+{% block titulo %}Logs{% endblock %}
+{% block titulo_topbar %}Logs em tempo real{% endblock %}
+{% block conteudo %}
+
+<style>
+  .logs-page { display:flex; flex-direction:column; height:calc(100vh - 100px); gap:12px; }
+  .logs-toolbar {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 14px; background:var(--bg-card,#0f172a);
+    border:1px solid var(--border,#1e293b); border-radius:10px;
+  }
+  .logs-toolbar .grupo { display:flex; align-items:center; gap:6px; }
+  .logs-toolbar select, .logs-toolbar input {
+    background:var(--bg-input,#1e293b); color:var(--texto,#f3f4f6);
+    border:1px solid var(--border,#334155); border-radius:6px;
+    padding:4px 8px; font-size:13px;
+  }
+  .logs-toolbar .btn-toolbar {
+    background:var(--bg-input,#1e293b); color:var(--texto,#f3f4f6);
+    border:1px solid var(--border,#334155); border-radius:6px;
+    padding:5px 12px; font-size:13px; cursor:pointer;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .logs-toolbar .btn-toolbar:hover { background:#334155; }
+  .logs-status {
+    margin-left:auto; display:flex; align-items:center; gap:6px;
+    font-size:13px; font-weight:500;
+  }
+  .logs-status .dot {
+    width:8px; height:8px; border-radius:50%; display:inline-block;
+  }
+  .logs-status.live   .dot { background:#10b981; box-shadow:0 0 8px #10b981; animation:pulse 1.5s infinite; }
+  .logs-status.idle   .dot { background:#facc15; }
+  .logs-status.pause  .dot { background:#94a3b8; }
+  .logs-status.error  .dot { background:#dc2626; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .logs-viewport {
+    flex:1; min-height:300px;
+    background:#0a0e1a; color:#cbd5e1;
+    border:1px solid #1e293b; border-radius:10px;
+    overflow:auto; padding:12px 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Code', monospace;
+    font-size:12.5px; line-height:1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .logs-viewport .vazio {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    height:100%; color:#475569; text-align:center;
+  }
+  .logs-viewport .vazio h2 { color:#64748b; margin:8px 0; font-size:16px; }
+  .logs-viewport .vazio .small { font-size:12px; max-width:480px; }
+
+  .log-linha { padding:2px 0; border-bottom:1px solid #111827; }
+  .log-linha:hover { background:#0f172a; }
+  .log-linha .ts      { color:#64748b; }
+  .log-linha .nivel   { display:inline-block; min-width:60px; padding:0 5px;
+                        border-radius:3px; font-size:10.5px; font-weight:600;
+                        text-align:center; margin:0 6px; }
+  .log-linha.INFO    .nivel { background:#1e3a5f; color:#7dd3fc; }
+  .log-linha.WARNING .nivel { background:#78350f; color:#fde047; }
+  .log-linha.ERROR   .nivel { background:#7f1d1d; color:#fca5a5; }
+  .log-linha.CRITICAL .nivel{ background:#581c87; color:#e9d5ff; }
+  .log-linha .evento { color:#f3f4f6; font-weight:500; }
+  .log-linha .ctx    { color:#94a3b8; font-size:11.5px; }
+  .log-linha .ctx .k { color:#64748b; }
+  .log-linha .ctx .v { color:#cbd5e1; }
+  .log-linha .tag-tarefa { color:#fbbf24; font-size:11px; margin-left:6px; }
+  .log-linha .tag-org    { color:#a78bfa; font-size:11px; margin-left:4px; }
+
+  .logs-info-bar {
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:11.5px; color:#64748b; padding:0 4px;
+  }
+</style>
+
+<div class="logs-page">
+
+  <div class="logs-toolbar">
+    <div class="grupo">
+      <button type="button" class="btn-toolbar" id="btn-limpar" title="Limpa o viewport (não afeta o banco)">
+        🗑 Limpar tela
+      </button>
+      <button type="button" class="btn-toolbar" id="btn-pausar" title="Pausa/retoma o streaming">
+        ⏸ Pausar
+      </button>
+      <button type="button" class="btn-toolbar" id="btn-autoscroll" title="Rola automaticamente pro fim ao chegar log novo">
+        🔽 Auto-rolagem: ON
+      </button>
+    </div>
+
+    <div class="grupo">
+      <label for="filtro-nivel" style="font-size:12px; color:#94a3b8;">Nível</label>
+      <select id="filtro-nivel">
+        <option value="">Todos</option>
+        <option value="INFO">INFO+</option>
+        <option value="WARNING">WARNING+</option>
+        <option value="ERROR" selected>ERROR+</option>
+      </select>
+    </div>
+
+    <div class="grupo">
+      <label for="filtro-job" style="font-size:12px; color:#94a3b8;">Carregar job</label>
+      <select id="filtro-job" style="min-width:280px;">
+        <option value="">— escolha um job —</option>
+      </select>
+      <button type="button" class="btn-toolbar" id="btn-refresh-jobs" title="Atualiza lista de jobs">
+        🔄
+      </button>
+    </div>
+
+    <div class="logs-status idle" id="status-bar">
+      <span class="dot"></span>
+      <span id="status-text">Conectando...</span>
+    </div>
+  </div>
+
+  <div class="logs-viewport" id="viewport">
+    <div class="vazio">
+      <div style="font-size:32px;">🪵</div>
+      <h2>Aguardando logs...</h2>
+      <div class="small">
+        Logs INFO+ do servidor aparecem aqui em tempo real. Rode uma busca,
+        postagem ou qualquer ação pra ver eventos. Pra ver registros antigos,
+        use o seletor <strong>"Carregar job"</strong> acima.
+      </div>
+    </div>
+  </div>
+
+  <div class="logs-info-bar">
+    <span id="info-count">0 logs no viewport</span>
+    <span id="info-modo">Modo: streaming em tempo real</span>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  const viewport = document.getElementById('viewport');
+  const statusBar = document.getElementById('status-bar');
+  const statusText = document.getElementById('status-text');
+  const btnLimpar = document.getElementById('btn-limpar');
+  const btnPausar = document.getElementById('btn-pausar');
+  const btnAutoscroll = document.getElementById('btn-autoscroll');
+  const filtroNivel = document.getElementById('filtro-nivel');
+  const filtroJob = document.getElementById('filtro-job');
+  const btnRefreshJobs = document.getElementById('btn-refresh-jobs');
+  const infoCount = document.getElementById('info-count');
+  const infoModo = document.getElementById('info-modo');
+
+  const NIVEIS_ORDEM = ["INFO", "WARNING", "ERROR", "CRITICAL"];
+  const MAX_LINHAS_VIEWPORT = 2000;  // protege RAM em sessão longa
+
+  let estado = {
+    autoscroll: true,
+    pausado: false,
+    sse: null,
+    contagem: 0,
+    nivelMinimo: "ERROR",
+    modoHistorico: false,  // true quando "Carregar job" foi selecionado
+  };
+
+  // ── HELPERS ─────────────────────────────────────────────
+
+  function setStatus(modo, texto) {
+    statusBar.className = 'logs-status ' + modo;
+    statusText.textContent = texto;
+  }
+
+  function escapeHTML(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function passaFiltroNivel(nivel) {
+    if (!estado.nivelMinimo) return true;
+    const iMin = NIVEIS_ORDEM.indexOf(estado.nivelMinimo);
+    const iAtual = NIVEIS_ORDEM.indexOf(nivel);
+    return iAtual >= iMin;
+  }
+
+  function formatarContexto(ctx) {
+    if (!ctx || typeof ctx !== 'object') return '';
+    const partes = [];
+    for (const k of Object.keys(ctx)) {
+      const v = ctx[k];
+      if (v === null || v === undefined) continue;
+      let vStr;
+      if (typeof v === 'object') {
+        vStr = JSON.stringify(v);
+        if (vStr.length > 60) vStr = vStr.slice(0, 57) + '…';
+      } else {
+        vStr = String(v);
+        if (vStr.length > 80) vStr = vStr.slice(0, 77) + '…';
+      }
+      partes.push(`<span class="k">${escapeHTML(k)}=</span><span class="v">${escapeHTML(vStr)}</span>`);
+    }
+    return partes.join(' ');
+  }
+
+  function tsCurto(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      const ss = String(d.getSeconds()).padStart(2,'0');
+      const ms = String(d.getMilliseconds()).padStart(3,'0');
+      return `${hh}:${mm}:${ss}.${ms}`;
+    } catch(e) { return iso; }
+  }
+
+  function limparViewport() {
+    viewport.innerHTML = '';
+    estado.contagem = 0;
+    atualizarInfo();
+  }
+
+  function atualizarInfo() {
+    infoCount.textContent = `${estado.contagem} log${estado.contagem !== 1 ? 's' : ''} no viewport`;
+  }
+
+  function renderizarLog(entry) {
+    if (!passaFiltroNivel(entry.nivel)) return;
+
+    const linha = document.createElement('div');
+    linha.className = 'log-linha ' + (entry.nivel || 'INFO');
+
+    const partes = [
+      `<span class="ts">${tsCurto(entry.ts)}</span>`,
+      `<span class="nivel">${escapeHTML(entry.nivel || 'INFO')}</span>`,
+      `<span class="evento">${escapeHTML(entry.evento || '—')}</span>`,
+    ];
+    if (entry.tarefa_id) partes.push(`<span class="tag-tarefa">#tarefa=${entry.tarefa_id}</span>`);
+    if (entry.org_id)    partes.push(`<span class="tag-org">org=${entry.org_id}</span>`);
+    const ctxHtml = formatarContexto(entry.contexto);
+    if (ctxHtml) partes.push(`<span class="ctx"> ${ctxHtml}</span>`);
+
+    linha.innerHTML = partes.join('');
+    viewport.appendChild(linha);
+    estado.contagem++;
+
+    // Limita o viewport pra não inchar RAM em sessão longa
+    while (viewport.childElementCount > MAX_LINHAS_VIEWPORT) {
+      viewport.removeChild(viewport.firstChild);
+      estado.contagem--;
+    }
+
+    if (estado.autoscroll) viewport.scrollTop = viewport.scrollHeight;
+    atualizarInfo();
+  }
+
+  function removerVazio() {
+    const vazio = viewport.querySelector('.vazio');
+    if (vazio) vazio.remove();
+  }
+
+  // ── SSE — streaming em tempo real ─────────────────────────
+
+  function conectarSSE() {
+    desconectarSSE();
+    setStatus('idle', 'Conectando...');
+    try {
+      const sse = new EventSource('/api/v1/_diag/logs/stream', { withCredentials: true });
+      sse.onopen = () => {
+        setStatus('live', 'Streaming live');
+        infoModo.textContent = 'Modo: streaming em tempo real';
+      };
+      sse.onmessage = (ev) => {
+        if (estado.pausado) return;
+        try {
+          const data = JSON.parse(ev.data);
+          removerVazio();
+          renderizarLog(data);
+        } catch(e) {
+          console.warn('SSE: payload inválido', ev.data);
+        }
+      };
+      sse.onerror = (e) => {
+        setStatus('error', 'Erro no stream — tentando reconectar...');
+      };
+      estado.sse = sse;
+    } catch(e) {
+      setStatus('error', 'Falha ao abrir SSE: ' + e.message);
+    }
+  }
+
+  function desconectarSSE() {
+    if (estado.sse) {
+      try { estado.sse.close(); } catch(e) {}
+      estado.sse = null;
+    }
+  }
+
+  // ── Histórico de uma tarefa específica ──────────────────
+
+  async function carregarJobs() {
+    try {
+      const r = await fetch('/api/v1/_diag/logs/jobs?janela_horas=72&limite=50', {
+        credentials: 'include',
+      });
+      if (!r.ok) {
+        filtroJob.innerHTML = '<option value="">(erro ao carregar)</option>';
+        return;
+      }
+      const d = await r.json();
+      const opts = ['<option value="">— escolha um job —</option>'];
+      (d.jobs || []).forEach(j => {
+        const ts = j.ultimo ? new Date(j.ultimo).toLocaleString('pt-BR', {
+          day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit',
+        }) : '?';
+        const sev = j.nivel_max === 'ERROR' ? '🔴' :
+                    j.nivel_max === 'WARNING' ? '🟡' : '🟢';
+        opts.push(
+          `<option value="${j.tarefa_id}">${sev} ${ts} · #${j.tarefa_id} · ${j.tipo} (${j.linhas} linhas)</option>`
+        );
+      });
+      filtroJob.innerHTML = opts.join('');
+    } catch(e) {
+      console.warn('Falha ao carregar jobs', e);
+    }
+  }
+
+  async function carregarHistorico(tarefaId) {
+    desconectarSSE();
+    estado.modoHistorico = true;
+    setStatus('idle', `Carregando histórico tarefa #${tarefaId}...`);
+    limparViewport();
+    try {
+      const r = await fetch(`/api/v1/_diag/logs?tarefa_id=${tarefaId}&janela_horas=720&limite=2000`, {
+        credentials: 'include',
+      });
+      if (!r.ok) {
+        setStatus('error', `Erro HTTP ${r.status}`);
+        return;
+      }
+      const d = await r.json();
+      removerVazio();
+      (d.logs || []).forEach(renderizarLog);
+      setStatus('pause', `Exibindo ${d.total} logs da tarefa #${tarefaId}`);
+      infoModo.textContent = `Modo: histórico tarefa #${tarefaId}`;
+    } catch(e) {
+      setStatus('error', 'Erro: ' + e.message);
+    }
+  }
+
+  function voltarAoStream() {
+    estado.modoHistorico = false;
+    filtroJob.value = '';
+    limparViewport();
+    conectarSSE();
+  }
+
+  // ── EVENTOS UI ──────────────────────────────────────────
+
+  btnLimpar.addEventListener('click', limparViewport);
+
+  btnPausar.addEventListener('click', () => {
+    estado.pausado = !estado.pausado;
+    btnPausar.innerHTML = estado.pausado ? '▶ Retomar' : '⏸ Pausar';
+    if (estado.pausado) {
+      setStatus('pause', 'Pausado');
+    } else if (estado.modoHistorico) {
+      setStatus('pause', 'Histórico carregado');
+    } else {
+      setStatus('live', 'Streaming live');
+    }
+  });
+
+  btnAutoscroll.addEventListener('click', () => {
+    estado.autoscroll = !estado.autoscroll;
+    btnAutoscroll.innerHTML = `🔽 Auto-rolagem: ${estado.autoscroll ? 'ON' : 'OFF'}`;
+  });
+
+  filtroNivel.addEventListener('change', () => {
+    estado.nivelMinimo = filtroNivel.value || null;
+    // Re-aplica filtro nas linhas existentes
+    Array.from(viewport.querySelectorAll('.log-linha')).forEach(linha => {
+      const nivel = (linha.className.split(' ')[1] || 'INFO');
+      linha.style.display = passaFiltroNivel(nivel) ? '' : 'none';
+    });
+  });
+
+  filtroJob.addEventListener('change', () => {
+    const id = filtroJob.value;
+    if (id) {
+      carregarHistorico(parseInt(id, 10));
+    } else {
+      voltarAoStream();
+    }
+  });
+
+  btnRefreshJobs.addEventListener('click', carregarJobs);
+
+  // ── BOOT ────────────────────────────────────────────────
+
+  carregarJobs();
+  conectarSSE();
+
+  // Fechar SSE ao sair da página
+  window.addEventListener('beforeunload', desconectarSSE);
+})();
+</script>
+
+{% endblock %}
