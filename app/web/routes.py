@@ -1700,7 +1700,7 @@ async def editar_usuario_submit(
     novo_ativo = (ativo == "on")
     if novo_ativo is False and target.ativo:
         ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(
-            db, target,
+            db, target, actor=user,
         )
         if not ok_s:
             return _redirect_usuarios(erro=motivo_s)
@@ -1714,7 +1714,7 @@ async def editar_usuario_submit(
         # Se for rebaixamento de admin/super, valida salvaguarda
         if papel_service.proximo_papel_acima(target.papel) != papel:
             ok_s, motivo_s = await papel_service.checar_salvaguardas_rebaixamento(
-                db, target, papel,
+                db, target, papel, actor=user,
             )
             if not ok_s:
                 return _redirect_usuarios(erro=motivo_s)
@@ -1764,7 +1764,7 @@ async def rebaixar_usuario(
         return _redirect_usuarios(erro=motivo)
 
     ok_s, motivo_s = await papel_service.checar_salvaguardas_rebaixamento(
-        db, target, novo,
+        db, target, novo, actor=user,
     )
     if not ok_s:
         return _redirect_usuarios(erro=motivo_s)
@@ -1790,7 +1790,9 @@ async def desativar_usuario(
     if not target.ativo:
         return _redirect_usuarios(mensagem=f"{target.login} já estava desativado")
 
-    ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(db, target)
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(
+        db, target, actor=user,
+    )
     if not ok_s:
         return _redirect_usuarios(erro=motivo_s)
 
@@ -1839,7 +1841,9 @@ async def excluir_usuario(
     if not ok:
         return _redirect_usuarios(erro=motivo)
 
-    ok_s, motivo_s = await papel_service.checar_salvaguardas_exclusao(db, target)
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_exclusao(
+        db, target, actor=user,
+    )
     if not ok_s:
         return _redirect_usuarios(erro=motivo_s)
 

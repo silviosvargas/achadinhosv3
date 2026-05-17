@@ -124,7 +124,7 @@ async def atualizar(
         if papel_service.proximo_papel_acima(target.papel) != body.papel:
             # Rebaixamento (não promove 1 degrau pra cima): verifica salvaguarda
             ok_s, motivo_s = await papel_service.checar_salvaguardas_rebaixamento(
-                db, target, body.papel,
+                db, target, body.papel, actor=admin,
             )
             if not ok_s:
                 raise HTTPException(status_code=409, detail=motivo_s)
@@ -145,7 +145,7 @@ async def atualizar(
         # Desativar = perde acesso. Aplica salvaguardas (último admin/super).
         if body.ativo is False and target.ativo:
             ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(
-                db, target,
+                db, target, actor=admin,
             )
             if not ok_s:
                 raise HTTPException(status_code=409, detail=motivo_s)
@@ -194,7 +194,9 @@ async def desativar(
     if not target.ativo:
         return Mensagem(mensagem="Usuário já estava desativado")
 
-    ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(db, target)
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(
+        db, target, actor=admin,
+    )
     if not ok_s:
         raise HTTPException(status_code=409, detail=motivo_s)
 
@@ -245,7 +247,9 @@ async def excluir_permanente(
     if not ok:
         raise HTTPException(status_code=403, detail=motivo)
 
-    ok_s, motivo_s = await papel_service.checar_salvaguardas_exclusao(db, target)
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_exclusao(
+        db, target, actor=admin,
+    )
     if not ok_s:
         raise HTTPException(status_code=409, detail=motivo_s)
 

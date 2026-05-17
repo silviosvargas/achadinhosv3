@@ -146,14 +146,20 @@ def pode_desativar(actor: Usuario, target: Usuario) -> tuple[bool, str]:
 
 
 async def checar_salvaguardas_exclusao(
-    db: AsyncSession, target: Usuario,
+    db: AsyncSession, target: Usuario, actor: Usuario | None = None,
 ) -> tuple[bool, str]:
     """Checks que dependem do estado do DB:
 
     1. Não pode excluir o ÚLTIMO super ativo do sistema (perderíamos a
-       cadeia de promoção pra super).
+       cadeia de promoção pra super). **Sempre aplicada** — nem super
+       escapa, senão fica impossível reabilitar a hierarquia.
     2. Não pode excluir o ÚLTIMO admin ativo de uma org (org ficaria
-       sem ninguém capaz de gerenciá-la).
+       sem ninguém capaz de gerenciá-la). **Super ignora** essa salvaguarda
+       quando passa `actor=super` — pra permitir limpeza de orgs de teste
+       sem precisar promover ninguém antes. Admin não-super continua barrado.
+
+    `actor=None` aplica todas as salvaguardas (modo conservador). Sempre
+    passe `actor=user_logado` quando souber quem está executando.
     """
     if target.papel == "super":
         total = await db.scalar(
@@ -168,38 +174,44 @@ async def checar_salvaguardas_exclusao(
             )
 
     if target.papel in ("admin", "super"):
-        total_org = await db.scalar(
-            select(func.count())
-            .select_from(Usuario)
-            .where(
-                Usuario.org_id == target.org_id,
-                Usuario.papel.in_(("admin", "super")),
-                Usuario.ativo.is_(True),
-            )
-        ) or 0
-        if total_org <= 1:
-            return (
-                False,
-                "Esta organização ficaria sem admin — promova outro antes",
-            )
+        super_pode_pular = actor is not None and actor.eh_super
+        if not super_pode_pular:
+            total_org = await db.scalar(
+                select(func.count())
+                .select_from(Usuario)
+                .where(
+                    Usuario.org_id == target.org_id,
+                    Usuario.papel.in_(("admin", "super")),
+                    Usuario.ativo.is_(True),
+                )
+            ) or 0
+            if total_org <= 1:
+                return (
+                    False,
+                    "Esta organização ficaria sem admin — promova outro antes",
+                )
 
     return True, ""
 
 
 async def checar_salvaguardas_desativacao(
-    db: AsyncSession, target: Usuario,
+    db: AsyncSession, target: Usuario, actor: Usuario | None = None,
 ) -> tuple[bool, str]:
     """Mesmas salvaguardas da exclusão — desativar o último super/admin
-    causa o mesmo problema lógico (perde acesso administrativo)."""
-    return await checar_salvaguardas_exclusao(db, target)
+    causa o mesmo problema lógico (perde acesso administrativo).
+    Super também ignora a salvaguarda 'último admin da org'."""
+    return await checar_salvaguardas_exclusao(db, target, actor=actor)
 
 
 async def checar_salvaguardas_rebaixamento(
     db: AsyncSession, target: Usuario, novo_papel: str,
+    actor: Usuario | None = None,
 ) -> tuple[bool, str]:
     """Rebaixar = manter user ativo mas reduzir privilégio. Aplica as
     mesmas regras: não rebaixe o último super/admin da org pra papel
-    sem privilégio (admin → afiliado é rebaixamento)."""
+    sem privilégio (admin → afiliado é rebaixamento).
+    Super ignora a salvaguarda 'último admin da org' (rebaixar admin
+    único de uma org cliente é OK — org fica zumbi até admin central limpar)."""
     rebaixando_super = (
         target.papel == "super" and novo_papel != "super"
     )
@@ -220,19 +232,21 @@ async def checar_salvaguardas_rebaixamento(
             )
 
     if rebaixando_admin:
-        total_org = await db.scalar(
-            select(func.count())
-            .select_from(Usuario)
-            .where(
-                Usuario.org_id == target.org_id,
-                Usuario.papel.in_(("admin", "super")),
-                Usuario.ativo.is_(True),
-            )
-        ) or 0
-        if total_org <= 1:
-            return (
-                False,
-                "Esta organização ficaria sem admin — promova outro antes",
-            )
+        super_pode_pular = actor is not None and actor.eh_super
+        if not super_pode_pular:
+            total_org = await db.scalar(
+                select(func.count())
+                .select_from(Usuario)
+                .where(
+                    Usuario.org_id == target.org_id,
+                    Usuario.papel.in_(("admin", "super")),
+                    Usuario.ativo.is_(True),
+                )
+            ) or 0
+            if total_org <= 1:
+                return (
+                    False,
+                    "Esta organização ficaria sem admin — promova outro antes",
+                )
 
     return True, ""
