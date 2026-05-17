@@ -51,8 +51,10 @@ from app.models import (
     Plano,
     Produto,
     ProdutoNicho,
+    StatusTarefa,
     Tarefa,
     TemplateMensagem,
+    TipoTarefa,
     Usuario,
 )
 from app.services import (
@@ -2470,6 +2472,221 @@ async def excluir_todos_produtos(
     apagados = result.rowcount or 0
     return RedirectResponse(
         url=f"/produtos?mensagem=Apagados+{apagados}+produtos",
+        status_code=302,
+    )
+
+
+# ============================================================
+# Busca rápida (admin central): URL → adiciona direto; termo → preview
+# ============================================================
+
+def _classificar_busca_rapida(entrada: str) -> str:
+    """Retorna 'url' ou 'termo'. URL exige marketplace conhecido."""
+    e = (entrada or "").strip().lower()
+    if e.startswith(("http://", "https://")):
+        if any(d in e for d in (
+            "mercadolivre.com", "shopee.com", "amazon.com.br",
+        )):
+            return "url"
+        # URL desconhecida (social, etc) — trata como termo livre.
+        # Usuário pode digitar uma palavra-chave se preferir.
+        return "termo"
+    return "termo"
+
+
+@router.post("/produtos/buscar-rapida", response_class=HTMLResponse)
+async def buscar_rapida_iniciar(
+    entrada: str = Form(...),
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Cria Tarefa BUSCAR_MERCADO_LIVRE e redireciona pra página de
+    espera. URL → 1 produto, modo direto. Termo → 10 produtos, modo
+    preview (mostra checkboxes pra usuário escolher)."""
+    from urllib.parse import quote_plus
+    from app.services.agente_registry import registry
+
+    entrada = (entrada or "").strip()
+    if not entrada:
+        return RedirectResponse(
+            url="/produtos?erro=" + quote_plus("Digite uma palavra-chave ou link"),
+            status_code=302,
+        )
+    if len(entrada) > 500:
+        return RedirectResponse(
+            url="/produtos?erro=" + quote_plus("Entrada muito longa"),
+            status_code=302,
+        )
+
+    tipo_dec = _classificar_busca_rapida(entrada)
+    if tipo_dec == "url":
+        tipo_busca   = "por_url"
+        tipo_entrada = "url"
+        max_produtos = 1
+    else:
+        tipo_busca   = "termo_livre"
+        tipo_entrada = "termo"
+        max_produtos = 10
+
+    # Acha 1º agente da org central que está online
+    agentes = list((await db.execute(
+        select(Agente).where(
+            Agente.org_id == admin.org_id,
+            Agente.ativo.is_(True),
+        )
+    )).scalars().all())
+    agente = next((a for a in agentes if registry.esta_online(a.id)), None)
+    if agente is None:
+        return RedirectResponse(
+            url="/produtos?erro=" + quote_plus(
+                "Seu agente não está online. Abra o agente no PC e tente novamente."
+            ),
+            status_code=302,
+        )
+
+    tarefa = Tarefa(
+        org_id=admin.org_id,
+        tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
+        status=StatusTarefa.PENDENTE,
+        agente_id=agente.id,
+        payload={
+            "tipo_entrada":  tipo_entrada,
+            "entrada":       entrada,
+            "max_paginas":   1,
+            "max_produtos":  max_produtos,
+            "tipo_busca":    tipo_busca,
+            "marketplaces":  ["ml"],
+            # Marker pra UI saber que essa tarefa foi disparada da busca
+            # rápida (e pra modo de exibição na página de polling).
+            "_busca_rapida_modo": "imediato" if tipo_dec == "url" else "preview",
+        },
+        criado_por_usuario_id=admin.id,
+    )
+    db.add(tarefa)
+    await db.flush()
+    await db.commit()
+    await db.refresh(tarefa)
+
+    await dispatcher._tentar_entrega(db, tarefa)
+
+    log.info("buscar_rapida.iniciada",
+             tarefa_id=tarefa.id, tipo=tipo_dec,
+             entrada=entrada[:80], admin_id=admin.id)
+    return RedirectResponse(
+        url=f"/produtos/buscar-rapida/{tarefa.id}", status_code=302,
+    )
+
+
+@router.get("/produtos/buscar-rapida/{tarefa_id}",
+            response_class=HTMLResponse)
+async def buscar_rapida_status(
+    tarefa_id: int,
+    request: Request,
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Página de espera + preview. Auto-refresh enquanto PENDENTE/PROCESSANDO.
+    Quando CONCLUIDA:
+    - modo `imediato` (URL): mostra produto + auto-redirect /produtos em 3s
+    - modo `preview` (termo): mostra grid com checkboxes
+    """
+    t = await db.get(Tarefa, tarefa_id)
+    if t is None or t.org_id != admin.org_id:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    payload = t.payload or {}
+    modo = payload.get("_busca_rapida_modo", "preview")
+    entrada = payload.get("entrada") or ""
+    status_str = t.status.value if hasattr(t.status, "value") else str(t.status)
+
+    # Se ainda rodando: só mostra status, o JS faz auto-refresh
+    produtos_view = []
+    if status_str == "concluida":
+        # Pega produtos criados na janela da tarefa (margem de 2min após
+        # conclusão pra cobrir delay de commit/timezone). Inclui ATUALIZADOS
+        # também (mesmo se o produto já existia, ele "veio dessa busca").
+        from datetime import timedelta
+        ini = t.iniciado_em or t.criado_em
+        fim = (t.concluido_em or t.atualizado_em or t.criado_em) + timedelta(minutes=2)
+        produtos_rows = list((await db.execute(
+            select(Produto)
+            .where(
+                Produto.org_id == admin.org_id,
+                Produto.descoberto_em >= ini,
+                Produto.descoberto_em <= fim,
+            )
+            .order_by(Produto.descoberto_em.desc())
+        )).scalars().all())
+        produtos_view = produtos_rows
+
+    return templates.TemplateResponse(
+        request, "produtos_buscar_rapida.html",
+        {
+            "user":          admin,
+            "tarefa":        t,
+            "status":        status_str,
+            "modo":          modo,
+            "entrada":       entrada,
+            "produtos":      produtos_view,
+        },
+    )
+
+
+@router.post("/produtos/buscar-rapida/{tarefa_id}/confirmar",
+             response_class=HTMLResponse)
+async def buscar_rapida_confirmar(
+    tarefa_id: int,
+    request: Request,
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Recebe checkbox[manter] da UI. Apaga os produtos NÃO selecionados
+    (que vieram nessa busca). Retorna pra /produtos com contagem."""
+    from urllib.parse import quote_plus
+    from datetime import timedelta
+
+    t = await db.get(Tarefa, tarefa_id)
+    if t is None or t.org_id != admin.org_id:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+
+    form = await request.form()
+    manter_ids_raw = form.getlist("manter")
+    manter_ids = set()
+    for v in manter_ids_raw:
+        try:
+            manter_ids.add(int(v))
+        except (ValueError, TypeError):
+            continue
+
+    # Carrega todos os produtos da janela dessa tarefa
+    ini = t.iniciado_em or t.criado_em
+    fim = (t.concluido_em or t.atualizado_em or t.criado_em) + timedelta(minutes=2)
+    candidatos = list((await db.execute(
+        select(Produto).where(
+            Produto.org_id == admin.org_id,
+            Produto.descoberto_em >= ini,
+            Produto.descoberto_em <= fim,
+        )
+    )).scalars().all())
+
+    mantidos = 0
+    apagados = 0
+    for p in candidatos:
+        if p.id in manter_ids:
+            mantidos += 1
+        else:
+            await db.delete(p)
+            apagados += 1
+    await db.commit()
+
+    log.info("buscar_rapida.confirmada",
+             tarefa_id=tarefa_id, mantidos=mantidos, apagados=apagados,
+             admin_id=admin.id)
+    msg = f"{mantidos} produto(s) adicionado(s)"
+    if apagados:
+        msg += f" · {apagados} descartado(s)"
+    return RedirectResponse(
+        url="/produtos?mensagem=" + quote_plus(msg),
         status_code=302,
     )
 

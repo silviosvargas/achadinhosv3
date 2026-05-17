@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+{% block titulo %}Buscando produto...{% endblock %}
+{% block titulo_topbar %}Buscando produto{% endblock %}
+{% block conteudo %}
+
+<style>
+  .br-status-card {
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 28px 24px;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  .br-status-card.rodando {
+    border-color: var(--primario-400, #38bdf8);
+  }
+  .br-status-card.ok      { border-color: #10b981; }
+  .br-status-card.erro    { border-color: #dc2626; }
+  .br-spinner {
+    display: inline-block;
+    width: 42px;
+    height: 42px;
+    border: 4px solid var(--border);
+    border-top-color: var(--primario-500, #10b981);
+    border-radius: 50%;
+    animation: br-spin 0.9s linear infinite;
+    margin-bottom: 14px;
+  }
+  @keyframes br-spin { to { transform: rotate(360deg); } }
+  .br-progresso-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 12px;
+  }
+  .br-progresso-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #06b6d4);
+    transition: width 0.3s ease;
+  }
+  .br-checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .br-card {
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    position: relative;
+  }
+  .br-card:hover { box-shadow: var(--sh-md); }
+  .br-card.selecionado {
+    border-color: var(--primario-500, #10b981);
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+  }
+  .br-card .br-cb {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    accent-color: var(--primario-500, #10b981);
+    cursor: pointer;
+    z-index: 2;
+  }
+  .br-card img, .br-card .br-foto-vazia {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: contain;
+    background: var(--bg);
+    display: block;
+    border-bottom: 1px solid var(--border);
+  }
+  .br-card .br-foto-vazia {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 50px; color: var(--gray-300);
+  }
+  .br-card .br-info { padding: 10px 12px; }
+  .br-card .br-nome {
+    font-size: 12.5px;
+    font-weight: 500;
+    min-height: 34px;
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .br-card .br-preco {
+    margin-top: 6px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .br-card .br-com {
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+</style>
+
+<header class="page-header">
+  <h1>🚀 Buscar e adicionar produto</h1>
+  <p class="muted small">
+    Busca <strong>#{{ tarefa.id }}</strong> ·
+    {% if modo == 'imediato' %}
+      🔗 URL — adiciona direto após scraping
+    {% else %}
+      🔎 Termo "{{ entrada }}" — você escolhe quais entram
+    {% endif %}
+  </p>
+</header>
+
+{# ═══════ STATUS ═══════ #}
+{% if status in ('pendente', 'processando') %}
+  {% set _aguardando = (status == 'pendente') %}
+  <section class="br-status-card rodando">
+    <div class="br-spinner"></div>
+    <h2 style="margin:0 0 6px; font-size:18px;">
+      {% if _aguardando %}
+        ⏳ Aguardando agente pegar a tarefa...
+      {% else %}
+        🤖 Agente processando ({{ tarefa.progresso_pct|int }}%)
+      {% endif %}
+    </h2>
+    <p class="muted small" style="margin:0;">
+      {{ tarefa.progresso_mensagem or 'Chrome abrindo, fazendo scraping, capturando comissão...' }}
+    </p>
+    {% if tarefa.progresso_pct and tarefa.progresso_pct > 0 %}
+    <div class="br-progresso-bar">
+      <div class="br-progresso-fill" style="width: {{ tarefa.progresso_pct|int }}%;"></div>
+    </div>
+    {% endif %}
+    <p class="muted small" style="margin-top:14px;">
+      A página atualiza sozinha. Pode deixar aberta.
+    </p>
+  </section>
+  <p style="text-align:center; margin-top:18px;">
+    <a href="/produtos" class="btn-link">← Voltar pra produtos (busca continua em background)</a>
+  </p>
+
+  {# AUTO-REFRESH a cada 2s enquanto rodando #}
+  <script>
+    setTimeout(function() { location.reload(); }, 2000);
+  </script>
+
+{% elif status == 'falhou' %}
+  <section class="br-status-card erro">
+    <div style="font-size:48px;">❌</div>
+    <h2 style="margin:0 0 8px; font-size:18px; color:#dc2626;">
+      Busca falhou
+    </h2>
+    <p class="muted" style="margin:0 0 14px;">
+      {{ tarefa.erro or 'Erro desconhecido. Veja /admin/logs pra detalhes.' }}
+    </p>
+    <div style="display:flex; gap:10px; justify-content:center;">
+      <a href="/produtos" class="btn">← Voltar pra produtos</a>
+      <a href="/admin/logs" class="btn">🪵 Ver logs</a>
+    </div>
+  </section>
+
+{% elif status == 'cancelada' %}
+  <section class="br-status-card erro">
+    <div style="font-size:48px;">⊘</div>
+    <h2 style="margin:0 0 8px; font-size:18px;">Busca cancelada</h2>
+    <a href="/produtos" class="btn">← Voltar pra produtos</a>
+  </section>
+
+{% else %}  {# concluida #}
+
+  {% if not produtos %}
+    <section class="br-status-card erro">
+      <div style="font-size:48px;">📭</div>
+      <h2 style="margin:0 0 8px; font-size:18px;">
+        Nenhum produto encontrado
+      </h2>
+      <p class="muted">
+        O agente concluiu a busca mas não trouxe produtos.
+        {% if modo == 'imediato' %}
+          A URL pode estar quebrada ou o produto foi removido.
+        {% else %}
+          Termo muito específico. Tente outra palavra-chave.
+        {% endif %}
+      </p>
+      <a href="/produtos" class="btn">← Voltar pra produtos</a>
+    </section>
+
+  {% elif modo == 'imediato' %}
+    {# URL — adicionou direto, só mostra e redireciona em 3s #}
+    <section class="br-status-card ok">
+      <div style="font-size:48px;">✅</div>
+      <h2 style="margin:0 0 12px; font-size:18px;">
+        Produto adicionado ao catálogo!
+      </h2>
+      {% set _p = produtos[0] %}
+      <div style="display:flex; gap:14px; max-width:520px; margin:0 auto;
+                  text-align:left; padding:14px; border:1px solid var(--border);
+                  border-radius:var(--r-md); background:var(--bg);">
+        {% if _p.foto_url %}
+        <img src="{{ _p.foto_url }}" alt=""
+             style="width:90px; height:90px; object-fit:contain; border-radius:6px;">
+        {% endif %}
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:600; font-size:13px;">
+            {{ _p.nome[:120] }}{% if _p.nome|length > 120 %}…{% endif %}
+          </div>
+          <div style="margin-top:6px;">
+            <strong style="font-size:16px;">R$ {{ "%.2f"|format(_p.preco)|replace('.', ',') }}</strong>
+            {% if _p.comissao %}
+              <span class="muted small" style="margin-left:8px;">
+                · {{ "%.1f"|format(_p.comissao) }}% comissão
+              </span>
+            {% endif %}
+          </div>
+          {% if _p.url_afiliado %}
+          <a href="{{ _p.url_afiliado }}" target="_blank" rel="noopener noreferrer"
+             class="btn-link" style="font-size:11px;">
+            🔗 {{ _p.url_afiliado[:60] }}{% if _p.url_afiliado|length > 60 %}…{% endif %}
+          </a>
+          {% endif %}
+        </div>
+      </div>
+      <p class="muted small" style="margin-top:14px;">
+        Redirecionando pra /produtos em 3s...
+      </p>
+      <a href="/produtos" class="btn btn-primario" style="margin-top:8px;">
+        Ir agora →
+      </a>
+    </section>
+    <script>
+      setTimeout(function() { location.href = '/produtos'; }, 3000);
+    </script>
+
+  {% else %}
+    {# TERMO — preview com checkboxes #}
+    <section class="br-status-card ok" style="padding:18px 24px; text-align:left;">
+      <h2 style="margin:0 0 4px; font-size:17px;">
+        ✅ {{ produtos|length }} produto{{ 's' if produtos|length != 1 else '' }} encontrado{{ 's' if produtos|length != 1 else '' }}
+      </h2>
+      <p class="muted small" style="margin:0;">
+        Marque os que quer manter no catálogo. Os desmarcados serão apagados.
+        Tempo de busca: <strong>{{ tarefa.duracao_seg or '?' }}s</strong>.
+      </p>
+    </section>
+
+    <form method="post" action="/produtos/buscar-rapida/{{ tarefa.id }}/confirmar"
+          id="form-confirma-br">
+      {# Barra de ações fixa no topo #}
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                  background:var(--bg-card); padding:12px 16px;
+                  border:1px solid var(--border); border-radius:var(--r-md);
+                  position:sticky; top:0; z-index:5; margin-bottom:14px;">
+        <button type="button" id="btn-marcar-todos" class="btn"
+                style="height:34px; padding:0 14px; font-size:13px;">
+          ✓ Marcar todos
+        </button>
+        <button type="button" id="btn-desmarcar-todos" class="btn"
+                style="height:34px; padding:0 14px; font-size:13px;">
+          ✕ Desmarcar todos
+        </button>
+        <span class="muted small" id="contador-sel" style="margin-left:auto;">
+          {{ produtos|length }} selecionado(s)
+        </span>
+        <button type="submit" class="btn btn-primario"
+                style="height:34px; padding:0 18px; font-size:13px;">
+          ✓ Adicionar selecionados
+        </button>
+        <a href="/produtos/buscar-rapida/{{ tarefa.id }}/confirmar"
+           class="btn"
+           style="height:34px; padding:0 14px; font-size:13px;
+                  background:transparent; border:1px solid var(--vermelho,#dc2626);
+                  color:var(--vermelho,#dc2626);"
+           onclick="if(!confirm('Apagar TODOS os {{ produtos|length }} produtos dessa busca?')) { event.preventDefault(); return false; }
+                    document.getElementById('form-confirma-br').reset();
+                    document.querySelectorAll('input.br-cb').forEach(c=>c.checked=false);
+                    document.getElementById('form-confirma-br').submit(); event.preventDefault();">
+          🗑 Descartar tudo
+        </a>
+      </div>
+
+      <div class="br-checkbox-grid">
+        {% for p in produtos %}
+        <label class="br-card selecionado" data-pid="{{ p.id }}">
+          <input type="checkbox" class="br-cb" name="manter" value="{{ p.id }}" checked>
+          {% if p.foto_url %}
+          <img src="{{ p.foto_url }}" alt="" loading="lazy">
+          {% else %}
+          <div class="br-foto-vazia">📦</div>
+          {% endif %}
+          <div class="br-info">
+            <div class="br-nome" title="{{ p.nome }}">
+              {{ p.nome[:80] }}{% if p.nome|length > 80 %}…{% endif %}
+            </div>
+            <div class="br-preco">
+              R$ {{ "%.2f"|format(p.preco)|replace('.', ',') }}
+              {% if p.preco_orig and p.preco_orig > p.preco %}
+                <small style="text-decoration:line-through; color:var(--muted); font-weight:400;">
+                  R$ {{ "%.2f"|format(p.preco_orig)|replace('.', ',') }}
+                </small>
+              {% endif %}
+            </div>
+            {% if p.comissao %}
+            <div class="br-com">
+              {{ "%.1f"|format(p.comissao) }}% comissão
+              {% if p.url_afiliado and 'meli.la/' in p.url_afiliado %}
+                · <span title="Link de afiliado meli.la pronto">✅ meli.la</span>
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+    </form>
+
+    <script>
+      (function() {
+        const cards = document.querySelectorAll('.br-card');
+        const contador = document.getElementById('contador-sel');
+
+        function atualizarContador() {
+          const n = document.querySelectorAll('input.br-cb:checked').length;
+          contador.textContent = n + ' selecionado(s)';
+        }
+
+        cards.forEach(card => {
+          const cb = card.querySelector('input.br-cb');
+          // Clique no card alterna checkbox (mas ignora clicks na própria checkbox + links internos)
+          card.addEventListener('click', function(e) {
+            if (e.target.tagName === 'A' || e.target === cb) return;
+            cb.checked = !cb.checked;
+            card.classList.toggle('selecionado', cb.checked);
+            atualizarContador();
+          });
+          cb.addEventListener('change', function() {
+            card.classList.toggle('selecionado', cb.checked);
+            atualizarContador();
+          });
+        });
+
+        document.getElementById('btn-marcar-todos').addEventListener('click', function() {
+          document.querySelectorAll('input.br-cb').forEach(c => {
+            c.checked = true;
+            c.closest('.br-card').classList.add('selecionado');
+          });
+          atualizarContador();
+        });
+        document.getElementById('btn-desmarcar-todos').addEventListener('click', function() {
+          document.querySelectorAll('input.br-cb').forEach(c => {
+            c.checked = false;
+            c.closest('.br-card').classList.remove('selecionado');
+          });
+          atualizarContador();
+        });
+      })();
+    </script>
+  {% endif %}
+{% endif %}
+
+{% endblock %}

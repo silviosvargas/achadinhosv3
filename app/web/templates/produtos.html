@@ -52,6 +52,35 @@
 {% if _mensagem %}
 <div class="alerta alerta-ok" style="margin-bottom:12px;">{{ _mensagem }}</div>
 {% endif %}
+{% set _erro = request.query_params.get('erro') %}
+{% if _erro %}
+<div class="alerta alerta-erro" style="margin-bottom:12px;">{{ _erro }}</div>
+{% endif %}
+
+{# ── BUSCA RÁPIDA (só admin central) ─────────────────────────────
+   URL → adiciona direto (sem preview).
+   Termo → mostra preview com checkboxes pra escolher quais ficam.
+#}
+{% if pode_criar %}
+<section class="card card-destaque"
+         style="padding:18px 20px; margin-bottom:20px;
+                border:2px solid var(--primario-300, #a5f3fc);">
+  <h3 style="margin:0 0 6px; font-size:15px;">🚀 Buscar e adicionar produto</h3>
+  <p class="muted small" style="margin:0 0 12px;">
+    Cole um <strong>link de produto</strong> (ML/Shopee/Amazon) — adiciona direto.
+    Ou digite uma <strong>palavra-chave</strong> — mostra preview pra você escolher quais entram.
+  </p>
+  <form method="post" action="/produtos/buscar-rapida"
+        style="display:flex; gap:8px; flex-wrap:wrap;">
+    <input type="text" name="entrada" required autocomplete="off"
+           placeholder="🔎 Palavra-chave ou link do produto"
+           style="flex:1; min-width:280px; height:42px; font-size:15px; padding:0 14px;">
+    <button type="submit" class="btn btn-primario" style="height:42px; padding:0 22px;">
+      🔍 Buscar agora
+    </button>
+  </form>
+</section>
+{% endif %}
 
 <details class="filtros-card" {% if filtros_ativos %}open{% endif %}
          style="margin:16px 0 18px; border:1px solid var(--border, #e5e7eb);
