@@ -171,6 +171,23 @@ python -m agent.main --sem-tray   # roda
 - **3.24.1** — v3.6.1: botão **"✕ Cancelar"** na barra de progresso. Cancelamento cooperativo via flag global thread-safe (`agent/cancelamento.py`). `dispatcher.cancelar` envia comando WS pro agente + marca CANCELADA. Agente checa flag entre etapas, para gracioso.
 - **3.25.0** — Fase 20.1: captura simplificada (v3.7.0). User REVERTEU orientação anterior: agora abrir URL canônica DIRETO (não meli.la → /social/). Chrome do agente está logado como afiliado em `chrome_perfil_ml` → barra preta aparece automática. ~3x mais rápido. **Tempo decorrido** na barra (`⏱ Xmin Ys`) calculado server-side. **`tarefas.duracao_seg`** (migration 0014) preenchido em `_calcular_duracao_seg` quando tarefa termina. Mensagem final "✓ Concluído em Xmin Ys".
 - **3.25.1** — v3.7.1: **meli.la gerado em batches incrementais** durante `_processar_categoria` (a cada 10 capturados, não no fim). Check de cancelamento DENTRO do loop (entre produtos, não só entre categorias). Garantia: se cancelar no produto 4 de uma categoria, gera meli.la pros 4 antes de parar — nenhum produto perdido.
+- **3.26.0** — Fase 21 (Coluna `produtos.comissao_extra` + busca padrão `ml_comissao_extra`). Migration 0015 adiciona coluna FLOAT NULL (% do bônus GANHOS EXTRAS). `_upsert_produto` lê `item.comissao_extra` e grava respeitando hierarquia de fonte. Nova busca padrão `ml_comissao_extra` itera 8 categorias e mantém só produtos com bônus EXTRAS > 0. `/produtos` ganhou filtro "🎁 Só com bônus EXTRAS" + badge dourado `🎁 +X% extra` na coluna comissão. Servidor commit `dad7fdc`.
+- **3.26.1** — v3.8.0 lançado: `_capturar_comissao_e_preco_no_destino` passou a retornar tupla `(efetiva, extra, preco)` separadamente (antes só efetiva). Permite servidor marcar `produtos.comissao_extra` quando agente capturar bônus. Busca padrão completa (`mais_vendidos_completo`) também passou a salvar `comissao_extra` automaticamente quando detecta.
+- **3.26.2** — v3.8.1-3.8.4 (4 releases queimadas tentando capturar EXTRAS). v3.8.1 telemetria + diagnóstico em disco. v3.8.2 simplificou JS pra body inteiro. v3.8.3 multi-fontes (body + iframes + outerHTML) + sleep 3s. v3.8.4 **fix definitivo**: user mostrou DevTools — `span.stripe-commission__percentage` + `span.stripe-commission__pillsecond` são os seletores reais. Regex no body falhava porque ML renderiza spans BEM sem whitespace entre tags (`"EXTRAS9%"` → regex com `\s+` não match). Captura via seletor CSS direto. Nova memória `feedback_ml_seletor_stripe.md` + armadilha em CLAUDE.md.
+- **3.26.3** — v3.8.5: regra da busca extras mudou de `alvo_total=10` (global) pra `min_por_categoria=3` (sem teto). Visita TODAS as 8 categorias, mantém ≥3 com extras por categoria ou esgota candidatos. Sem limite total.
+- **3.27.0** — Fase 22 (Curadoria TOP melhorias). Commit `5427524` servidor-only. Botão "🔄 Atualizar TOP" recarrega lista (query já filtra postados nos últimos 7 dias). Botão 🗑️ excluir por card (POST `/curadoria/top/{id}/excluir` com confirmação dupla, CASCADE limpa nichos + redirects). Limite default 50 → 30. Endpoint aceita `?limite=N` (clamp 10–100).
+- **3.27.1** — Fase 22.1 (Buscas padrão Shopee + Amazon). Commit `960459b` servidor-only. 2 novas entradas em `app/core/buscas_padrao.py`: `shopee_mais_vendidos` (50 produtos via API afiliados, ~30s) + `amazon_bestsellers` (50 via SiteStripe, ~3min). Reaproveitam `buscar_shopee`/`buscar_amazon` existentes (zero release agente). Service aceita campo `mensagem_run` custom por busca. Template `buscas.html` ganhou `data-confirm` genérico.
+- **3.27.2** — Hotfix cache `/agentes/instalador` (commit `5efde96`). TTL reduzido 5min → 60s + bypass `?nocache=1`. User reportou botão "Atualizar agente" baixando v3.8.3 mesmo após publicar v3.8.4. Cache do redirect estava prendendo URL antiga.
+- **3.28.0** — Maratona Shopee captcha v3.8.6 → v3.8.14 (9 releases até estabilizar). Resumo:
+  - **v3.8.6**: copiou `_aguardar_com_retry` da Amazon (30s × 3 com reload). Quebrou Shopee — cada `driver.get(URL_PAINEL)` em sessão marcada re-emite captcha → loop infinito. User: "ESSA SESSAO ESTRAGOU O CODIGO".
+  - **v3.8.7**: detecção de captcha modal via DOM (URL não muda). + retry agressivo no meio do loop API. Piorou.
+  - **v3.8.8**: revertido pro commit `f6f177a` + patch mínimo (`_aguardar_captcha` sem reload).
+  - **v3.8.9**: detecção DOM + sleep(30) puro.
+  - **v3.8.10**: forçava captcha quando URL fora do painel.
+  - **v3.8.11**: status!=200 sempre força + ping inicial + **botão clicável "✅ CAPTCHA RESOLVIDO! Continuar..."**.
+  - **v3.8.12**: detecta Chrome fechado durante polling (Selenium WebDriverException).
+  - **v3.8.13**: ANALISOU V2 (`ACHADINHOSV2 - FUNCIONAL/src/buscar/shopee.py`) — modelo é **URL only + input() bloqueante + sem retry**. Simplificou pra espelhar V2. 102 linhas removidas.
+  - **v3.8.14**: user reforçou "AGUARDAR 30s OBRIGATÓRIOS, independente de qualquer clique ou reload". `_aguardar_captcha` virou literalmente `time.sleep(30)` puro. Sem polling, sem botão de interrupção, sem timeout. Lição registrada: nova memória `feedback_shopee_captcha_no_reload.md` — política de retry da Amazon NÃO se aplica à Shopee.
 
 ---
 
@@ -222,6 +239,7 @@ Migrations atuais:
 - 0012 produtos nota + flags vendas + comissao_fonte + 3 timestamps (Fase 18)
 - 0013 tarefas progresso_pct + mensagem + atualizado_em (Fase 20 barra)
 - 0014 tarefas duracao_seg (Fase 20.1 tempo total)
+- 0015 produtos comissao_extra (Fase 21 — bônus GANHOS EXTRAS ML)
 
 Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
@@ -599,21 +617,25 @@ fixos × 3 tentativas pra captcha e login. Implementação detalhada em
 
 **Leia `docs/sessao_continuacao.md` PRIMEIRO — tem tudo consolidado.**
 
-Estado atual: **agente v3.7.1 publicado**. Migration head `0014_duracao`.
-Buscas padrão com captura comissão real + barra de progresso + cancelamento
-parcial + tempo decorrido + duracao_seg salvo.
+Estado atual: **agente v3.8.14 publicado**. Migration head `0015_extra`.
+- Coluna `produtos.comissao_extra` ativa
+- 4 buscas padrão (ML mais vendidos, ML extras, Shopee, Amazon)
+- TOP por nota com botão atualizar + excluir
+- Shopee captcha = `time.sleep(30)` obrigatório puro (modelo V2)
 
-Fases novas entregues nesta sessão (16/05/2026 — dia inteiro):
-- Fase 18 — curadoria via nota + precisão de dados (v3.3.0+)
-- Fase 19 — buscas padrão (v3.5.0+)
-- Fase 20 — barra de progresso no dashboard + cancelar (v3.6.0+)
-- Fase 20.1 — captura simplificada (URL canônica direto) + tempo + duracao_seg (v3.7.0)
-- Fase 20.2 — meli.la incremental + cancelamento granular (v3.7.1)
+Fases novas entregues na sessão de 16/05/2026 (continuação):
+- Fase 21 — comissão extra (v3.8.0+; 5 releases até estabilizar via DevTools)
+- Fase 22 — Curadoria TOP (botão atualizar + excluir + limite 30)
+- Fase 22.1 — buscas padrão Shopee + Amazon (servidor-only)
+- Maratona Shopee captcha — 9 releases (v3.8.6 → v3.8.14) até o user mandar
+  analisar V2 (`ACHADINHOSV2 - FUNCIONAL`) e seguir modelo dela (URL only +
+  sem retry + sleep(30) obrigatório)
 
 **Próximas fases na ordem:**
-1. **Validar v3.7.1 end-to-end** (user instala exe, roda busca padrão, testa cancelamento parcial)
-2. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples
-3. **Mais buscas padrão** — Shopee bestsellers, Amazon bestsellers
+1. **Validar v3.8.14 end-to-end** (user instala exe, testa captcha Shopee)
+2. **Servidor-side: evitar tarefas duplicadas** de busca padrão Shopee
+   enquanto há uma PROCESSANDO (user clicou 4× rodar e enfileirou 4 buscas)
+3. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`
 4. **Magalu** (4º marketplace — segue `docs/contrato_busca_marketplace.md`)
 5. **AliExpress + TikTok** (após Magalu)
 6. **Configurar `ANTHROPIC_API_KEY`** no Railway pra ativar IA dos Personalizados
