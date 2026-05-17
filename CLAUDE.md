@@ -188,6 +188,32 @@ python -m agent.main --sem-tray   # roda
   - **v3.8.12**: detecta Chrome fechado durante polling (Selenium WebDriverException).
   - **v3.8.13**: ANALISOU V2 (`ACHADINHOSV2 - FUNCIONAL/src/buscar/shopee.py`) — modelo é **URL only + input() bloqueante + sem retry**. Simplificou pra espelhar V2. 102 linhas removidas.
   - **v3.8.14**: user reforçou "AGUARDAR 30s OBRIGATÓRIOS, independente de qualquer clique ou reload". `_aguardar_captcha` virou literalmente `time.sleep(30)` puro. Sem polling, sem botão de interrupção, sem timeout. Lição registrada: nova memória `feedback_shopee_captcha_no_reload.md` — política de retry da Amazon NÃO se aplica à Shopee.
+- **3.29.0** — **Refundação arquitetural per-user** (17/05/2026 noite — Fases A→D + refinamentos). User definiu 3 regras:
+  - **(1)** Cliente sempre usa produtos + afiliado do admin central
+  - **(2)** Agente é único, capabilities decidem o que ele faz (admin=tudo / afiliado=WA+marketplaces com tag / usuário=só WA)
+  - **(3)** Personalizado do cliente vai pra fila admin, processada em até 2h
+
+  **Fase A — Bloquear cadastros do cliente** (commit `c9f932c`): nova property `Usuario.eh_admin_central` (= admin AND org_id == admin_org_id) substitui flags `pode_*` do Plano. Endpoints e UI gateados via essa property. Menu lateral esconde Buscas/Nichos pra non-admin-central.
+
+  **Fase B — Favoritar produtos** (commit `d4c062d`): migration 0016 cria `usuario_produto_personalizado` (M:N). POST `/produtos/{id}/personalizar` + `/despersonalizar`. `/produtos` ganha botão ⭐ Personalizar. `/produtos/personalizados` agora retorna UNION dos solicitados + favoritados.
+
+  **Fase C — Fila admin de solicitações** (commit `5967d39`): migration 0017 cria `solicitacoes_personalizadas`. Cliente cadastra → vai pra fila. Novo `/admin/fila-personalizados` admin processa. Celery beat hourly (`crontab(minute=0)`) processa automaticamente. Hook em `dispatcher.marcar_concluida` lê `payload.solicitacao_id` e atualiza status. Service novo `solicitacao_service.py`.
+
+  **Fase D — Capabilities por user** (commits `e118f10` servidor + `81d1964` agente v3.9.0): novo service `capabilities_service.capabilities_do_agente(agente_id)`. Handshake WS envia `{tipo:"capabilities", capabilities:[...]}`. Agente recebe e armazena em singleton `agent/capabilities.py`. `executar_busca` chama `caps_mod.tem(mkt)` antes de disparar Selenium. `/agentes` mostra badges 🟢/🔒 por marketplace.
+
+- **3.30.0** — **Privacidade per-user em grupos/canais/templates** (17/05/2026 noite tarde):
+  - **Grupos** (commit `b756c01`): qualquer user cria/edita/exclui próprios via `proprietario_id`. Listagem `/grupos` filtra por dono (admin central vê tudo).
+  - **Templates personalizadas** (commit `f3b6cb8` + migration 0018): nova coluna `templates_mensagem.criado_por_usuario_id`. Renomeado de "Templates" pra "Templates personalizadas" no menu. Lista mostra TODAS da org (cliente PODE usar templates do admin), mas edita só as próprias. Renderização (`selecionar_template`) tem cascata: prefere templates do user; fallback pra qualquer da org se ele não tem.
+  - **Canais** (commit `3e5f8b9`): mesmo padrão via `usuario_id`. Tipo readonly na edição (mudar tipo quebra config). Excluir bloqueado se há grupos vinculados.
+  - **Postagem só em grupos próprios** (commit `9a7dece`): `selecao_service.grupos_com_nichos` ganha arg `proprietario_id`. `lote_service.postar_produto_imediato` ganha arg `proprietario_grupo_id`. Endpoints (`personalizado_postar`, `curadoria_postar_um`) passam `user.id` pra non-admin-central. Impede user A postar em grupo do user B (mesma org).
+
+- **3.30.1** — Hotfix `lote_service`: faltava `from sqlalchemy import select` no topo (commit `37ce591`). Bug latente desde Fase 17 — `postar_produto_imediato` nunca funcionou de fato. Só apareceu agora porque os callers passaram a fazer POST de produto pela primeira vez (botão ⚡ Postar do TOP e Personalizados).
+- **3.30.2** — Fix `personalizado_postar` aceita produtos favoritados (commit `2fe4b41`). Permissão de postar agora é OR: admin_central / criei / minha org / favoritei via UPP. Excluir também ficou inteligente: cliente comum só remove da seleção (UPP), produto continua no catálogo do admin.
+
+- **3.31.0** — **Admin central: visão sistêmica + filtros + paginação** (17/05/2026 noite final):
+  - **/usuarios** (commit `798f4a9`): admin central vê TODOS users do sistema (não só sua org). Filtros: papel (admin/afiliado/usuário), busca em login+nome+email, datas DESDE/ATÉ. Coluna nova "Org" mostrando organização de cada um. Coluna "Cadastro" visível pra todos.
+  - **Paginação 50/página** em 7 páginas (commits `6459b43` + `c02eca6`): macro reutilizável `templates/_macros/paginacao.html`. Aplicada em `/usuarios`, `/canais`, `/grupos`, `/tarefas`, `/produtos`, `/curadoria/top`, `/templates`. Renderiza `« 1 2 ... N »` com truncamento elegante. Preserva querystring de filtros via `request.query_params`.
+  - **Script `scripts/limpar_banco.py`** (commit `e27f1e9`): destrutivo com confirmação `--confirmar APAGAR`. Mantém só admins/super + orgs deles + seeds (planos/nichos/categorias). **Executado em prod (17/05/2026 12:30)** — apagados 105 tarefas, 87 produtos, 5 solicitações, 3 tags afiliado, 2 grupos/canais/agentes/templates, 1 user não-admin, 2 favoritos UPP. Permaneceram 6 admins + 5 orgs.
 
 ---
 
@@ -240,6 +266,9 @@ Migrations atuais:
 - 0013 tarefas progresso_pct + mensagem + atualizado_em (Fase 20 barra)
 - 0014 tarefas duracao_seg (Fase 20.1 tempo total)
 - 0015 produtos comissao_extra (Fase 21 — bônus GANHOS EXTRAS ML)
+- 0016 usuario_produto_personalizado (Fase B — favoritar M:N)
+- 0017 solicitacoes_personalizadas (Fase C — fila admin)
+- 0018 templates_mensagem.criado_por_usuario_id (Fase 3.30 — ownership)
 
 Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
@@ -617,28 +646,26 @@ fixos × 3 tentativas pra captcha e login. Implementação detalhada em
 
 **Leia `docs/sessao_continuacao.md` PRIMEIRO — tem tudo consolidado.**
 
-Estado atual: **agente v3.8.14 publicado**. Migration head `0015_extra`.
-- Coluna `produtos.comissao_extra` ativa
-- 4 buscas padrão (ML mais vendidos, ML extras, Shopee, Amazon)
-- TOP por nota com botão atualizar + excluir
-- Shopee captcha = `time.sleep(30)` obrigatório puro (modelo V2)
-
-Fases novas entregues na sessão de 16/05/2026 (continuação):
-- Fase 21 — comissão extra (v3.8.0+; 5 releases até estabilizar via DevTools)
-- Fase 22 — Curadoria TOP (botão atualizar + excluir + limite 30)
-- Fase 22.1 — buscas padrão Shopee + Amazon (servidor-only)
-- Maratona Shopee captcha — 9 releases (v3.8.6 → v3.8.14) até o user mandar
-  analisar V2 (`ACHADINHOSV2 - FUNCIONAL`) e seguir modelo dela (URL only +
-  sem retry + sleep(30) obrigatório)
+Estado atual: **agente v3.9.0 publicado**. Migration head `0018_tpl_cpu`.
+- Banco **limpo em 17/05/2026** (script `scripts/limpar_banco.py`): só 6 admins + 5 orgs + seeds
+- Arquitetura nova com **3 regras** do user (Fases A→D) — Usuario.eh_admin_central, capabilities por agente, fila admin de personalizados
+- **Privacidade per-user** ativa em grupos/canais/templates: listagens filtradas, postagem gateada
+- **Paginação 50/página** em 7 rotas principais
+- **/usuarios** pra admin central mostra TODOS do sistema com filtros (papel/busca/datas)
+- 4 buscas padrão ML+Shopee+Amazon
+- Shopee captcha `time.sleep(30)` puro (modelo V2)
 
 **Próximas fases na ordem:**
-1. **Validar v3.8.14 end-to-end** (user instala exe, testa captcha Shopee)
-2. **Servidor-side: evitar tarefas duplicadas** de busca padrão Shopee
-   enquanto há uma PROCESSANDO (user clicou 4× rodar e enfileirou 4 buscas)
-3. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`
+1. **Validar agente v3.9.0** com user comum (admin central baixa exe + acha que tudo continua, user comum tenta ML → recusa graciosa)
+2. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples
+3. **Servidor-side: evitar tarefas duplicadas** de busca padrão (user clica 4× rodar → 4 tarefas em fila — usar UNIQUE em (status, tipo, payload->slug))
 4. **Magalu** (4º marketplace — segue `docs/contrato_busca_marketplace.md`)
 5. **AliExpress + TikTok** (após Magalu)
-6. **Configurar `ANTHROPIC_API_KEY`** no Railway pra ativar IA dos Personalizados
+6. **Configurar `ANTHROPIC_API_KEY`** no Railway pra ativar IA dos Personalizados (Claude Haiku 4.5 extrai palavra-chave de link social)
+
+Pedidos do user no fim da sessão (não implementados ainda — anotar):
+- Admin central: opções pra editar/excluir/trocar papel de qualquer usuário direto na lista `/usuarios`
+- Conceito de "super admin estrela" — quem cria outros admins e tem botão de promoção
 
 Bugs anotados (não bloqueiam, vale fixar quando tiver tempo):
 - `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)

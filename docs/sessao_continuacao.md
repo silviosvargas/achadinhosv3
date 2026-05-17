@@ -8,10 +8,9 @@
 > (≥3 commits OU mudança que afete fluxo), atualize ESTE arquivo +
 > CLAUDE.md. Lição em `memory/feedback_documentar_sempre.md`.
 
-**Última atualização:** 2026-05-16 noite (sessão muito longa — 15 releases agente)
-**Versão do agente publicada:** `3.8.14`
-**Versão do agente recomendada:** `3.8.14`
-**Migration head:** `0015_extra`
+**Última atualização:** 2026-05-17 noite — sessão MUITO grande (refundação arquitetural per-user + paginação + visão sistêmica admin)
+**Versão do agente publicada:** `3.9.0`
+**Migration head:** `0018_tpl_cpu`
 
 ---
 
@@ -20,96 +19,156 @@
 | Componente | Status | Detalhes |
 |---|---|---|
 | API + dashboard | ● Online | https://achadinhos.maisseguidores.ia.br |
-| Postgres | ● Online | Railway add-on |
+| Postgres | ● Online (banco LIMPO em 17/05) | só 6 admins + 5 orgs + seeds |
 | Redis | ● Online | Railway add-on |
-| Worker (Celery + beat) | ● Online | `--pool=solo` |
-| Migrations | `0015_extra` (head) | Aplicadas via preDeploy Railway |
-| Agente desktop | v3.8.14 published | [release](https://github.com/silviosvargas/achadinhosv3/releases/tag/agente-v3.8.14) |
+| Worker (Celery + beat) | ● Online | beat hourly processa fila personalizados |
+| Migrations | `0018_tpl_cpu` (head) | aplicadas via preDeploy Railway |
+| Agente desktop | v3.9.0 published | [release](https://github.com/silviosvargas/achadinhosv3/releases/tag/agente-v3.9.0) |
 
 ---
 
-## 📜 Fases entregues nesta continuação (16/05/2026 noite)
+## 📜 Fases entregues nesta sessão (17/05/2026 inteiro)
 
-### Fase 21 — Comissão extra (bônus GANHOS EXTRAS ML)
+### 🏗️ Refundação arquitetural (Fases A→D)
 
-- **v3.8.0** — Migration 0015 adiciona `produtos.comissao_extra` FLOAT NULL. Schema `IngestProdutoItem` + `_upsert_produto` gravam respeitando hierarquia de fonte. Nova busca padrão `ml_comissao_extra` (servidor + agente). UI: filtro "🎁 Só com bônus EXTRAS" em `/produtos` + badge dourado `🎁 +X% extra`.
-- **v3.8.1** — Telemetria por produto (log INFO `efetiva/extra/preco/status`) + diagnóstico em disco quando categoria zera.
-- **v3.8.2** — JS de captura simplificado pra busca no `body.textContent` inteiro (era loop em seletores específicos).
-- **v3.8.3** — Multi-fontes: body + iframes + outerHTML + sleep aumentado pra 3s.
-- **v3.8.4** — **FIX DEFINITIVO via DevTools do user**: a barra usa `span.stripe-commission__percentage` (número) + `span.stripe-commission__pillsecond` (texto "EXTRAS"). Regex no body falha porque ML renderiza spans BEM SEM whitespace entre tags (`"EXTRAS9%"` → `\s+` não match). Captura via seletor CSS direto. Memória nova `feedback_ml_seletor_stripe.md`.
-- **v3.8.5** — Regra busca extras: `alvo_total=10` → `min_por_categoria=3` (sem teto). Visita TODAS as 8 categorias, mantém ≥3 com extras por categoria.
+User definiu 3 regras estruturais:
+1. **Cliente sempre usa produtos + afiliado do admin central** — sem catálogo próprio
+2. **Agente único** — capabilities decidem o que ele faz (admin=tudo, afiliado=WA+marketplaces com tag, usuário=só WA)
+3. **Personalizado do cliente** → fila admin processada em até 2h (Celery hourly)
 
-### Fase 22 — Curadoria TOP melhorias
+**Fase A — Bloquear cadastros do cliente** (`c9f932c`):
+- Property `Usuario.eh_admin_central` = admin AND org_id == admin_org_id
+- Substitui flags `pode_*` do Plano em 6 lugares (endpoints + UI + menu)
+- Onboarding: passo "afiliados" só pra admin_central (depois flexibilizado pra afiliado também na Fase D)
+- Tabela `/planos` reformatada — focada em postagens/grupos/Telegram/catálogo central
 
-- **Servidor `5427524`** — Botão "🔄 Atualizar TOP" (recarrega; query já filtra postados 7d). Botão 🗑️ excluir por card (CASCADE limpa nichos + redirects). Limite default 50 → 30.
+**Fase B — Favoritar produtos** (`d4c062d`):
+- Migration 0016: `usuario_produto_personalizado` (M:N user×produto)
+- POST `/produtos/{id}/personalizar` + `/despersonalizar` (idempotente)
+- `/produtos` ganha botão ⭐ Personalizar em cada card
+- `/produtos/personalizados` agora retorna UNION (criados + favoritados)
 
-### Fase 22.1 — Buscas padrão Shopee + Amazon
+**Fase C — Fila admin de solicitações** (`5967d39`):
+- Migration 0017: `solicitacoes_personalizadas`
+- Cliente em `/produtos/personalizados/buscar` → cria solicitação (em vez de chamar agente próprio direto)
+- `/admin/fila-personalizados` admin lista pendentes + recentes
+- Botões: ▶ Processar / ✗ Rejeitar / ⚡ Processar tudo
+- **Celery beat hourly** (`crontab(minute=0)`) processa pendentes automaticamente
+- Hook em `dispatcher.marcar_concluida` lê `payload.solicitacao_id` e atualiza status
+- Service novo `app/services/solicitacao_service.py`
 
-- **Servidor `960459b`** (zero release agente) — 2 entradas novas em `app/core/buscas_padrao.py`:
-  - `shopee_mais_vendidos`: API afiliados Shopee (`list_type=2`), 50 produtos, ~30s
-  - `amazon_bestsellers`: 10 categorias SiteStripe, 50 produtos, ~3min
-  - Service `buscas_padrao_service` aceita campo `mensagem_run` custom por busca.
+**Fase D — Capabilities por agente** (servidor `e118f10` + agente `81d1964` = **v3.9.0**):
+- Servidor: `capabilities_service.capabilities_do_agente(agente_id)` calcula por tipo de user
+- Handshake WS envia `{tipo:"capabilities", capabilities:[...]}` após `accept()`
+- Agente: novo singleton `agent/capabilities.py` armazena
+- `executar_busca` chama `caps_mod.tem(mkt)` antes de disparar Selenium — recusa graciosamente se sem permissão
+- `/agentes` mostra badges 🟢/🔒 por marketplace (whatsapp/ml/shopee/amazon)
+- Bump agente v3.8.14 → v3.9.0 (minor — protocolo WS novo)
 
-### Maratona Shopee captcha (9 releases até estabilizar)
+### 🔒 Privacidade per-user (Fase 3.30)
 
-**Cenário:** user reportou que busca Shopee não esperava resolver captcha.
+User refinou após Fase D: cada user da org só vê e gerencia o seu.
 
-- **v3.8.6** — copiou `_aguardar_com_retry` da Amazon (30s × 3 com reload). **QUEBROU**: cada `driver.get(URL_PAINEL)` em sessão marcada re-emite captcha → loop infinito.
-- **v3.8.7** — detecção via DOM + retry no meio do loop. Piorou.
-- **v3.8.8** — `git checkout f6f177a` (revert) + patch mínimo.
-- **v3.8.9** — detecção DOM + sleep(30) puro.
-- **v3.8.10** — força captcha se URL fora do painel.
-- **v3.8.11** — status!=200 sempre força + ping inicial + **botão clicável "✅ CAPTCHA RESOLVIDO"**.
-- **v3.8.12** — detecta Chrome fechado (`WebDriverException`).
-- **v3.8.13** — **user mandou analisar V2** (`ACHADINHOSV2 - FUNCIONAL/src/buscar/shopee.py`). V2 usava `input("Pressione ENTER...")` bloqueante, sem retry/ping. Simplificou pra espelhar V2. 102 linhas removidas.
-- **v3.8.14** — user reforçou "AGUARDAR 30s OBRIGATÓRIOS, independente de qualquer clique ou reload". `_aguardar_captcha` virou literalmente `time.sleep(30)` puro. Sem polling, sem botão de interrupção.
+- **Grupos** (`b756c01`): `Grupo.proprietario_id` (já existia). Lista filtra por dono. `/grupos/{id}/editar` + `/excluir` novos. Macro `_pode_editar_grupo`.
+- **Templates personalizadas** (`f3b6cb8` + migration 0018): nova coluna `criado_por_usuario_id`. Renomeado de "Templates" → "Templates personalizadas" no menu. Lista mostra TODAS da org (cliente PODE usar templates do admin). Edição só pelo dono. Renderização (`selecionar_template`) tem cascata: prefere user → fallback admin.
+- **Canais** (`3e5f8b9`): `Canal.usuario_id` (já existia). Mesmo padrão. Tipo readonly na edição (mudar tipo quebra config). Excluir bloqueado se há grupos vinculados.
+- **Postagem só nos próprios grupos** (`9a7dece`): `selecao_service.grupos_com_nichos` ganha arg `proprietario_id`. `lote_service.postar_produto_imediato` ganha arg `proprietario_grupo_id`. Endpoints passam `user.id` pra non-admin-central. Impede user A postar em grupo do user B.
 
-**Lição:** Política de retry da Amazon NÃO se aplica à Shopee (recarregar URL re-emite captcha). Registrada em `memory/feedback_shopee_captcha_no_reload.md`.
+**Hotfixes que apareceram nessa fase:**
+- `37ce591`: `from sqlalchemy import select` faltando em `lote_service` — bug latente desde Fase 17 que nunca tinha aparecido porque o `postar_produto_imediato` não tinha sido chamado.
+- `2fe4b41`: `personalizado_postar` aceita produtos do catálogo central (favoritados via UPP).
+
+### 👥 Admin central — visão sistêmica + filtros + paginação (Fase 3.31)
+
+- **`/usuarios`** (`798f4a9`): admin central vê TODOS users do sistema (não só sua org). Filtros: papel (admin/afiliado/usuário), busca em login+nome+email, datas DESDE/ATÉ. Coluna "Org" + "Cadastro" novas.
+- **Paginação 50/página** (`6459b43` + `c02eca6`): macro reutilizável `templates/_macros/paginacao.html`. Aplicada em 7 rotas: `/usuarios`, `/canais`, `/grupos`, `/tarefas`, `/produtos`, `/curadoria/top`, `/templates`. Truncamento elegante `« 1 ... 4 5 6 ... 10 »`. Preserva querystring de filtros.
+
+### 🧹 Banco limpo
+
+- **Script `scripts/limpar_banco.py`** (`e27f1e9`): destrutivo com `--confirmar APAGAR`. Mantém só admins/super + orgs deles + seeds.
+- **Executado em prod (17/05/2026 12:30)**: apagados 105 tarefas, 87 produtos, 5 solicitações, 3 tags afiliado, 2 grupos/canais/agentes/templates, 1 user não-admin, 2 favoritos UPP. Permaneceram 6 admins + 5 orgs.
+
+### 🎨 UX fixes durante a sessão
+
+- `5efde96` — Fix cache `/agentes/instalador` (TTL 5min→60s + `?nocache=1` bypass) — user reportou baixando v3.8.3 mesmo após publicar v3.8.4.
+- `3d36fab` — Onboarding passo 2 "Conectar agente" mais claro + `/canais` warning quando sem agente.
+- Mudanças em produtos/personalizados durante várias iterações de captura ML (v3.8.0 a v3.8.14).
 
 ---
 
-## 🔥 Armadilhas conhecidas (LEIA)
+## 🔥 Armadilhas e padrões registrados nesta sessão
 
-Tudo já está documentado em CLAUDE.md → "Armadilhas conhecidas". Resumo das críticas:
+### Memórias persistentes novas
+- `memory/feedback_ml_seletor_stripe.md` — captura ML via `span.stripe-commission__*`. Regex no body falha (textContent sem whitespace).
+- `memory/feedback_shopee_captcha_no_reload.md` — política da Amazon (`driver.get(URL_PAINEL)` no retry) NÃO se aplica à Shopee. Custou 9 releases.
 
-1. **ML captura comissão**: SEMPRE seletor CSS `.stripe-commission__percentage` + `.stripe-commission__pillsecond`. Nunca regex no body (ML usa spans sem whitespace).
-2. **Shopee captcha**: nunca recarregar URL no meio do retry. Use sleep puro de 30s.
-3. **Cache `/agentes/instalador`** TTL agora 60s + `?nocache=1` bypass.
-4. **Handler WS sempre `ok=True`** (`docs/contrato_handlers_ws.md`).
-5. **`url_afiliado` no schema Pydantic** — precisa estar declarado com `extra="allow"`.
-6. **Hierarquia de `comissao_fonte`** — nunca sobrescrever fonte alta com baixa.
+### Armadilhas adicionadas no CLAUDE.md
+- "Captura comissão ML — SELETOR CSS, nunca regex no body (v3.8.4+)"
+
+### Conceito de `Usuario.eh_admin_central`
+Property `True se papel ∈ (admin, super) AND org_id == settings.admin_org_id`. Substitui as flags `pode_*` do Plano (que tratavam diferenças como comerciais; agora é arquitetural). Use SEMPRE essa property pra gates de admin sistêmico.
+
+### Capabilities arquitetura
+- Admin central: `["whatsapp", "ml", "shopee", "amazon", "magalu", "aliexpress"]`
+- Afiliado: `["whatsapp"]` + cada `usuario_afiliados.plataforma` cadastrada
+- Usuário comum: `["whatsapp"]`
+
+Capabilities calculadas a cada handshake WS — sempre consistentes com user atual.
+
+### Templates: cascata de seleção
+`selecionar_template` tenta:
+1. Template do user com nicho compatível
+2. Template do user padrão (nicho NULL)
+3. Qualquer da org com nicho compatível (fallback admin)
+4. Qualquer da org padrão (fallback admin)
+5. Fallback hardcoded
+
+### Postagem entre users
+`lote_service.postar_produto_imediato` aceita `proprietario_grupo_id`. Quando passado, `selecao_service` só considera grupos desse dono. Endpoints non-admin-central SEMPRE passam `user.id`. Admin central passa None (vê todos).
 
 ---
 
 ## 🎯 Próximos passos sugeridos
 
-1. **Validar v3.8.14 end-to-end** — user instala exe, dispara busca padrão Shopee, confirma que pausa 30s e continua.
-2. **Servidor-side: evitar tarefas duplicadas** — user clicou 4× em "Rodar agora" e gerou 4 tarefas enfileiradas. Adicionar verificação no `buscas_padrao_service.disparar` que recusa nova tarefa se já há uma em PROCESSANDO pra mesma busca.
-3. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples. Usa coluna que já existe (migration 0014).
-4. **Magalu** — 4º marketplace seguindo `docs/contrato_busca_marketplace.md`.
-5. **AliExpress + TikTok** — após Magalu.
-6. **Configurar `ANTHROPIC_API_KEY`** no Railway — ativa IA dos Personalizados.
+### Pedidos do user no fim da sessão (NÃO IMPLEMENTADOS — atacar primeiro)
+- **Admin central: editar/excluir/trocar papel** de qualquer user direto na lista `/usuarios`
+- **Conceito de "super admin estrela"** — quem cria outros admins, com botão de promoção ao lado do excluir
+
+### Próximas fases prioritárias
+1. **Validar agente v3.9.0 end-to-end** — admin central baixa exe, capabilities chegam, ML/Shopee/Amazon rodam. User comum tenta busca → recusa graciosa.
+2. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples.
+3. **Servidor-side: evitar tarefas duplicadas** de busca padrão — user clicou 4× e enfileirou 4 buscas. Usar UNIQUE em (status, tipo, payload->slug_padrao).
+4. **Magalu** (4º marketplace seguindo `docs/contrato_busca_marketplace.md`)
+5. **AliExpress + TikTok** (após Magalu)
+6. **`ANTHROPIC_API_KEY`** no Railway — ativar IA dos Personalizados (Claude Haiku 4.5 extrai palavra-chave de link social)
+
+### Bugs anotados (não bloqueiam)
+- `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)
+- `ADMIN_PASSWORD` env var no Railway desatualizada (user trocou via `/conta`)
 
 ---
 
 ## 🛠️ Comandos pra começar nova sessão
 
 ```bash
-# 1. Ver estado do worktree
-git -C "D:/ACHADINHOSV3/.claude/worktrees/elated-kalam-25d020" log --oneline -10
+# 1. Estado do worktree
+git -C "D:/ACHADINHOSV3/.claude/worktrees/elated-kalam-25d020" log --oneline -15
 git -C "D:/ACHADINHOSV3/.claude/worktrees/elated-kalam-25d020" status
 
-# 2. Ver release atual do agente
-curl -sI -o /dev/null -w "%{http_code}\n" https://github.com/silviosvargas/achadinhosv3/releases/download/agente-v3.8.14/AchadinhosAgent-Setup-3.8.14.exe
+# 2. Build do agente v3.9.0
+curl -sI -o /dev/null -w "%{http_code}\n" https://github.com/silviosvargas/achadinhosv3/releases/download/agente-v3.9.0/AchadinhosAgent-Setup-3.9.0.exe
 # 302 = ok publicada
 
-# 3. Verificar versão recomendada via servidor
+# 3. Estado da versão recomendada
 curl -s https://achadinhos.maisseguidores.ia.br/api/v1/agentes/versao-atual
+
+# 4. Railway CLI já está linkado (achadinhosv3 service do projeto balanced-ambition)
+railway status
 ```
 
 ---
 
-## 📋 Tipos de mudança & versionamento
+## 📋 Tipos de commit & versionamento
 
 | Mudança | Bump | Release? |
 |---|---|---|
@@ -121,3 +180,16 @@ curl -s https://achadinhos.maisseguidores.ia.br/api/v1/agentes/versao-atual
 | Docs (`docs/`, CLAUDE.md, memory) | — | Não. |
 
 Bump 3 arquivos sempre juntos: `agente/agent/local_server.py` (VERSAO_AGENTE), `agente/pyproject.toml` (version), `agente/installer.iss` (MyAppVersion).
+
+---
+
+## 🧪 Comandos úteis dessa sessão
+
+```bash
+# Limpar banco (já executado em 17/05 12:30)
+railway ssh "cd /app && python -m scripts.limpar_banco"  # preview
+railway ssh "cd /app && python -m scripts.limpar_banco --confirmar APAGAR"  # executa
+
+# SSH já configurado com chave em ~/.ssh/id_ed25519
+# Project linked: balanced-ambition · service: achadinhosv3 · env: production
+```
