@@ -2544,30 +2544,48 @@ async def buscar_rapida_iniciar(
             status_code=302,
         )
 
-    tarefa = Tarefa(
-        org_id=admin.org_id,
-        tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
-        status=StatusTarefa.PENDENTE,
-        agente_id=agente.id,
-        payload={
-            "tipo_entrada":  tipo_entrada,
-            "entrada":       entrada,
-            "max_paginas":   1,
-            "max_produtos":  max_produtos,
-            "tipo_busca":    tipo_busca,
-            "marketplaces":  ["ml"],
-            # Marker pra UI saber que essa tarefa foi disparada da busca
-            # rápida (e pra modo de exibição na página de polling).
-            "_busca_rapida_modo": "imediato" if tipo_dec == "url" else "preview",
-        },
-        criado_por_usuario_id=admin.id,
-    )
-    db.add(tarefa)
-    await db.flush()
-    await db.commit()
-    await db.refresh(tarefa)
+    # Cria tarefa + entrega — tudo em try/except pra capturar erro REAL.
+    # Sem isso o user vê só "Internal Server Error" sem dica do problema.
+    try:
+        tarefa = Tarefa(
+            org_id=admin.org_id,
+            tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
+            status=StatusTarefa.PENDENTE,
+            agente_id=agente.id,
+            payload={
+                "tipo_entrada":  tipo_entrada,
+                "entrada":       entrada,
+                "max_paginas":   1,
+                "max_produtos":  max_produtos,
+                "tipo_busca":    tipo_busca,
+                "marketplaces":  ["ml"],
+                # Marker pra UI saber que essa tarefa foi disparada da busca
+                # rápida (e pra modo de exibição na página de polling).
+                "_busca_rapida_modo": "imediato" if tipo_dec == "url" else "preview",
+            },
+            criado_por_usuario_id=admin.id,
+        )
+        db.add(tarefa)
+        await db.flush()
+        await db.commit()
+        await db.refresh(tarefa)
+    except Exception as e:
+        log.exception("buscar_rapida.criar_tarefa_falhou",
+                      erro=str(e), entrada=entrada[:80])
+        return RedirectResponse(
+            url="/produtos?erro=" + quote_plus(
+                f"Erro ao criar tarefa: {type(e).__name__}: {str(e)[:120]}"
+            ),
+            status_code=302,
+        )
 
-    await dispatcher._tentar_entrega(db, tarefa)
+    try:
+        await dispatcher._tentar_entrega(db, tarefa)
+    except Exception as e:
+        # Tarefa já está no DB (PENDENTE). Continua o fluxo e deixa o
+        # `reentregar_pendentes` cuidar quando o agente reconectar.
+        log.exception("buscar_rapida.entrega_falhou",
+                      tarefa_id=tarefa.id, erro=str(e))
 
     log.info("buscar_rapida.iniciada",
              tarefa_id=tarefa.id, tipo=tipo_dec,
