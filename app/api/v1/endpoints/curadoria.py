@@ -36,7 +36,7 @@ async def top_por_nota(
     Cascata de fallback (Fase 11):
     - Sem produtos na org do user → tenta admin_org_id.
     """
-    produtos, fonte = await curadoria_service.listar_top_com_fallback(
+    produtos, fonte, _total = await curadoria_service.listar_top_com_fallback(
         db, org_id=user.org_id, limite=limite, nota_minima=nota_minima,
     )
     items = [

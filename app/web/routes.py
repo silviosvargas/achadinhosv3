@@ -615,7 +615,8 @@ async def dashboard(
     }
 
     # Fase 18 — preview do TOP por nota
-    top_preview, _ = await curadoria_service.listar_top_com_fallback(
+    # Assinatura mudou no commit c02eca6 pra retornar (produtos, fonte, total)
+    top_preview, _fonte, _total = await curadoria_service.listar_top_com_fallback(
         db, org_id=user.org_id, limite=6, nota_minima=30.0,
     )
 
