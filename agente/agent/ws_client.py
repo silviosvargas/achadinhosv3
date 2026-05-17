@@ -57,9 +57,14 @@ class WSClient:
         self._handlers[tipo] = handler
 
     async def run_forever(self) -> None:
-        """Loop infinito: conecta, processa, reconecta em caso de queda."""
-        url = f"{self.cfg.servidor_ws}?token={self.cfg.token}"
+        """Loop infinito: conecta, processa, reconecta em caso de queda.
 
+        IMPORTANTE: a URL é reconstruída A CADA tentativa pra pegar
+        atualizações de `self.cfg` (re-pareamento durante runtime via
+        `aplicar_novo_cfg`). Se isso ficar fora do loop, o cliente
+        continua tentando reconectar com o token antigo mesmo depois
+        do user re-parear pelo dashboard.
+        """
         async for tentativa in AsyncRetrying(
             stop=stop_never,
             wait=wait_exponential(multiplier=1, min=2, max=60),
@@ -69,6 +74,8 @@ class WSClient:
             with tentativa:
                 if self._parar.is_set():
                     return
+                # Reconstrói URL aqui dentro pra pegar token novo após re-pair
+                url = f"{self.cfg.servidor_ws}?token={self.cfg.token}"
                 log.info("ws.conectando", url=self.cfg.servidor_ws)
                 async with websockets.connect(
                     url,
@@ -85,6 +92,35 @@ class WSClient:
         self._parar.set()
         if self._ws is not None:
             await self._ws.close()
+
+    async def aplicar_novo_cfg(self, novo_cfg: Config) -> None:
+        """Troca o cfg em runtime (re-pareamento via /pair no dashboard).
+
+        Cenário típico: user limpou banco / agente perdeu token / clicou
+        "Conectar meu agente" de novo. O `/pair` no localhost ganhou um
+        token novo do servidor e o gravou em config.json, MAS o WSClient
+        em memória continua com o token antigo. Sem este método, o user
+        precisava reiniciar o `.exe` pra usar o token novo.
+
+        Fluxo:
+        1. Atualiza `self.cfg` pro novo objeto (próxima tentativa do
+           `run_forever` vai construir URL com token novo).
+        2. Fecha o WS atual (se conectado). O loop `run_forever` cai no
+           except do tenacity e tenta reconectar — agora com a URL nova.
+
+        Não chama `self._parar` — o loop precisa continuar vivo, só
+        forçamos a queda da conexão atual.
+        """
+        log.info("ws.aplicar_novo_cfg",
+                 servidor_novo=novo_cfg.servidor_ws,
+                 trocou_token=novo_cfg.token != self.cfg.token)
+        self.cfg = novo_cfg
+        if self._ws is not None:
+            try:
+                await self._ws.close(code=4002, reason="Re-pareamento")
+            except Exception as e:
+                log.warning("ws.close_no_repair_falhou", erro=str(e)[:120])
+            self._ws = None
 
     # ── Envio ────────────────────────────────────────
 

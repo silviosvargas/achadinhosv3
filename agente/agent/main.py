@@ -134,8 +134,10 @@ async def main_async(
     if cfg is not None:
         cfg_disponivel.set()
 
-    # Holder mutável pra cfg (callback do /pair atualiza)
+    # Holder mutável pra cfg + cliente WS (callback do /pair atualiza ambos).
+    # `cliente` só existe APÓS o pareamento inicial — antes disso é None.
     estado_cfg: dict[str, Config | None] = {"cfg": cfg}
+    estado_cliente: dict[str, "WSClient | None"] = {"cliente": None}
 
     def on_paired(novo_cfg: Config) -> None:
         if estado_cfg["cfg"] is None:
@@ -143,13 +145,26 @@ async def main_async(
             estado_cfg["cfg"] = novo_cfg
             cfg_disponivel.set()
             log.info("agent.pareado_inicial", servidor=novo_cfg.servidor_ws)
+            return
+
+        # Re-pareamento durante runtime (v3.9.1+): trocar o cfg no WSClient
+        # e fechar a conexão atual pra forçar reconexão com o token novo.
+        # Antes disso (até v3.9.0), o user precisava reiniciar o .exe — UX
+        # ruim, especialmente após reset do banco em que o agente_id antigo
+        # some e o WS fica em loop infinito sem nunca conseguir conectar.
+        estado_cfg["cfg"] = novo_cfg
+        cli = estado_cliente["cliente"]
+        if cli is not None:
+            try:
+                asyncio.create_task(cli.aplicar_novo_cfg(novo_cfg))
+                log.info("agent.repareado_em_runtime",
+                         servidor=novo_cfg.servidor_ws)
+            except Exception as e:
+                log.warning("agent.repair_falhou", erro=str(e)[:200])
         else:
-            # Re-pareamento durante runtime — não dá pra trocar token do WS
-            # vivo sem refazer o handshake. Por enquanto: salva e pede restart.
-            log.warning(
-                "agent.repareado_restart_necessario",
-                msg="Token novo salvo no config. Reinicie o agente pra usar.",
-            )
+            log.warning("agent.repair_sem_cliente_vivo",
+                        msg="Cliente WS ainda não estava ativo — config salva, "
+                            "vai pegar no próximo boot.")
 
     # Tray (opcional)
     tray: Tray | None = None
@@ -207,6 +222,9 @@ async def main_async(
 
     # Cliente WS
     cliente = WSClient(cfg)
+    # Registra no holder pra que `on_paired` consiga trocar o cfg do
+    # cliente em runtime (Fase 9.x — re-pareamento sem restart).
+    estado_cliente["cliente"] = cliente
 
     # Linka módulo de avisos pro WS — permite que código sync (thread)
     # publique mensagens user-facing no dashboard via `avisos.publicar(...)`.
