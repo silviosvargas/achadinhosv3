@@ -256,10 +256,16 @@ async def main_async(
 
     # Handler de busca Mercado Livre (Fase 4b)
     async def handler_busca_ml(msg: dict) -> dict:
+        # v3.9.2: lê do estado_cfg, NÃO da closure. Re-pareamento em
+        # runtime (v3.9.1) trocava `estado_cfg["cfg"]` mas a closure
+        # mantinha cfg antigo → POST /ingest com token antigo → 401.
+        cfg_atual = estado_cfg["cfg"]
+        if cfg_atual is None:
+            return {"ok": False, "erro": "agente_sem_cfg"}
         if tray:
             tray.atualizar_status("postando")  # reusa "postando" como "ocupado"
         try:
-            return await executar_busca(msg, cfg)
+            return await executar_busca(msg, cfg_atual)
         finally:
             if tray:
                 tray.atualizar_status("online")
@@ -285,6 +291,11 @@ async def main_async(
         """
         from agent.linkbuilder_ml import gerar_links_em_lote
 
+        # v3.9.2: lê do estado_cfg (re-pareamento runtime).
+        cfg_atual = estado_cfg["cfg"]
+        if cfg_atual is None:
+            return {"ok": False, "erro": "agente_sem_cfg",
+                    "mapping": {}, "total": 0}
         urls = msg.get("urls") or []
         if not isinstance(urls, list) or not urls:
             return {"ok": False, "erro": "lista_vazia", "mapping": {}, "total": 0}
@@ -292,7 +303,7 @@ async def main_async(
         if tray:
             tray.atualizar_status("postando")
         try:
-            mapping = await gerar_links_em_lote(cfg, urls)
+            mapping = await gerar_links_em_lote(cfg_atual, urls)
             return {
                 "ok":      True,
                 "mapping": mapping,
@@ -323,6 +334,11 @@ async def main_async(
         """
         from agent.busca_ml import revalidar_comissoes_em_lote
 
+        # v3.9.2: lê do estado_cfg (re-pareamento runtime).
+        cfg_atual = estado_cfg["cfg"]
+        if cfg_atual is None:
+            return {"ok": False, "erro": "agente_sem_cfg",
+                    "mapping_por_id": {}, "total": 0}
         items = msg.get("items") or []
         if not isinstance(items, list) or not items:
             return {"ok": False, "erro": "lista_vazia",
@@ -331,7 +347,7 @@ async def main_async(
         if tray:
             tray.atualizar_status("postando")
         try:
-            mapping = await revalidar_comissoes_em_lote(cfg, items)
+            mapping = await revalidar_comissoes_em_lote(cfg_atual, items)
             # JSON exige chaves string — converte int keys
             mapping_json = {str(k): v for k, v in mapping.items()}
             return {
