@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block titulo %}Editar canal{% endblock %}
+{% block titulo_topbar %}Editar canal{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Editar canal 📡</h1>
+  <p>
+    Ajuste nome, configuração e status. O <strong>tipo</strong>
+    (<code>{{ canal.tipo }}</code>) não pode ser trocado — pra mudar,
+    exclua este canal e crie um novo.
+  </p>
+</header>
+
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
+<form method="post" action="/canais/{{ canal.id }}/editar" class="form-inline card-form"
+      style="padding:20px; max-width:600px;">
+
+  <label>
+    Tipo (não editável)
+    <input type="text" value="{{ canal.tipo }}" disabled
+           style="background: var(--bg, #f3f4f6); color: var(--muted);">
+  </label>
+
+  <label>
+    Nome amigável
+    <input type="text" name="nome" required maxlength="100"
+           value="{{ canal.nome }}"
+           placeholder="Ex: WhatsApp principal">
+  </label>
+
+  {% if canal.tipo == 'whatsapp_agente' %}
+  <label>
+    Agente que opera este canal
+    <select name="agente_id" required>
+      <option value="">— selecione —</option>
+      {% for a in agentes %}
+        <option value="{{ a.id }}"
+                {% if canal.config and canal.config.agente_id == a.id %}selected{% endif %}>
+          {{ a.nome }} {% if a.online %}🟢{% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  {% elif canal.tipo == 'telegram_bot' %}
+  <label>
+    Bot Token (deixar em branco mantém o atual)
+    <input type="text" name="bot_token" maxlength="200"
+           placeholder="123456789:ABCdef-ghIJKlmnoPQRStuvWXyz">
+    <span class="muted small">
+      {% if canal.config and canal.config.bot_username %}
+        Bot atual: <strong>@{{ canal.config.bot_username }}</strong>.
+      {% endif %}
+      Pra trocar de bot, cole novo token aqui.
+    </span>
+  </label>
+  {% endif %}
+
+  <label class="check-inline" style="display:flex; align-items:center; gap:8px;">
+    <input type="checkbox" name="ativo" value="1" {% if canal.ativo %}checked{% endif %}>
+    <span>Ativo (recebe postagens)</span>
+  </label>
+
+  {% if canal.ultima_falha_msg %}
+  <div class="alerta alerta-erro" style="margin-top:6px; font-size:13px;">
+    <strong>Última falha:</strong> {{ canal.ultima_falha_msg }}
+    {% if canal.ultima_falha_em %}
+      <div class="muted small">em {{ canal.ultima_falha_em.strftime('%d/%m/%Y %H:%M') }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;
+              padding-top:8px; border-top:1px solid var(--border, #e5e7eb);
+              margin-top:8px;">
+    <a href="/canais" class="btn"
+       style="background:transparent; border:1px solid var(--border); color:var(--muted);">
+      Cancelar
+    </a>
+    <button type="submit" class="btn btn-primario">Salvar alterações</button>
+  </div>
+</form>
+
+{% endblock %}

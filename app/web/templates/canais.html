@@ -89,6 +89,9 @@ function trocarTipo(tipo) {
 </script>
 {% endif %}
 
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
 {% if canais %}
 <table class="tabela">
   <thead>
@@ -96,12 +99,16 @@ function trocarTipo(tipo) {
       <th>Nome</th>
       <th>Tipo</th>
       <th>Configuração</th>
+      <th>Dono</th>
       <th>Status</th>
       <th>Última postagem</th>
+      <th>Ações</th>
     </tr>
   </thead>
   <tbody>
     {% for c in canais %}
+    {% set _meu = c.usuario_id == user_id %}
+    {% set _pode_mexer = _meu or eh_admin_central %}
     <tr>
       <td>
         <strong>{{ c.nome }}</strong>
@@ -135,6 +142,16 @@ function trocarTipo(tipo) {
         {% endif %}
       </td>
       <td>
+        {% if _meu %}
+          <span class="badge badge-verde">você</span>
+        {% elif c.usuario_id and donos_map.get(c.usuario_id) %}
+          {% set _d = donos_map.get(c.usuario_id) %}
+          <span class="muted small">{{ _d.nome_exibicao or _d.login }}</span>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
+      <td>
         {% if c.ativo %}
           <span class="badge badge-verde">ativo</span>
         {% else %}
@@ -148,6 +165,26 @@ function trocarTipo(tipo) {
         {% endif %}
       </td>
       <td>{{ c.ultima_postagem_em.strftime('%d/%m %H:%M') if c.ultima_postagem_em else '—' }}</td>
+      <td>
+        {% if _pode_mexer %}
+        <div style="display:flex; gap:6px;">
+          <a href="/canais/{{ c.id }}/editar" class="btn-link" title="Editar canal">
+            ✏️ editar
+          </a>
+          <form method="post" action="/canais/{{ c.id }}/excluir" style="display:inline"
+                data-confirm="Excluir canal &quot;{{ c.nome|e }}&quot;? Não pode ter grupos vinculados."
+                data-confirm-titulo="Excluir canal?"
+                data-confirm-ok="🗑️ Sim, excluir"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" style="color:var(--vermelho);">
+              🗑️ excluir
+            </button>
+          </form>
+        </div>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>

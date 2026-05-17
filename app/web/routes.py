@@ -712,6 +712,7 @@ async def lista_canais(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Lista canais da org. Qualquer user vê; edita só os seus."""
     result = await db.execute(
         select(Canal).where(Canal.org_id == user.org_id).order_by(Canal.criado_em.desc())
     )
@@ -722,15 +723,35 @@ async def lista_canais(
         select(Agente).where(Agente.org_id == user.org_id, Agente.ativo.is_(True))
     )).scalars().all())
 
+    # Mapa de donos (canal.usuario_id) pra mostrar "criado por X" nos alheios
+    donos_map: dict[int, Usuario] = {}
+    uids = {c.usuario_id for c in canais if c.usuario_id}
+    if uids:
+        rows = (await db.execute(
+            select(Usuario).where(Usuario.id.in_(uids))
+        )).scalars().all()
+        donos_map = {u.id: u for u in rows}
+
     return templates.TemplateResponse(
         request, "canais.html",
         {
             "user": user,
             "canais": canais,
             "agentes": agentes,
-            "pode_criar": user.eh_admin,
+            "donos_map": donos_map,
+            "user_id": user.id,
+            "eh_admin_central": user.eh_admin_central,
+            # 17/05/2026: qualquer user logado pode criar canal próprio
+            "pode_criar": True,
+            "mensagem": request.query_params.get("mensagem"),
+            "erro":     request.query_params.get("erro"),
         },
     )
+
+
+def _pode_editar_canal(user: Usuario, canal: Canal) -> bool:
+    """Permissão pra editar/excluir canal: dono OU admin central."""
+    return user.eh_admin_central or canal.usuario_id == user.id
 
 
 @router.post("/canais/novo", response_class=HTMLResponse)
@@ -740,31 +761,45 @@ async def criar_canal_form(
     nome:       str = Form(...),
     agente_id:  int | None = Form(default=None),
     bot_token:  str | None = Form(default=None),
-    admin: Usuario = Depends(exigir_admin),
+    user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
-    """Cria canal. Tipo determina o config:
+    """Qualquer user logado cria canal. `usuario_id` registra o dono.
+
+    Tipo determina o config:
         whatsapp_agente → precisa agente_id
         telegram_bot    → precisa bot_token (validação async via Celery)
     """
+    from urllib.parse import quote
+
     config: dict = {}
     if tipo == "whatsapp_agente":
         if not agente_id:
-            raise HTTPException(status_code=400, detail="agente_id obrigatório")
+            return RedirectResponse(
+                url=f"/canais?erro={quote('Selecione um agente pra canal WhatsApp')}",
+                status_code=302,
+            )
         agente = await db.get(Agente, agente_id)
-        if agente is None or agente.org_id != admin.org_id:
-            raise HTTPException(status_code=400, detail="Agente inválido")
+        if agente is None or agente.org_id != user.org_id:
+            return RedirectResponse(
+                url=f"/canais?erro={quote('Agente inválido')}", status_code=302,
+            )
         config = {"agente_id": agente_id}
     elif tipo == "telegram_bot":
         if not bot_token or ":" not in bot_token:
-            raise HTTPException(status_code=400,
-                                detail="bot_token inválido (formato esperado: 123456:ABC...)")
+            return RedirectResponse(
+                url=f"/canais?erro={quote('Bot token inválido (esperado: 123456:ABC...)')}",
+                status_code=302,
+            )
         config = {"bot_token": bot_token.strip()}
     else:
-        raise HTTPException(status_code=400, detail="Tipo inválido")
+        return RedirectResponse(
+            url=f"/canais?erro={quote('Tipo inválido')}", status_code=302,
+        )
 
     canal = Canal(
-        org_id=admin.org_id,
+        org_id=user.org_id,
+        usuario_id=user.id,
         tipo=tipo,
         nome=nome,
         config=config,
@@ -777,15 +812,132 @@ async def criar_canal_form(
     # Dispara validação assíncrona pro Telegram
     if tipo == "telegram_bot":
         try:
-            # Import tardio evita ciclo
             from app.workers.celery_app import celery_app
             celery_app.send_task("validar_canal_telegram", args=[canal.id])
         except Exception as e:
-            # Validação é opcional — não bloqueia criação
             log_msg = f"validacao Telegram não disparada: {e}"
-            print(log_msg)  # vai pro stdout do uvicorn
+            print(log_msg)
 
-    return RedirectResponse(url="/canais", status_code=302)
+    return RedirectResponse(url="/canais?mensagem=Canal+criado", status_code=302)
+
+
+@router.get("/canais/{canal_id}/editar", response_class=HTMLResponse)
+async def editar_canal_form_get(
+    request: Request,
+    canal_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Form de edição. Dono ou admin central."""
+    canal = await db.get(Canal, canal_id)
+    if canal is None or canal.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Canal não encontrado")
+    if not _pode_editar_canal(user, canal):
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas o dono do canal pode editar.",
+        )
+
+    agentes = list((await db.execute(
+        select(Agente).where(Agente.org_id == user.org_id, Agente.ativo.is_(True))
+    )).scalars().all())
+
+    return templates.TemplateResponse(
+        request, "canal_form.html",
+        {"user": user, "canal": canal, "agentes": agentes, "erro": None},
+    )
+
+
+@router.post("/canais/{canal_id}/editar", response_class=HTMLResponse)
+async def editar_canal_form_post(
+    canal_id: int,
+    nome:      str = Form(...),
+    agente_id: int | None = Form(default=None),
+    bot_token: str | None = Form(default=None),
+    ativo:     str | None = Form(default=None),
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Salva edição do canal. Dono ou admin central.
+
+    NÃO permite trocar o `tipo` (whatsapp ↔ telegram) — isso muda o schema
+    do config e quebra postagens em andamento. Pra trocar tipo, criar novo.
+    """
+    from urllib.parse import quote
+
+    canal = await db.get(Canal, canal_id)
+    if canal is None or canal.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Canal não encontrado")
+    if not _pode_editar_canal(user, canal):
+        raise HTTPException(status_code=403, detail="Apenas o dono do canal edita")
+
+    canal.nome = nome.strip()
+    canal.ativo = (ativo == "1")
+
+    # Reconfigura conforme tipo (mantém tipo original)
+    if canal.tipo == "whatsapp_agente":
+        if not agente_id:
+            return RedirectResponse(
+                url=f"/canais?erro={quote('Selecione um agente')}", status_code=302,
+            )
+        agente = await db.get(Agente, agente_id)
+        if agente is None or agente.org_id != user.org_id:
+            return RedirectResponse(
+                url=f"/canais?erro={quote('Agente inválido')}", status_code=302,
+            )
+        canal.config = {**(canal.config or {}), "agente_id": agente_id}
+    elif canal.tipo == "telegram_bot":
+        if bot_token and ":" in bot_token:
+            canal.config = {**(canal.config or {}), "bot_token": bot_token.strip()}
+            # Re-valida via Celery se mudou token
+            try:
+                from app.workers.celery_app import celery_app
+                celery_app.send_task("validar_canal_telegram", args=[canal.id])
+            except Exception:
+                pass
+        # Se não veio bot_token, mantém o atual sem mexer
+
+    await db.commit()
+    return RedirectResponse(url="/canais?mensagem=Canal+atualizado", status_code=302)
+
+
+@router.post("/canais/{canal_id}/excluir", response_class=HTMLResponse)
+async def excluir_canal_form(
+    canal_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Exclui canal. Dono ou admin central.
+
+    Grupos referenciando esse canal vão pra estado órfão (canal_id inválido).
+    A exclusão NÃO cascateia em grupos por segurança (postagens históricas).
+    Mostra warning se há grupos vinculados.
+    """
+    from urllib.parse import quote
+
+    canal = await db.get(Canal, canal_id)
+    if canal is None or canal.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Canal não encontrado")
+    if not _pode_editar_canal(user, canal):
+        raise HTTPException(status_code=403, detail="Apenas o dono do canal exclui")
+
+    # Verifica se tem grupos vinculados
+    n_grupos = await db.scalar(
+        select(func.count()).select_from(Grupo).where(Grupo.canal_id == canal_id)
+    ) or 0
+    if n_grupos > 0:
+        return RedirectResponse(
+            url=f"/canais?erro={quote(f'Canal tem {n_grupos} grupo(s) vinculados. Apague-os antes de excluir o canal.')}",
+            status_code=302,
+        )
+
+    nome_curto = (canal.nome or "")[:40]
+    await db.delete(canal)
+    await db.commit()
+    return RedirectResponse(
+        url=f"/canais?mensagem={quote('Canal excluído: ' + nome_curto)}",
+        status_code=302,
+    )
 
 
 # ============================================================
