@@ -55,6 +55,7 @@ def _base_query_top(
     ))
     tem_nicho = exists().where(ProdutoNicho.produto_id == Produto.id)
 
+    from sqlalchemy import or_ as _or_
     q = select(Produto).where(
         Produto.org_id == org_id,
         Produto.usuario_dono_id.is_(None),
@@ -64,6 +65,8 @@ def _base_query_top(
         Produto.foto_url != "",
         Produto.nota >= nota_minima,
         tem_nicho,
+        # Esconde produtos em modo PREVIEW (busca rápida pendente)
+        _or_(Produto.fonte.is_(None), Produto.fonte.notlike("preview:%")),
     )
     if not incluir_postados_recentemente:
         q = q.where(~ja_postado)

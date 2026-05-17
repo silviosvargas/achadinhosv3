@@ -98,6 +98,11 @@ async def listar_personalizados_visiveis(
             condicoes.append(Produto.id.in_(favoritos_ids))
         base = select(Produto).where(or_(*condicoes))
 
+    # Esconde produtos em modo PREVIEW (busca rápida pendente confirmação)
+    base = base.where(
+        or_(Produto.fonte.is_(None), Produto.fonte.notlike("preview:%"))
+    )
+
     base = base.order_by(Produto.atualizado_em.desc()).limit(200)
 
     rows = (await db.execute(base)).scalars().all()

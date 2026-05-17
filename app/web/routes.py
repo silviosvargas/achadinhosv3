@@ -1961,7 +1961,14 @@ async def lista_produtos(
     preco_min_f    = _query_float(preco_min)
     preco_max_f    = _query_float(preco_max)
 
-    base = select(Produto).where(Produto.org_id == user.org_id)
+    from sqlalchemy import or_ as _or_
+    base = select(Produto).where(
+        Produto.org_id == user.org_id,
+        # Esconde produtos em modo PREVIEW (busca rápida por palavra-chave
+        # ainda aguardando confirmação do user). Eles ficam visíveis SÓ na
+        # página /produtos/buscar-rapida/{id} pra serem escolhidos.
+        _or_(Produto.fonte.is_(None), Produto.fonte.notlike("preview:%")),
+    )
 
     if plataforma:
         base = base.where(Produto.plataforma == plataforma)
@@ -2628,6 +2635,10 @@ async def _buscar_rapida_iniciar_impl(
                 # Marker pra UI saber que essa tarefa foi disparada da busca
                 # rápida (e pra modo de exibição na página de polling).
                 "_busca_rapida_modo": "imediato" if tipo_dec == "url" else "preview",
+                # Marker pra busca_service.ingerir_produtos marcar os produtos
+                # como `fonte = "preview:{tarefa_id}"` — invisíveis em listagens
+                # até user confirmar quais quer manter (modo termo só).
+                **({"_preview_modo": True} if tipo_dec != "url" else {}),
             },
             criado_por_usuario_id=admin.id,
         )
@@ -2705,22 +2716,20 @@ async def buscar_rapida_status(
         # Se ainda rodando: só mostra status, o JS faz auto-refresh
         produtos_view = []
         if status_str == "concluida":
-            # Janela de tempo da tarefa pra pegar produtos vinculados.
-            # Usa `atualizado_em` (TimestampMixin, SEMPRE preenchido) em vez
-            # de `descoberto_em` (nullable, pode ter produtos antigos sem
-            # esse campo — causava query estranha).
-            from datetime import timedelta
-            ini = t.iniciado_em or t.criado_em
-            fim_base = t.concluido_em or t.criado_em
-            fim = fim_base + timedelta(minutes=2)
+            # Query DETERMINÍSTICA por marker no `Produto.fonte`. Modo termo:
+            # produtos ingeridos com `fonte = "preview:{tarefa_id}"` ficam
+            # invisíveis nas listagens normais e aparecem SÓ aqui.
+            # Modo URL: produtos vão direto sem marker (fonte="busca_ml") —
+            # esta query não acha nada, mas o redirect do POST já mandou
+            # user pra /produtos. Esse GET só é chamado pelo modo preview.
+            fonte_marker = f"preview:{tarefa_id}"
             produtos_rows = list((await db.execute(
                 select(Produto)
                 .where(
                     Produto.org_id == admin.org_id,
-                    Produto.atualizado_em >= ini,
-                    Produto.atualizado_em <= fim,
+                    Produto.fonte == fonte_marker,
                 )
-                .order_by(Produto.atualizado_em.desc())
+                .order_by(Produto.id.desc())
             )).scalars().all())
             produtos_view = produtos_rows
 
@@ -2779,17 +2788,15 @@ async def buscar_rapida_confirmar(
         except (ValueError, TypeError):
             continue
 
-    # Carrega todos os produtos da janela dessa tarefa.
-    # Usa `atualizado_em` (TimestampMixin, SEMPRE preenchido) em vez de
-    # `descoberto_em` (nullable, podia causar query inconsistente).
-    ini = t.iniciado_em or t.criado_em
-    fim_base = t.concluido_em or t.criado_em
-    fim = fim_base + timedelta(minutes=2)
+    # Query DETERMINÍSTICA por marker fonte (igual GET buscar_rapida_status).
+    # Produtos ainda têm `fonte = "preview:{tarefa_id}"` — invisíveis nas
+    # listagens. Selecionados viram `fonte = "busca_ml"` (visíveis); resto
+    # é DELETE.
+    fonte_marker = f"preview:{tarefa_id}"
     candidatos = list((await db.execute(
         select(Produto).where(
             Produto.org_id == admin.org_id,
-            Produto.atualizado_em >= ini,
-            Produto.atualizado_em <= fim,
+            Produto.fonte == fonte_marker,
         )
     )).scalars().all())
 
@@ -2797,6 +2804,7 @@ async def buscar_rapida_confirmar(
     apagados = 0
     for p in candidatos:
         if p.id in manter_ids:
+            p.fonte = "busca_ml"  # promove pra visível na listagem
             mantidos += 1
         else:
             await db.delete(p)

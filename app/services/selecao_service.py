@@ -87,6 +87,8 @@ async def produtos_elegiveis(
             Produto.org_id.in_(org_ids),
             Produto.bloqueado.is_(False),
             Produto.preco > 0,
+            # Esconde produtos em modo PREVIEW (busca rápida pendente)
+            or_(Produto.fonte.is_(None), Produto.fonte.notlike("preview:%")),
         )
     )
 

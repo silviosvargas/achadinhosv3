@@ -245,6 +245,18 @@ async def ingerir_produtos(
     )).all()
     mapping: dict[str, int] = {c.lower(): n for c, n in mapping_rows}
 
+    # 2.0. Detecta se é busca em modo PREVIEW (Fase polimentos — admin
+    # central usou /produtos/buscar-rapida por palavra-chave). Marcador vem
+    # no payload da tarefa. Produtos ingeridos com `fonte = "preview:{id}"`
+    # ficam INVISÍVEIS em /produtos, /curadoria/top, /produtos/personalizados,
+    # API /api/v1/produtos até user confirmar quais quer manter na página
+    # /produtos/buscar-rapida/{id}.
+    preview_tarefa_id: int | None = None
+    if tarefa_id:
+        _t = await db.get(Tarefa, tarefa_id)
+        if _t and _t.payload and _t.payload.get("_preview_modo"):
+            preview_tarefa_id = tarefa_id
+
     # 2.1. Detecta se é busca PERSONALIZADA (Fase 17). Marcador vem no
     # payload da tarefa quando o user dispara via /produtos/personalizados.
     # Resultado: products viram `fonte=personalizado` + dono apropriado.
@@ -287,6 +299,9 @@ async def ingerir_produtos(
             item["fonte"] = "personalizado"
             item["_personalizado_dono_id"] = personalizado_dono_id
             item["_personalizado_criador_id"] = personalizado_criador_id
+        if preview_tarefa_id:
+            # Sobrescreve fonte — marker fica visível só pra preview UI.
+            item["fonte"] = f"preview:{preview_tarefa_id}"
         try:
             criou, com_nicho = await _upsert_produto(
                 db,
@@ -526,10 +541,19 @@ async def _upsert_produto(
     # Personalizado (Fase 17): sobrescreve dono/criador se vier marcado.
     # Item marcado por `personalizado_service.marcar_produtos_personalizados`.
     eh_personalizado = item.get("fonte") == "personalizado"
+    item_fonte = item.get("fonte") or ""
+    eh_preview = item_fonte.startswith("preview:")
     if eh_personalizado:
         dono_id_efetivo = item.get("_personalizado_dono_id")
         criador_id      = item.get("_personalizado_criador_id")
         fonte           = "personalizado"
+    elif eh_preview:
+        # Modo preview (busca rápida por palavra-chave). Produto fica
+        # invisível em listagens até user confirmar via UI. Mantém
+        # `fonte = "preview:{tarefa_id}"` pra query da UI achar.
+        dono_id_efetivo = dono_id
+        criador_id      = None
+        fonte           = item_fonte
     else:
         dono_id_efetivo = dono_id
         criador_id      = None

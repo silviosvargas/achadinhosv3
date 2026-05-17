@@ -62,7 +62,11 @@ async def listar(
     # Fase 11: plano free vê catálogo do admin além do próprio. Outros planos
     # só veem da própria org.
     org_ids = _org_ids_visiveis(user)
-    base = select(Produto).where(Produto.org_id.in_(org_ids))
+    base = select(Produto).where(
+        Produto.org_id.in_(org_ids),
+        # Esconde produtos em modo PREVIEW (busca rápida pendente confirmação)
+        or_(Produto.fonte.is_(None), Produto.fonte.notlike("preview:%")),
+    )
 
     # Visibilidade (ADR-008). Produtos privados de afiliado (`usuario_dono_id`
     # NOT NULL) só aparecem pro dono ou pro admin da org. Mesmo regra que antes.
