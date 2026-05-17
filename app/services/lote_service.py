@@ -25,6 +25,7 @@ from app.services import (
     selecao_service,
     templates_service,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = get_logger(__name__)
