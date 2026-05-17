@@ -2651,6 +2651,21 @@ async def _buscar_rapida_iniciar_impl(
     log.info("buscar_rapida.iniciada",
              tarefa_id=tarefa.id, tipo=tipo_dec,
              entrada=entrada[:80], admin_id=admin.id)
+
+    # Fluxo dual:
+    # - URL: salva direto sem preview → redireciona pra /produtos com
+    #   mensagem de "busca em andamento" (user vê o produto aparecer
+    #   quando recarregar em ~30s). Bem mais simples que página de polling.
+    # - Termo: precisa de preview com checkbox pra escolher → vai pra
+    #   página dedicada `/produtos/buscar-rapida/{id}`.
+    if tipo_dec == "url":
+        return RedirectResponse(
+            url="/produtos?mensagem=" + quote_plus(
+                f"🔍 Busca enviada pro agente (tarefa #{tarefa.id}). "
+                "O produto aparece em ~30s — atualize a página."
+            ),
+            status_code=302,
+        )
     return RedirectResponse(
         url=f"/produtos/buscar-rapida/{tarefa.id}", status_code=302,
     )
