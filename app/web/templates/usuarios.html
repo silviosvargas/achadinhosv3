@@ -1,12 +1,68 @@
 {% extends "base.html" %}
-{% block titulo %}Equipe{% endblock %}
-{% block titulo_topbar %}Equipe{% endblock %}
+{% block titulo %}{% if eh_admin_central %}Usuários{% else %}Equipe{% endif %}{% endblock %}
+{% block titulo_topbar %}{% if eh_admin_central %}Usuários do sistema{% else %}Equipe{% endif %}{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
+  {% if eh_admin_central %}
+  <h1>Usuários do sistema 👥</h1>
+  <p>Todos os usuários cadastrados em todas as organizações. Use os filtros pra encontrar quem precisa.</p>
+  {% else %}
   <h1>Equipe 👤</h1>
   <p>Pessoas com acesso a esta organização. Defina o papel pra controlar permissões.</p>
+  {% endif %}
 </header>
+
+{# ── FILTROS — só pra admin central ──────────────── #}
+{% if eh_admin_central %}
+<details class="card-form" {% if filtros_ativos %}open{% endif %} style="margin-bottom:18px;">
+  <summary class="card-form-summary">
+    🔍 Filtros
+    {% if filtros_ativos %}
+      <span class="badge badge-azul" style="margin-left:6px;">ativos</span>
+    {% endif %}
+  </summary>
+  <form method="get" action="/usuarios"
+        style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; align-items:end;">
+    <label>
+      <span>Tipo</span>
+      <select name="papel">
+        <option value="">Todos</option>
+        <option value="admin"    {% if filtro_papel == 'admin' %}selected{% endif %}>👑 Admin</option>
+        <option value="afiliado" {% if filtro_papel == 'afiliado' %}selected{% endif %}>🤝 Afiliado</option>
+        <option value="usuario"  {% if filtro_papel == 'usuario' %}selected{% endif %}>👤 Usuário</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Nome / login / email</span>
+      <input type="text" name="busca" value="{{ filtro_busca }}"
+             placeholder="ex: silvio, @gmail.com">
+    </label>
+
+    <label>
+      <span>Cadastro DESDE</span>
+      <input type="date" name="desde" value="{{ filtro_desde }}">
+    </label>
+
+    <label>
+      <span>Cadastro ATÉ</span>
+      <input type="date" name="ate" value="{{ filtro_ate }}">
+    </label>
+
+    <div style="grid-column: 1 / -1; display:flex; gap:10px; justify-content:flex-end;
+                padding-top:6px; border-top:1px solid var(--border, #e5e7eb);">
+      {% if filtros_ativos %}
+      <a href="/usuarios" class="btn"
+         style="background:transparent; border:1px solid var(--border); color:var(--muted);">
+        ✕ Limpar filtros
+      </a>
+      {% endif %}
+      <button type="submit" class="btn btn-primario">Aplicar filtros</button>
+    </div>
+  </form>
+</details>
+{% endif %}
 
 {% if pode_criar %}
 <details class="card-form">
@@ -44,15 +100,21 @@
 {% endif %}
 
 {% if usuarios %}
+<div class="muted small" style="margin-bottom:10px;">
+  <strong>{{ usuarios|length }}</strong> usuário{{ 's' if usuarios|length != 1 else '' }}
+  {% if usuarios|length == 500 %}<span class="muted small">(limitado a 500 — refine filtros)</span>{% endif %}
+</div>
 <table class="tabela">
   <thead>
     <tr>
       <th>Login</th>
       <th>Nome</th>
       <th>Papel</th>
-      <th>Status</th>
+      {% if eh_admin_central %}<th>Org</th>{% endif %}
       <th>Email</th>
+      <th>Cadastro</th>
       <th>Último login</th>
+      <th>Status</th>
       <th></th>
     </tr>
   </thead>
@@ -61,7 +123,34 @@
     <tr>
       <td><strong>{{ u.login }}</strong></td>
       <td>{{ u.nome_exibicao or '—' }}</td>
-      <td><span class="papel papel-{{ u.papel }}">{{ u.papel }}</span></td>
+      <td>
+        {% if u.papel in ('admin', 'super') %}
+          <span class="badge badge-azul" title="{{ u.papel }}">👑 admin</span>
+        {% elif u.papel == 'afiliado' %}
+          <span class="badge badge-verde">🤝 afiliado</span>
+        {% else %}
+          <span class="badge badge-cinza">👤 usuário</span>
+        {% endif %}
+      </td>
+      {% if eh_admin_central %}
+      <td>
+        {% set _org = orgs_map.get(u.org_id) %}
+        {% if _org %}
+          <strong>{{ _org.nome }}</strong>
+          <div class="muted small">id {{ _org.id }}</div>
+        {% else %}
+          <code>org {{ u.org_id }}</code>
+        {% endif %}
+      </td>
+      {% endif %}
+      <td>{{ u.email or '—' }}</td>
+      <td>
+        {% if u.criado_em %}
+          {{ u.criado_em.strftime('%d/%m/%Y') }}
+          <div class="muted small">{{ u.criado_em.strftime('%H:%M') }}</div>
+        {% else %}—{% endif %}
+      </td>
+      <td>{{ u.ultimo_login.strftime('%d/%m %H:%M') if u.ultimo_login else 'nunca' }}</td>
       <td>
         {% if u.ativo %}
           <span class="badge badge-verde">ativo</span>
@@ -69,8 +158,6 @@
           <span class="badge badge-cinza">desativado</span>
         {% endif %}
       </td>
-      <td>{{ u.email or '—' }}</td>
-      <td>{{ u.ultimo_login.strftime('%d/%m %H:%M') if u.ultimo_login else 'nunca' }}</td>
       <td>
         {% if user.eh_admin or user.id == u.id %}
         <a href="/usuarios/{{ u.id }}/afiliados" class="btn-link">afiliados</a>

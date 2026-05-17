@@ -1236,12 +1236,66 @@ async def lista_usuarios(
     request: Request,
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
+    papel:  str | None = None,    # admin | afiliado | usuario | "" / None = todos
+    busca:  str | None = None,    # match parcial em login / nome_exibicao / email
+    desde:  str | None = None,    # YYYY-MM-DD — criado_em >= desde
+    ate:    str | None = None,    # YYYY-MM-DD — criado_em <= ate
 ):
-    result = await db.execute(
-        select(Usuario).where(Usuario.org_id == user.org_id)
-        .order_by(Usuario.criado_em.desc())
-    )
+    """Lista usuários.
+
+    Admin central (17/05/2026): vê TODOS do sistema com filtros por
+    papel / nome / data de cadastro. Outros admins: só da própria org.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    base = select(Usuario)
+    if not user.eh_admin_central:
+        base = base.where(Usuario.org_id == user.org_id)
+
+    # Filtros (admin central só)
+    if user.eh_admin_central:
+        if papel and papel in ("admin", "super", "afiliado", "usuario"):
+            if papel == "admin":
+                # Inclui super como admin pra simplificar
+                base = base.where(Usuario.papel.in_(["admin", "super"]))
+            else:
+                base = base.where(Usuario.papel == papel)
+
+        if busca:
+            busca_str = f"%{busca.strip()}%"
+            base = base.where(
+                (Usuario.login.ilike(busca_str))
+                | (Usuario.nome_exibicao.ilike(busca_str))
+                | (Usuario.email.ilike(busca_str))
+            )
+
+        if desde:
+            try:
+                d = _dt.strptime(desde, "%Y-%m-%d").replace(tzinfo=_tz.utc)
+                base = base.where(Usuario.criado_em >= d)
+            except ValueError:
+                pass
+
+        if ate:
+            try:
+                d = _dt.strptime(ate, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=_tz.utc,
+                )
+                base = base.where(Usuario.criado_em <= d)
+            except ValueError:
+                pass
+
+    result = await db.execute(base.order_by(Usuario.criado_em.desc()).limit(500))
     usuarios = list(result.scalars().all())
+
+    # Pra admin central: carrega orgs dos usuários (mostrar nome da org)
+    orgs_map: dict[int, Organizacao] = {}
+    if user.eh_admin_central and usuarios:
+        org_ids = {u.org_id for u in usuarios}
+        rows = (await db.execute(
+            select(Organizacao).where(Organizacao.id.in_(org_ids))
+        )).scalars().all()
+        orgs_map = {o.id: o for o in rows}
 
     return templates.TemplateResponse(
         request, "usuarios.html",
@@ -1249,6 +1303,16 @@ async def lista_usuarios(
             "user": user,
             "usuarios": usuarios,
             "pode_criar": user.eh_admin,
+            "eh_admin_central": user.eh_admin_central,
+            "orgs_map": orgs_map,
+            # Echo dos filtros pro form lembrar
+            "filtro_papel": papel or "",
+            "filtro_busca": busca or "",
+            "filtro_desde": desde or "",
+            "filtro_ate":   ate or "",
+            "filtros_ativos": bool(
+                user.eh_admin_central and any([papel, busca, desde, ate])
+            ),
         },
     )
 
