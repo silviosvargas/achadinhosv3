@@ -1240,13 +1240,17 @@ async def lista_usuarios(
     busca:  str | None = None,    # match parcial em login / nome_exibicao / email
     desde:  str | None = None,    # YYYY-MM-DD — criado_em >= desde
     ate:    str | None = None,    # YYYY-MM-DD — criado_em <= ate
+    page:   int = 1,              # paginação 1-indexed
 ):
     """Lista usuários.
 
     Admin central (17/05/2026): vê TODOS do sistema com filtros por
     papel / nome / data de cadastro. Outros admins: só da própria org.
+    Paginação: 50 por página (?page=N).
     """
     from datetime import datetime as _dt, timezone as _tz
+
+    PER_PAGE = 50
 
     base = select(Usuario)
     if not user.eh_admin_central:
@@ -1285,7 +1289,17 @@ async def lista_usuarios(
             except ValueError:
                 pass
 
-    result = await db.execute(base.order_by(Usuario.criado_em.desc()).limit(500))
+    # Total pra paginação
+    total = await db.scalar(
+        select(func.count()).select_from(base.subquery())
+    ) or 0
+    total_paginas = max(1, -(-total // PER_PAGE))  # ceil division
+    page = max(1, min(page, total_paginas))
+
+    offset = (page - 1) * PER_PAGE
+    result = await db.execute(
+        base.order_by(Usuario.criado_em.desc()).limit(PER_PAGE).offset(offset)
+    )
     usuarios = list(result.scalars().all())
 
     # Pra admin central: carrega orgs dos usuários (mostrar nome da org)
@@ -1313,6 +1327,11 @@ async def lista_usuarios(
             "filtros_ativos": bool(
                 user.eh_admin_central and any([papel, busca, desde, ate])
             ),
+            # Paginação
+            "page_atual":    page,
+            "total_paginas": total_paginas,
+            "total_count":   total,
+            "per_page":      PER_PAGE,
         },
     )
 

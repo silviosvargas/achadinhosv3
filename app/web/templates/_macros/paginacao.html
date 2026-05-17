@@ -1,0 +1,146 @@
+{#
+  Macro de paginação reutilizável.
+
+  Uso:
+    {% from "_macros/paginacao.html" import paginacao %}
+    {{ paginacao(page_atual, total_paginas, base_url, request) }}
+
+  Parâmetros:
+    page_atual: int           — página atual (1-indexed)
+    total_paginas: int        — total de páginas calculado no servidor
+    base_url: str             — URL base ("/usuarios", "/produtos")
+    request: Request          — usado pra preservar querystring dos filtros
+
+  Comportamento visual:
+    - Se total_paginas <= 1: não renderiza nada (sem necessidade)
+    - <= 7 páginas: mostra todas (1 2 3 4 5 6 7)
+    - > 7: trunca com ellipsis (1 ... 4 5 6 ... 10)
+    - Botões « anterior / próxima » nos extremos
+#}
+
+{%- macro paginacao(page_atual, total_paginas, base_url, request) -%}
+{%- if total_paginas and total_paginas > 1 -%}
+
+  {# Constrói query string atual SEM o `page=` (vamos sobrescrever) #}
+  {%- set _qs = request.query_params if request else {} -%}
+  {%- set _params_preservar = [] -%}
+  {%- for k, v in _qs.multi_items() if k != 'page' and v -%}
+    {%- set _ = _params_preservar.append(k ~ '=' ~ (v|urlencode)) -%}
+  {%- endfor -%}
+  {%- set _query_base = _params_preservar | join('&') -%}
+
+  {# Helper inline pra montar URL com page=N #}
+  {%- macro _url(n) -%}
+    {{ base_url }}?page={{ n }}{% if _query_base %}&{{ _query_base }}{% endif %}
+  {%- endmacro -%}
+
+  {# Calcula range de páginas a mostrar #}
+  {%- set _ini = 1 -%}
+  {%- set _fim = total_paginas -%}
+
+  {%- if total_paginas > 7 -%}
+    {# Janela de 3 páginas em torno da atual #}
+    {%- set _ini_meio = [page_atual - 1, 2] | max -%}
+    {%- set _fim_meio = [page_atual + 1, total_paginas - 1] | min -%}
+  {%- endif -%}
+
+  <nav class="paginacao" aria-label="Paginação" style="display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin:24px 0 8px;">
+
+    {# « Anterior #}
+    {%- if page_atual > 1 -%}
+      <a href="{{ _url(page_atual - 1) }}" class="pag-btn" rel="prev" aria-label="Página anterior">«</a>
+    {%- else -%}
+      <span class="pag-btn pag-disabled" aria-disabled="true">«</span>
+    {%- endif -%}
+
+    {%- if total_paginas <= 7 -%}
+      {# Mostra todas as páginas #}
+      {%- for n in range(1, total_paginas + 1) -%}
+        {%- if n == page_atual -%}
+          <span class="pag-btn pag-atual" aria-current="page">{{ n }}</span>
+        {%- else -%}
+          <a href="{{ _url(n) }}" class="pag-btn">{{ n }}</a>
+        {%- endif -%}
+      {%- endfor -%}
+    {%- else -%}
+      {# Truncamento: primeira + ... + janela em torno + ... + última #}
+
+      {# Página 1 sempre #}
+      {%- if page_atual == 1 -%}
+        <span class="pag-btn pag-atual" aria-current="page">1</span>
+      {%- else -%}
+        <a href="{{ _url(1) }}" class="pag-btn">1</a>
+      {%- endif -%}
+
+      {# Ellipsis antes #}
+      {%- if _ini_meio > 2 -%}
+        <span class="pag-btn pag-ellipsis" aria-hidden="true">…</span>
+      {%- endif -%}
+
+      {# Janela do meio #}
+      {%- for n in range(_ini_meio, _fim_meio + 1) -%}
+        {%- if n == page_atual -%}
+          <span class="pag-btn pag-atual" aria-current="page">{{ n }}</span>
+        {%- else -%}
+          <a href="{{ _url(n) }}" class="pag-btn">{{ n }}</a>
+        {%- endif -%}
+      {%- endfor -%}
+
+      {# Ellipsis depois #}
+      {%- if _fim_meio < total_paginas - 1 -%}
+        <span class="pag-btn pag-ellipsis" aria-hidden="true">…</span>
+      {%- endif -%}
+
+      {# Última página sempre #}
+      {%- if page_atual == total_paginas -%}
+        <span class="pag-btn pag-atual" aria-current="page">{{ total_paginas }}</span>
+      {%- else -%}
+        <a href="{{ _url(total_paginas) }}" class="pag-btn">{{ total_paginas }}</a>
+      {%- endif -%}
+    {%- endif -%}
+
+    {# Próxima » #}
+    {%- if page_atual < total_paginas -%}
+      <a href="{{ _url(page_atual + 1) }}" class="pag-btn" rel="next" aria-label="Próxima página">»</a>
+    {%- else -%}
+      <span class="pag-btn pag-disabled" aria-disabled="true">»</span>
+    {%- endif -%}
+  </nav>
+
+  <style>
+    .paginacao .pag-btn {
+      min-width: 36px;
+      height: 36px;
+      padding: 0 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border, #e5e7eb);
+      border-radius: 6px;
+      background: var(--bg-card, #fff);
+      color: var(--texto, #1f2937);
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .paginacao a.pag-btn:hover {
+      background: var(--bg, #f3f4f6);
+      border-color: var(--muted, #9ca3af);
+    }
+    .paginacao .pag-atual {
+      background: var(--esmeralda, #059669);
+      border-color: var(--esmeralda, #059669);
+      color: #fff;
+      cursor: default;
+    }
+    .paginacao .pag-disabled,
+    .paginacao .pag-ellipsis {
+      color: var(--muted, #9ca3af);
+      background: transparent;
+      border-color: transparent;
+      cursor: default;
+    }
+  </style>
+{%- endif -%}
+{%- endmacro -%}
