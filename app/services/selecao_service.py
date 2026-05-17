@@ -143,13 +143,22 @@ async def produtos_elegiveis(
 # ============================================================
 
 async def grupos_com_nichos(
-    db: AsyncSession, *, org_id: int, canal_tipo: str | None = None,
+    db: AsyncSession,
+    *,
+    org_id: int,
+    canal_tipo: str | None = None,
+    proprietario_id: int | None = None,
 ) -> list[tuple[Grupo, list[int]]]:
     """
     Lista grupos ativos da org com seus nichos vinculados.
 
     Filtra por canal_tipo se passado (whatsapp_agente | telegram_bot).
     Grupo cujo canal está inativo é ignorado.
+
+    REGRA DE SEGURANÇA (17/05/2026): se `proprietario_id` for passado,
+    filtra grupos onde `proprietario_id == X`. Usado pra impedir que
+    user A poste em grupos do user B (mesma org). Admin central deve
+    chamar SEM `proprietario_id` (vê todos).
 
     Retorna tuplas (grupo, lista_de_nicho_ids).
     Grupos SEM nichos vinculados aceitam qualquer produto (lista vazia = curinga).
@@ -166,6 +175,9 @@ async def grupos_com_nichos(
     )
     if canal_tipo:
         query = query.where(Canal.tipo == canal_tipo)
+    if proprietario_id is not None:
+        # Gate de privacidade — só os meus grupos
+        query = query.where(Grupo.proprietario_id == proprietario_id)
 
     grupos = list((await db.execute(query)).scalars().all())
     if not grupos:
@@ -251,9 +263,19 @@ async def montar_combinacoes(
     if not produtos:
         return [], stats
 
-    grupos = await grupos_com_nichos(db, org_id=org_id, canal_tipo=canal_tipo)
+    # Gate de privacidade (17/05/2026): user comum só posta nos próprios
+    # grupos. Admin central usa todos da org (proprietario_id=None).
+    proprietario_filtro = (
+        None if (usuario is None or usuario.eh_admin_central)
+        else usuario.id
+    )
+    grupos = await grupos_com_nichos(
+        db, org_id=org_id, canal_tipo=canal_tipo,
+        proprietario_id=proprietario_filtro,
+    )
     if not grupos:
-        log.warning("selecao.sem_grupos", org_id=org_id)
+        log.warning("selecao.sem_grupos",
+                    org_id=org_id, usuario_id=(usuario.id if usuario else None))
         return [], stats
 
     ja_postados = await chaves_postadas_recentemente(db, org_id=org_id)

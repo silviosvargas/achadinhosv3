@@ -712,10 +712,12 @@ async def lista_canais(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
-    """Lista canais da org. Qualquer user vê; edita só os seus."""
-    result = await db.execute(
-        select(Canal).where(Canal.org_id == user.org_id).order_by(Canal.criado_em.desc())
-    )
+    """Lista canais. User comum vê SÓ os próprios (Fase 17/05/2026 noite —
+    privacidade entre users da mesma org). Admin central vê tudo."""
+    base = select(Canal).where(Canal.org_id == user.org_id)
+    if not user.eh_admin_central:
+        base = base.where(Canal.usuario_id == user.id)
+    result = await db.execute(base.order_by(Canal.criado_em.desc()))
     canais = list(result.scalars().all())
 
     # Pra dropdown do form: agentes e usuários
@@ -950,11 +952,12 @@ async def lista_grupos(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
-    """Lista grupos da org. Cada user vê todos mas só edita os seus
-    (ou tudo, se for admin central)."""
-    result = await db.execute(
-        select(Grupo).where(Grupo.org_id == user.org_id).order_by(Grupo.criado_em.desc())
-    )
+    """Lista grupos. User comum vê SÓ os próprios (Fase 17/05/2026 noite
+    — privacidade entre users da mesma org). Admin central vê tudo."""
+    base = select(Grupo).where(Grupo.org_id == user.org_id)
+    if not user.eh_admin_central:
+        base = base.where(Grupo.proprietario_id == user.id)
+    result = await db.execute(base.order_by(Grupo.criado_em.desc()))
     grupos = list(result.scalars().all())
 
     # Canais pra dropdown
@@ -2253,6 +2256,9 @@ async def personalizado_postar(
             produto_id=produto_id,
             org_id=user.org_id,    # grupos vão ser da MINHA org
             criado_por_usuario_id=user.id,
+            # Gate de privacidade: user comum só posta nos próprios grupos.
+            # Admin central passa None (vê todos da org).
+            proprietario_grupo_id=(None if user.eh_admin_central else user.id),
         )
     except Exception as e:
         log.exception("personalizado.postar_crashou", erro=str(e))
@@ -2359,6 +2365,8 @@ async def curadoria_postar_um(
             produto_id=produto_id,
             org_id=user.org_id,
             criado_por_usuario_id=user.id,
+            # Gate de privacidade: user comum só posta nos próprios grupos
+            proprietario_grupo_id=(None if user.eh_admin_central else user.id),
         )
     except Exception as e:
         msg = f"erro={quote_plus('Erro ao postar: ' + str(e)[:120])}"
@@ -2501,12 +2509,14 @@ async def lista_templates(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
-    """Lista templates personalizadas da org. Qualquer user vê;
-    cada um edita só os seus (admin central edita todos)."""
+    """Lista templates personalizadas. Mostra TODAS da org — user pode
+    USAR (postar com) qualquer template, inclusive as do admin. Só EDITA
+    e EXCLUI as próprias (gate em `_pode_editar_template`)."""
     tpls = list((await db.execute(
         select(TemplateMensagem)
         .where(TemplateMensagem.org_id == user.org_id)
-        .order_by(TemplateMensagem.nicho_id.is_(None), TemplateMensagem.ordem, TemplateMensagem.id)
+        .order_by(TemplateMensagem.nicho_id.is_(None),
+                  TemplateMensagem.ordem, TemplateMensagem.id)
     )).scalars().all())
 
     nichos = list((await db.execute(

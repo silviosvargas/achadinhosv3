@@ -147,41 +147,61 @@ async def selecionar_template(
     *,
     org_id: int,
     nicho_ids: list[int],
+    criado_por_usuario_id: int | None = None,
 ) -> TemplateMensagem | None:
     """
     Escolhe um template ativo da org pra um produto com `nicho_ids`.
 
-    Estratégia:
-    1. Busca templates ativos da org cujo nicho_id está em `nicho_ids`.
-    2. Se houver: escolhe aleatoriamente.
-    3. Se não houver: usa template padrão (nicho_id IS NULL).
-    4. Se também não houver: retorna None (chamador usa fallback hardcoded).
-    """
-    # Tenta com nichos do produto
-    if nicho_ids:
-        result = await db.execute(
-            select(TemplateMensagem)
-            .where(
-                TemplateMensagem.org_id == org_id,
-                TemplateMensagem.ativo.is_(True),
-                TemplateMensagem.nicho_id.in_(nicho_ids),
-            )
-        )
-        candidatos = list(result.scalars().all())
-        if candidatos:
-            return random.choice(candidatos)
+    REGRA (17/05/2026 noite): usuário PODE usar todas templates disponíveis
+    (admin + próprias). Quando `criado_por_usuario_id` é passado, a função
+    PREFERE templates do próprio user — se ele não tem nenhuma compatível,
+    cai pra qualquer da org (admin) como fallback.
 
-    # Fallback: template padrão da org (nicho_id NULL)
-    result = await db.execute(
-        select(TemplateMensagem).where(
+    Pipeline de tentativas (cada nível só usa se o anterior vazio):
+    1. Template do user com nicho compatível
+    2. Template do user padrão (nicho_id NULL)
+    3. Template QUALQUER da org com nicho compatível
+    4. Template QUALQUER da org padrão (nicho_id NULL)
+    5. None — chamador usa TEMPLATE_FALLBACK hardcoded
+
+    Quando `criado_por_usuario_id=None` (admin central), pula direto pros
+    níveis 3-4 (qualquer da org).
+    """
+    async def _pegar(*, com_nicho: bool, do_usuario: bool) -> TemplateMensagem | None:
+        q = select(TemplateMensagem).where(
             TemplateMensagem.org_id == org_id,
             TemplateMensagem.ativo.is_(True),
-            TemplateMensagem.nicho_id.is_(None),
         )
-    )
-    candidatos = list(result.scalars().all())
-    if candidatos:
-        return random.choice(candidatos)
+        if com_nicho:
+            if not nicho_ids:
+                return None
+            q = q.where(TemplateMensagem.nicho_id.in_(nicho_ids))
+        else:
+            q = q.where(TemplateMensagem.nicho_id.is_(None))
+
+        if do_usuario:
+            if criado_por_usuario_id is None:
+                return None
+            q = q.where(
+                TemplateMensagem.criado_por_usuario_id == criado_por_usuario_id,
+            )
+
+        result = await db.execute(q)
+        candidatos = list(result.scalars().all())
+        return random.choice(candidatos) if candidatos else None
+
+    # 1. Template do user com nicho compatível
+    if (tpl := await _pegar(com_nicho=True, do_usuario=True)):
+        return tpl
+    # 2. Template do user padrão
+    if (tpl := await _pegar(com_nicho=False, do_usuario=True)):
+        return tpl
+    # 3. Qualquer da org com nicho compatível
+    if (tpl := await _pegar(com_nicho=True, do_usuario=False)):
+        return tpl
+    # 4. Qualquer da org padrão
+    if (tpl := await _pegar(com_nicho=False, do_usuario=False)):
+        return tpl
 
     return None
 

@@ -141,10 +141,16 @@ async def rodar_lote(
         return f"{base}/r/{red.slug}"
 
     for comb in combinacoes:
+        # 17/05/2026: prefere templates do próprio user; fallback pro admin
+        # se ele não tem (admin central passa None = vê tudo).
         template = await templates_service.selecionar_template(
             db,
             org_id=org_id,
             nicho_ids=comb.nichos_do_produto,
+            criado_por_usuario_id=(
+                None if (usuario is None or usuario.eh_admin_central)
+                else usuario.id
+            ),
         )
 
         url_override = await _url_pro_produto(comb.produto)
@@ -211,6 +217,7 @@ async def postar_produto_imediato(
     produto_id: int,
     org_id: int,
     criado_por_usuario_id: int,
+    proprietario_grupo_id: int | None = None,
 ) -> dict:
     """
     Posta UM produto específico em UM grupo compatível, ignorando o
@@ -221,6 +228,11 @@ async def postar_produto_imediato(
     `org_id` = org cujos GRUPOS vão receber a postagem (do user logado).
     O produto pode estar em outra org (ex: catálogo central admin) —
     cliente pode postar produtos do admin (Regras 1 e B — 17/05/2026).
+
+    REGRA DE SEGURANÇA (17/05/2026): se `proprietario_grupo_id` passado,
+    SÓ posta em grupos cujo `proprietario_id == proprietario_grupo_id`.
+    Impede que user A poste em grupo do user B (mesma org). Admin central
+    chama sem esse filtro (None).
 
     Critério de escolha do grupo:
     1. Grupo da org cujos nichos batem com algum nicho do produto
@@ -260,9 +272,17 @@ async def postar_produto_imediato(
             "erro": "Produto sem nicho — sem nicho não tem como achar grupo compatível",
         }
 
-    # Grupos compatíveis
-    grupos = await selecao_service.grupos_com_nichos(db, org_id=org_id)
+    # Grupos compatíveis. Gate por dono (17/05/2026): user só posta nos
+    # próprios grupos. Admin central passa None pra ver todos.
+    grupos = await selecao_service.grupos_com_nichos(
+        db, org_id=org_id, proprietario_id=proprietario_grupo_id,
+    )
     if not grupos:
+        if proprietario_grupo_id is not None:
+            return {
+                "ok": False,
+                "erro": "Você não tem grupos cadastrados. Crie um em /grupos primeiro.",
+            }
         return {"ok": False, "erro": "Nenhum grupo cadastrado nesta organização"}
 
     ja_postados = await selecao_service.chaves_postadas_recentemente(db, org_id=org_id)
@@ -282,9 +302,14 @@ async def postar_produto_imediato(
             "erro": "Nenhum grupo compatível (nicho não bate OU já postado nos últimos 7 dias)",
         }
 
-    # Renderiza template
+    # Renderiza template. 17/05/2026: prefere templates do próprio user
+    # (`criado_por_usuario_id`); fallback pra qualquer da org se ele não tem.
+    # Admin central passa None (vê tudo).
     template = await templates_service.selecionar_template(
         db, org_id=org_id, nicho_ids=nichos_prod,
+        criado_por_usuario_id=(
+            None if proprietario_grupo_id is None else criado_por_usuario_id
+        ),
     )
 
     # Cache de tag pra _url_pro_produto-like (replica lógica do rodar_lote)
