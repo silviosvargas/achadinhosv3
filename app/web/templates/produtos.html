@@ -11,6 +11,10 @@
   </div>
   {% if pode_criar %}
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a href="/buscas/nova" class="btn btn-primario"
+       title="Rodar busca nos marketplaces pra popular o catálogo">
+      🔍 Buscar produtos
+    </a>
     <a href="/produtos/import-csv" class="btn btn-primario">📥 Importar CSV</a>
     <a href="/produtos/novo" class="btn btn-primario">+ Adicionar produto</a>
     {% if produtos %}
