@@ -57,23 +57,50 @@ async def listar_personalizados_visiveis(
     db: AsyncSession, *, user: Usuario,
 ) -> list[Produto]:
     """
-    Lista produtos personalizados visíveis pro user:
-    - Admin: TODOS personalizados da org (qualquer dono)
-    - Outros: só os que ELE cadastrou
+    Lista produtos "personalizados" do user. Inclui DOIS caminhos
+    (Fase B — 17/05/2026):
+
+    1. **Solicitou** o cadastro (caso B do conceito): produtos onde
+       `criado_por_usuario_id == user.id`. Hoje (Fase 17) cria com agente
+       do próprio user; Fase C transforma em fila admin.
+
+    2. **Favoritou** produto do catálogo central (caso A): produtos
+       com row em `usuario_produto_personalizado WHERE usuario_id = user.id`.
+
+    Pra admin central, mostra TODOS personalizados da org (qualquer
+    criador) — útil pra gerenciar a fila.
+
+    Returns lista deduplicada de Produtos, ordenada por atualizado_em DESC.
     """
-    base = (
-        select(Produto)
-        .where(
-            Produto.org_id == user.org_id,
-            Produto.criado_por_usuario_id.is_not(None),
+    from app.models import UsuarioProdutoPersonalizado as UPP
+
+    # 1. IDs dos favoritados pelo user
+    favoritos_ids = [
+        pid for (pid,) in (await db.execute(
+            select(UPP.produto_id).where(UPP.usuario_id == user.id)
+        )).all()
+    ]
+
+    # 2. Query principal: combina criado_por OR id IN favoritos
+    if user.eh_admin_central:
+        # Admin central: vê todos personalizados da org central
+        base = (
+            select(Produto)
+            .where(
+                Produto.org_id == user.org_id,
+                Produto.criado_por_usuario_id.is_not(None),
+            )
         )
-        .order_by(Produto.atualizado_em.desc())
-    )
+    else:
+        # Cliente: criou OU favoritou
+        condicoes = [Produto.criado_por_usuario_id == user.id]
+        if favoritos_ids:
+            condicoes.append(Produto.id.in_(favoritos_ids))
+        base = select(Produto).where(or_(*condicoes))
 
-    if not user.eh_admin:
-        base = base.where(Produto.criado_por_usuario_id == user.id)
+    base = base.order_by(Produto.atualizado_em.desc()).limit(200)
 
-    rows = (await db.execute(base.limit(200))).scalars().all()
+    rows = (await db.execute(base)).scalars().all()
     return list(rows)
 
 

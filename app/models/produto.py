@@ -195,6 +195,43 @@ class ProdutoNicho(Base):
     produto: Mapped[Produto] = relationship(back_populates="nichos")
 
 
+class UsuarioProdutoPersonalizado(Base):
+    """Marcação M:N — quais produtos um usuário "favoritou" como seleção
+    pessoal pra ter acesso rápido em `/produtos/personalizados`.
+
+    Fase B (17/05/2026) — pelas regras novas, cliente comum NÃO cadastra
+    produto próprio; ele só CONSUME o catálogo do admin central. Esta
+    tabela permite o cliente marcar produtos do catálogo como "meus
+    personalizados" pra visualizar/postar rápido.
+
+    Diferente de `produtos.criado_por_usuario_id` (que rastreia quem
+    cadastrou — caso B do conceito): aqui é quem FAVORITOU produto JÁ
+    existente. A página `/produtos/personalizados` faz UNION dos dois.
+
+    UNIQUE(usuario_id, produto_id) garante 1 marcação só por par.
+    """
+    __tablename__ = "usuario_produto_personalizado"
+    __table_args__ = (
+        UniqueConstraint(
+            "usuario_id", "produto_id",
+            name="uq_usuario_produto_personalizado",
+        ),
+        Index("ix_uppp_usuario", "usuario_id"),
+        Index("ix_uppp_produto", "produto_id"),
+    )
+
+    id:         Mapped[int] = mapped_column(Integer, primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("usuarios.id", ondelete="CASCADE"),
+    )
+    produto_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("produtos.id", ondelete="CASCADE"),
+    )
+    criado_em:  Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow,
+    )
+
+
 class Nicho(Base, TimestampMixin):
     """
     Nicho canônico (beleza, moda_feminina, tecnologia...).

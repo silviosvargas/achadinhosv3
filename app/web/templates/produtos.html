@@ -264,7 +264,6 @@
         {% endif %}
       </td>
       <td>
-        {% if pode_criar %}
         <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
           {% set _link = p.url_afiliado or p.url_canonica %}
           {% if _link %}
@@ -273,6 +272,31 @@
             🔗 Ver produto
           </a>
           {% endif %}
+
+          {# Fase B (17/05/2026): personalizar/despersonalizar — todo user pode. #}
+          {% set _ja_personalizado = p.id in personalizados_ids %}
+          {% if _ja_personalizado %}
+          <form method="post" action="/produtos/{{ p.id }}/despersonalizar" style="display:inline">
+            <input type="hidden" name="next" value="/produtos">
+            <button type="submit" class="btn-link"
+                    style="color:#d97706; font-weight:600;"
+                    title="Remover da sua seleção personalizada">
+              ⭐ Personalizado ✓
+            </button>
+          </form>
+          {% else %}
+          <form method="post" action="/produtos/{{ p.id }}/personalizar" style="display:inline">
+            <input type="hidden" name="next" value="/produtos">
+            <button type="submit" class="btn-link"
+                    style="color:#92400e;"
+                    title="Adicionar à minha seleção personalizada (acesso rápido em /produtos/personalizados)">
+              ⭐ Personalizar
+            </button>
+          </form>
+          {% endif %}
+
+          {# Admin central: edita/bloqueia/exclui produto do catálogo. #}
+          {% if pode_criar %}
           <a href="/produtos/{{ p.id }}/editar" class="btn-link"
              title="Editar produto">✏️ editar</a>
           <form method="post" action="/produtos/{{ p.id }}/bloquear" style="display:inline">
@@ -288,8 +312,8 @@
             <button type="submit" class="btn-link" style="color:var(--vermelho);"
                     title="Apagar produto (irreversível)">🗑️ excluir</button>
           </form>
+          {% endif %}
         </div>
-        {% endif %}
       </td>
     </tr>
     {% endfor %}

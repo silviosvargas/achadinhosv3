@@ -1271,6 +1271,19 @@ async def lista_produtos(
             if n:
                 nichos_por_prod.setdefault(pid, []).append(n)
 
+    # Fase B (17/05/2026): set de IDs de produtos JÁ personalizados pelo user.
+    # Usado no template pra mostrar ⭐ vs ⭐✓ em cada card.
+    personalizados_ids: set[int] = set()
+    if produtos:
+        from app.models import UsuarioProdutoPersonalizado as UPP
+        rows = (await db.execute(
+            select(UPP.produto_id).where(
+                UPP.usuario_id == user.id,
+                UPP.produto_id.in_(ids),
+            )
+        )).all()
+        personalizados_ids = {pid for (pid,) in rows}
+
     # Detecta se ALGUM filtro está ativo (pra UI mostrar "limpar filtros")
     filtros_ativos = any([
         busca, plataforma,
@@ -1303,7 +1316,10 @@ async def lista_produtos(
             "filtros_ativos": filtros_ativos,
             "total_count": int(total_count or 0),
             "mostrados": len(produtos),
-            "pode_criar": user.eh_admin,
+            # Só admin central edita/exclui/bloqueia produtos no catálogo.
+            "pode_criar": user.eh_admin_central,
+            # Fase B: todos podem personalizar (favoritar).
+            "personalizados_ids": personalizados_ids,
         },
     )
 
@@ -1550,6 +1566,78 @@ async def excluir_produto(
     await db.delete(p)
     await db.commit()
     return RedirectResponse(url="/produtos", status_code=302)
+
+
+# ============================================================
+# Personalizar (favoritar) produto — Fase B (17/05/2026)
+# Cliente comum não cria produto próprio; ele FAVORITA produtos do
+# catálogo central pra ter acesso rápido em /produtos/personalizados.
+# ============================================================
+
+@router.post("/produtos/{produto_id}/personalizar", response_class=HTMLResponse)
+async def personalizar_produto(
+    request: Request,
+    produto_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Marca produto como 'personalizado/favorito' do usuário atual.
+
+    Idempotente — se já marcado, não dá erro (UPSERT effectivo).
+    Redireciona pra `next` do form, ou /produtos se não tiver.
+    """
+    from app.models import UsuarioProdutoPersonalizado as UPP
+    from sqlalchemy import select as sa_select
+
+    # Confirma que o produto existe e é visível pro user
+    produto = await db.get(Produto, produto_id)
+    if produto is None:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    # Tem que estar entre os visíveis (catálogo central, ou própria org)
+    from app.api.v1.endpoints.produtos import _org_ids_visiveis
+    if produto.org_id not in _org_ids_visiveis(user):
+        raise HTTPException(status_code=403, detail="Produto fora do seu catálogo")
+
+    # Idempotente — verifica antes de inserir
+    ja_existe = await db.scalar(
+        sa_select(UPP.id).where(
+            UPP.usuario_id == user.id,
+            UPP.produto_id == produto_id,
+        )
+    )
+    if not ja_existe:
+        db.add(UPP(usuario_id=user.id, produto_id=produto_id))
+        await db.commit()
+
+    # Redireciona pra de onde veio (form `next`) ou /produtos
+    form_data = await request.form()
+    proximo = form_data.get("next") or "/produtos"
+    return RedirectResponse(url=str(proximo), status_code=302)
+
+
+@router.post("/produtos/{produto_id}/despersonalizar", response_class=HTMLResponse)
+async def despersonalizar_produto(
+    request: Request,
+    produto_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Remove marcação 'personalizado' do produto pro usuário atual.
+    Não apaga o produto do catálogo (que é do admin)."""
+    from app.models import UsuarioProdutoPersonalizado as UPP
+    from sqlalchemy import delete as sa_delete
+
+    await db.execute(
+        sa_delete(UPP).where(
+            UPP.usuario_id == user.id,
+            UPP.produto_id == produto_id,
+        )
+    )
+    await db.commit()
+    form_data = await request.form()
+    proximo = form_data.get("next") or "/produtos/personalizados"
+    return RedirectResponse(url=str(proximo), status_code=302)
 
 
 @router.post("/produtos/regenerar-meli-la", response_class=HTMLResponse)

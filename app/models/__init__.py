@@ -15,6 +15,7 @@ from app.models.produto import (
     Produto,
     ProdutoNicho,
     TemplateMensagem,
+    UsuarioProdutoPersonalizado,
 )
 from app.models.redirect import Redirect
 from app.models.tarefa import StatusTarefa, Tarefa, TipoTarefa
@@ -38,6 +39,7 @@ __all__ = [
     "Plataforma",
     "Nicho",
     "TemplateMensagem",
+    "UsuarioProdutoPersonalizado",
     # Buscas
     "BuscaML",
     "NichoCategoriaML",
