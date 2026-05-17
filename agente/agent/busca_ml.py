@@ -1608,11 +1608,27 @@ async def executar_busca(msg: dict[str, Any], cfg: Config) -> dict[str, Any]:
     todos_produtos: list[dict[str, Any]] = []
     erros_por_mkt: dict[str, str] = {}
 
+    # Fase D (v3.9.0): gate por capability. Se o agente não tem
+    # permissão pra esse marketplace, recusa imediatamente em vez de
+    # disparar Selenium. Defesa em camadas — servidor não deveria mandar
+    # tarefa pra agente sem capability, mas se mandar, paramos aqui.
+    from agent import capabilities as caps_mod
+
     for mkt in marketplaces:
         coletor = _COLETORES_POR_MARKETPLACE.get(mkt)
         if coletor is None:
             log.warning("busca.marketplace_nao_suportado", marketplace=mkt)
             erros_por_mkt[mkt] = "marketplace_nao_implementado"
+            continue
+
+        # v3.9.0: checa capability antes de chamar coletor
+        if not caps_mod.tem(mkt):
+            log.warning("busca.sem_capability",
+                        marketplace=mkt, capabilities=caps_mod.listar())
+            erros_por_mkt[mkt] = (
+                f"capability_ausente: agente não autorizado pra {mkt}. "
+                "Cadastre tag de afiliado pra essa plataforma e reconecte."
+            )
             continue
 
         log.info("busca.marketplace_iniciado", marketplace=mkt)

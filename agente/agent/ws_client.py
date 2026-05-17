@@ -47,6 +47,10 @@ class WSClient:
         self._handlers: dict[str, HandlerComando] = {}
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._parar = asyncio.Event()
+        # Fase D (v3.9.0): capabilities recebidas do servidor no handshake.
+        # Lista de strings (ex: ["whatsapp", "ml", "shopee"]). Usado pra
+        # decidir se executa cada tipo de tarefa.
+        self.capabilities: list[str] = []
 
     def on_comando(self, tipo: str, handler: HandlerComando) -> None:
         """Registra handler pra um tipo de comando vindo do servidor."""
@@ -126,6 +130,18 @@ class WSClient:
                 log.info("ws.desconectar_solicitado", motivo=msg.get("motivo"))
                 await self._ws.close()
                 return
+
+            # Fase D (v3.9.0): servidor envia capabilities após o accept().
+            # Armazena no singleton global `agent.capabilities` pra outros
+            # módulos consultarem antes de executar tarefas.
+            if tipo == "capabilities":
+                caps = msg.get("capabilities") or []
+                if isinstance(caps, list):
+                    self.capabilities = [str(c).lower() for c in caps]
+                    from agent import capabilities as caps_mod
+                    caps_mod.set_capabilities(self.capabilities)
+                    log.info("ws.capabilities_recebidas", caps=self.capabilities)
+                continue
 
             handler = self._handlers.get(tipo)
             if handler is None:

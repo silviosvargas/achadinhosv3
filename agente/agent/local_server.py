@@ -45,7 +45,7 @@ URLS_DEFAULT = (
 log = structlog.get_logger(__name__)
 
 
-VERSAO_AGENTE = "3.8.14"
+VERSAO_AGENTE = "3.9.0"
 
 # Origens permitidas pelo CORS. Adicionar aqui qualquer host que vá
 # falar com o agente local pelo browser.
@@ -138,6 +138,13 @@ class LocalServer:
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Estado detalhado do agente."""
+        # Fase D (v3.9.0): inclui capabilities recebidas do servidor.
+        try:
+            from agent import capabilities as caps_mod
+            caps = caps_mod.listar()
+        except Exception:
+            caps = []
+
         return web.json_response({
             "ok": True,
             "versao": VERSAO_AGENTE,
@@ -146,6 +153,7 @@ class LocalServer:
             "servidor_ws": self.cfg.servidor_ws if self.cfg else None,
             "ws_conectado": self.ws_conectado,
             "ultimo_erro": self.ultimo_erro,
+            "capabilities": caps,
         })
 
     async def _handle_pair(self, request: web.Request) -> web.Response:
