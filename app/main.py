@@ -10,10 +10,13 @@ Em produção (sem Docker, raro):
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote_plus
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import router as v1_router
 from app.core.config import settings
@@ -82,6 +85,45 @@ def criar_app() -> FastAPI:
     # Arquivos estáticos (CSS, JS, ícones)
     static_dir = Path(__file__).parent / "web" / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    # ── Exception handler global ─────────────────────────────
+    # Sem isso, exceções em deps (validation, db, etc) viram "500
+    # Internal Server Error" puro — user não vê o que aconteceu nem
+    # o stacktrace vai pro structlog (que alimenta /admin/diag-busca-erros).
+    # Aqui capturamos TUDO, logamos via structlog (com exc_info=True via
+    # log.exception) e retornamos algo útil pro user.
+    @app.exception_handler(Exception)
+    async def _handler_global(request: Request, exc: Exception):
+        # HTTPException padrão (404, 403 etc) segue o caminho normal
+        if isinstance(exc, StarletteHTTPException):
+            raise exc
+
+        # Loga com stacktrace — vai pro log_entries via processor
+        log.exception(
+            "exception.nao_capturada",
+            path=str(request.url.path),
+            method=request.method,
+            tipo=type(exc).__name__,
+            erro=str(exc)[:300],
+        )
+
+        # POST em rotas /produtos/* → redirect com mensagem visível
+        if (request.method == "POST"
+                and request.url.path.startswith("/produtos")):
+            return RedirectResponse(
+                url="/produtos?erro=" + quote_plus(
+                    f"Erro {type(exc).__name__}: {str(exc)[:200]}"
+                ),
+                status_code=302,
+            )
+
+        # Resto: 500 com mensagem em vez de página em branco
+        return PlainTextResponse(
+            f"Erro interno: {type(exc).__name__}: {exc}\n\n"
+            f"Path: {request.method} {request.url.path}\n"
+            f"Veja detalhes em /admin/diag-busca-erros (admin only)",
+            status_code=500,
+        )
 
     return app
 
