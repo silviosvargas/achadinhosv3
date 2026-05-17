@@ -38,11 +38,12 @@
 <body>
 
 {% if user %}
-{# Fase 9.9: menu adaptativo por plano da org. user.organizacao.plano
-   vem via relationship lazy="joined" — sempre disponível aqui. #}
+{# Regra arquitetural (17/05/2026): só admin central gerencia catálogo,
+   buscas, nichos, templates, afiliados. Cliente comum (qualquer plano)
+   só consome o catálogo do admin e gerencia próprios canais/grupos.
+   `eh_admin_central` é property do Usuario (admin AND org_id == admin_org_id). #}
+{% set _admin_central = user.eh_admin_central %}
 {% set _plano = user.organizacao.plano if user.organizacao else None %}
-{% set _pode_buscas    = _plano.pode_criar_buscas          if _plano else False %}
-{% set _pode_produtos  = _plano.pode_criar_produto_proprio if _plano else False %}
 {% set _eh_free        = (_plano.slug == "free") if _plano else False %}
 {% set _path = request.url.path %}
 
@@ -76,13 +77,11 @@
           <span class="sidebar-item-icone">🛍️</span>
           <span>Personalizados</span>
         </a>
-        {% if _pode_buscas %}
+        {% if _admin_central %}
         <a href="/buscas" class="sidebar-item {% if _path.startswith('/buscas') %}ativo{% endif %}">
           <span class="sidebar-item-icone">🔎</span>
           <span>Buscas</span>
         </a>
-        {% endif %}
-        {% if _pode_produtos %}
         <a href="/mappings-nichos" class="sidebar-item {% if _path.startswith('/mappings') %}ativo{% endif %}">
           <span class="sidebar-item-icone">🏷️</span>
           <span>Nichos</span>

@@ -183,14 +183,15 @@ def _autorizar_mexer_em(target: Usuario, user: Usuario) -> None:
 
 
 def _gate_plano_cadastrar(user: Usuario) -> None:
-    """Plano free não cadastra afiliado próprio (Fase 9.9 — usa do admin)."""
-    plano = user.organizacao.plano if user.organizacao else None
-    if plano is None or not getattr(plano, "pode_cadastrar_afiliado", False):
+    """Regra arquitetural (17/05/2026): só admin central cadastra
+    afiliado próprio. Cliente comum sempre usa afiliado do admin —
+    postagens saem com link do admin central.
+    """
+    if not user.eh_admin_central:
         raise HTTPException(
             status_code=403,
-            detail="Seu plano não permite cadastrar afiliado próprio. "
-                   "No plano free, suas postagens usam o afiliado do administrador. "
-                   "Faça upgrade pra cadastrar suas próprias tags.",
+            detail="Apenas o admin central cadastra afiliados. Suas "
+                   "postagens usam automaticamente o afiliado do admin.",
         )
 
 

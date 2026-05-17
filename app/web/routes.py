@@ -475,9 +475,9 @@ async def pagina_onboarding(
         )
     ) or 0
 
-    # Fase 9.9: passo de afiliados só aparece pra plano que permite.
-    # No plano free, esse passo é skipado (postagem usa afiliado do admin).
-    pode_credenciais = bool(org and org.plano and org.plano.pode_cadastrar_afiliado)
+    # Regra arquitetural (17/05/2026): só admin central cadastra afiliado.
+    # Cliente comum não vê esse passo — postagens usam afiliado do admin.
+    pode_credenciais = user.eh_admin_central
 
     passos: dict[str, dict] = {
         "agente":      {"ok": total_agentes > 0, "total": total_agentes},
@@ -992,8 +992,8 @@ async def form_afiliados(
             detail="Só admin ou o próprio dono pode editar estes afiliados",
         )
 
-    plano = user.organizacao.plano if user.organizacao else None
-    pode_cadastrar = bool(plano and plano.pode_cadastrar_afiliado)
+    # Regra arquitetural (17/05/2026): só admin central cadastra afiliado.
+    pode_cadastrar = user.eh_admin_central
 
     cadastrados = await afiliado_service.listar_por_usuario(db, usuario_id=target.id)
     slugs_ja_usados = {c.plataforma for c in cadastrados}
@@ -1044,10 +1044,10 @@ async def adicionar_afiliado_form(
     if not user.eh_admin and target.id != user.id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    plano = user.organizacao.plano if user.organizacao else None
-    if not (plano and plano.pode_cadastrar_afiliado):
+    # Regra arquitetural (17/05/2026): só admin central cadastra afiliado.
+    if not user.eh_admin_central:
         return RedirectResponse(
-            url=f"/usuarios/{usuario_id}/afiliados?erro=Seu+plano+nao+permite",
+            url=f"/usuarios/{usuario_id}/afiliados?erro=Apenas+admin+central+cadastra+afiliado",
             status_code=302,
         )
 

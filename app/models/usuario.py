@@ -104,3 +104,20 @@ class Usuario(Base, TimestampMixin):
     def eh_afiliado(self) -> bool:
         return self.papel == "afiliado"
 
+    @property
+    def eh_admin_central(self) -> bool:
+        """True se for admin da org central Achadinhos (settings.admin_org_id).
+
+        Pelas regras de produto (17/05/2026):
+        - Cliente comum (qualquer plano, qualquer papel) NUNCA cadastra
+          afiliado próprio, busca própria ou produto próprio.
+        - Só o admin central pode gerenciar catálogo, buscas, afiliados.
+
+        Esse predicate substituiu as flags `pode_cadastrar_afiliado`,
+        `pode_criar_buscas`, `pode_criar_produto_proprio` do plano —
+        agora a permissão é arquitetural (qual org), não comercial
+        (qual plano).
+        """
+        from app.core.config import settings
+        return self.eh_admin and self.org_id == settings.admin_org_id
+

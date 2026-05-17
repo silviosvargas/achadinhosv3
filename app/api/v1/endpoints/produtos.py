@@ -25,18 +25,16 @@ from app.models import Agente, Produto, ProdutoNicho, Usuario
 def _org_ids_visiveis(user: Usuario) -> list[int]:
     """IDs de orgs cujos produtos esse user pode VER (não editar).
 
-    Fase 11/9.9: plano free também enxerga o catálogo da org admin
-    (settings.admin_org_id). Postagens nesses produtos saem com o link
-    de afiliado já gravado em `produto.url_afiliado` (= afiliado do admin).
+    Regra arquitetural (17/05/2026): TODO cliente non-admin-central
+    consome APENAS do catálogo da org central. Própria org só relevante
+    se for a própria org central.
 
-    Pra escrita (POST/PATCH/DELETE), continua valendo user.org_id apenas.
+    Pra escrita (POST/PATCH/DELETE), só admin central pode.
     """
-    ids = [user.org_id]
-    plano = user.organizacao.plano if user.organizacao else None
-    if plano is not None and not plano.pode_criar_produto_proprio:
-        if settings.admin_org_id != user.org_id:
-            ids.append(settings.admin_org_id)
-    return ids
+    if user.eh_admin_central:
+        return [user.org_id]
+    # Cliente comum: vê só catálogo da org admin central
+    return [settings.admin_org_id]
 from app.schemas.comum import Mensagem, Pagina
 from app.schemas.produto import (
     AtualizarProdutoRequest,
@@ -145,12 +143,14 @@ async def criar(
     admin: Usuario = Depends(usuario_admin),
     db: AsyncSession = Depends(get_db_async),
 ) -> ProdutoPublico:
-    # Fase 9.9: plano free não cria produtos próprios — só consome catálogo.
-    if not getattr(admin.organizacao.plano, "pode_criar_produto_proprio", False):
+    # Regra arquitetural (17/05/2026): só admin central cria produtos no
+    # catálogo. Cliente comum consome catálogo central e usa "personalizados"
+    # (Fase B do refactor) pra solicitar/favoritar.
+    if not admin.eh_admin_central:
         raise HTTPException(
             status_code=403,
-            detail="Seu plano não permite criar produtos próprios. No plano free, "
-                   "você posta os produtos já cadastrados pelo administrador.",
+            detail="Apenas o admin central cadastra produtos no catálogo. "
+                   "Use a página 'Personalizados' pra solicitar novos produtos.",
         )
     novo = Produto(
         org_id=admin.org_id,

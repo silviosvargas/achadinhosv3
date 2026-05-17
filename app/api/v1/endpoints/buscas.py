@@ -57,12 +57,14 @@ async def criar(
     user: Usuario = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db_async),
 ) -> BuscaPublica:
-    # Fase 9.9: plano free não cria buscas — usa catálogo do admin.
-    if not getattr(user.organizacao.plano, "pode_criar_buscas", False):
+    # Regra arquitetural (17/05/2026): só admin central cria buscas.
+    # Cliente comum não tem agente próprio pra Selenium ML — usa catálogo.
+    if not user.eh_admin_central:
         raise HTTPException(
             status_code=403,
-            detail="Seu plano não permite criar buscas. Use os produtos "
-                   "já cadastrados pelo administrador. Faça upgrade pra criar suas próprias.",
+            detail="Apenas o admin central cria buscas. O catálogo é "
+                   "alimentado pelas buscas do admin e fica disponível "
+                   "pra todos os usuários postarem.",
         )
     # Valida agente_id se passado
     if body.agente_id is not None:

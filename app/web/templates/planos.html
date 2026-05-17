@@ -34,12 +34,9 @@
     <ul class="plano-features">
       <li><strong>{{ p.limite_postagens_mes }}</strong> postagens/mês</li>
       <li><strong>{{ p.limite_grupos }}</strong> grupos</li>
-      <li><strong>{{ p.limite_afiliados }}</strong> afiliado(s) por usuário</li>
       <li>{{ "✓" if p.permite_telegram else "✗" }} Telegram (cloud)</li>
-      <li>{{ "✓" if p.permite_agendamento else "✗" }} Agendamento de buscas</li>
-      <li>{{ "✓" if p.pode_cadastrar_afiliado else "✗" }} Cadastrar credenciais de afiliado próprias</li>
-      <li>{{ "✓" if p.pode_criar_buscas else "✗" }} Criar buscas no Mercado Livre</li>
-      <li>{{ "✓" if p.pode_criar_produto_proprio else "✗" }} Criar produtos no seu catálogo</li>
+      <li>✓ Catálogo central Achadinhos (curado pelo admin)</li>
+      <li>✓ Solicitação de produtos personalizados</li>
     </ul>
 
     {% if p.id == plano_atual_id %}
