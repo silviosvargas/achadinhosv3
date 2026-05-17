@@ -75,6 +75,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 COOKIE_NAME = "achadinhos_session"
 
+# Logger do módulo — alimenta /admin/logs e /admin/diag-busca-erros via
+# structlog processor (app/core/logging.py).
+from app.core.logging import get_logger as _get_logger
+log = _get_logger(__name__)
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  Timezone helpers — servidor armazena tudo em UTC (boa prática),
