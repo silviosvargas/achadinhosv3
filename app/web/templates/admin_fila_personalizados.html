@@ -17,6 +17,49 @@
 {% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
 {% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
 
+{# ── BOTÕES GLOBAIS DE LIMPEZA ─────────────────────────────── #}
+{% if pendentes or recentes %}
+<div style="display:flex; gap:10px; margin-bottom:18px; justify-content:flex-end; flex-wrap:wrap;">
+  {% if recentes %}
+  <form method="post" action="/admin/fila-personalizados/limpar-falhas" style="display:inline"
+        data-confirm="Apaga TODAS as solicitações com status FALHOU ou REJEITADA. Concluídas e pendentes ficam intactas. Continuar?"
+        data-confirm-titulo="Limpar falhas/rejeitadas?"
+        data-confirm-ok="🧹 Sim, limpar"
+        data-confirm-perigo="1">
+    <button type="submit" class="btn"
+            style="background:#fbbf24; color:#78350f; border:1px solid #f59e0b;">
+      🧹 Limpar falhas/rejeitadas
+    </button>
+  </form>
+  {% endif %}
+  <button type="button" class="btn"
+          style="background:var(--vermelho,#dc2626); color:white; border:none;"
+          onclick="confirmarLimparTodasSolicitacoes()">
+    🗑 Apagar TUDO
+  </button>
+</div>
+
+<form method="post" action="/admin/fila-personalizados/limpar-todas"
+      id="form-limpar-todas-fila" style="display:none;">
+  <input type="hidden" name="confirmacao" id="confirmacao-limpar-fila" value="">
+</form>
+
+<script>
+function confirmarLimparTodasSolicitacoes() {
+  if (!confirm("⚠ APAGAR TODAS as solicitações da fila?\n\nInclui pendentes, processando, concluídas, falhas e rejeitadas.\nProdutos JÁ criados no catálogo ficam intactos — só apaga as solicitações.")) return;
+  if (!confirm("Tem certeza ABSOLUTA?\n\nSem volta. Histórico inteiro da fila vai pro nada.")) return;
+  var token = prompt("Pra confirmar, digite EXATAMENTE:\n\nAPAGAR TUDO");
+  if (token === null) return;
+  if (token.trim() !== "APAGAR TUDO") {
+    alert("Token não confere. Cancelado.");
+    return;
+  }
+  document.getElementById("confirmacao-limpar-fila").value = "APAGAR TUDO";
+  document.getElementById("form-limpar-todas-fila").submit();
+}
+</script>
+{% endif %}
+
 {# ── PENDENTES ────────────────────────────────────────────────── #}
 <section style="margin-bottom: 32px;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:12px; flex-wrap:wrap;">
@@ -94,6 +137,15 @@
                 ✗ Rejeitar
               </button>
             </form>
+            <form method="post" action="/admin/fila-personalizados/{{ s.id }}/excluir"
+                  style="display:inline"
+                  data-confirm="Apagar #{{ s.id }} da fila? Não vai mais aparecer pra ninguém."
+                  data-confirm-titulo="Excluir solicitação?"
+                  data-confirm-ok="🗑 Sim, excluir"
+                  data-confirm-perigo="1">
+              <button type="submit" class="btn-link" title="Apaga da fila"
+                      style="color:var(--vermelho);">🗑</button>
+            </form>
           </div>
         </td>
       </tr>
@@ -122,6 +174,7 @@
         <th>Status</th>
         <th>Resultado</th>
         <th>Tempo</th>
+        <th>Ações</th>
       </tr>
     </thead>
     <tbody>
@@ -174,6 +227,29 @@
           {% else %}
             —
           {% endif %}
+        </td>
+        <td style="white-space:nowrap;">
+          {# Reprocessar só pra status que faz sentido retentar #}
+          {% if s.status in ('falhou', 'rejeitada', 'processando') %}
+          <form method="post" action="/admin/fila-personalizados/{{ s.id }}/reprocessar"
+                style="display:inline;"
+                data-confirm="Reprocessar #{{ s.id }}? Vai voltar pra pendente e disparar busca de novo no seu agente."
+                data-confirm-titulo="Reprocessar?"
+                data-confirm-ok="🔄 Sim, reprocessar">
+            <button type="submit" class="btn-link"
+                    title="Volta pra pendente e dispara busca de novo"
+                    style="color:#2563eb;">🔄</button>
+          </form>
+          {% endif %}
+          <form method="post" action="/admin/fila-personalizados/{{ s.id }}/excluir"
+                style="display:inline;"
+                data-confirm="Excluir #{{ s.id }}? Apaga da fila (produtos JÁ criados ficam intactos no catálogo)."
+                data-confirm-titulo="Excluir solicitação?"
+                data-confirm-ok="🗑 Sim, excluir"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" title="Apaga da fila"
+                    style="color:var(--vermelho);">🗑</button>
+          </form>
         </td>
       </tr>
       {% endfor %}

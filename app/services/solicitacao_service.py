@@ -306,3 +306,100 @@ async def _marcar_falhou(
     s.mensagem_erro = erro[:500]
     s.concluido_em = datetime.now(tz=timezone.utc)
     await db.commit()
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Polimentos UI admin (Fase polimentos — 18/05/2026):
+#  - excluir uma solicitação individual
+#  - reprocessar (volta pra pendente + dispara processamento)
+#  - limpar todas com status FALHOU (limpeza em massa)
+#  - limpar TODAS (qualquer status — uso pontual pra debug/limpeza geral)
+# ─────────────────────────────────────────────────────────────────────
+
+async def excluir_solicitacao(
+    db: AsyncSession, *, solicitacao_id: int,
+) -> bool:
+    """Apaga a row da fila. Retorna True se removeu. Idempotente."""
+    s = await db.get(SolicitacaoPersonalizada, solicitacao_id)
+    if s is None:
+        return False
+    await db.delete(s)
+    await db.commit()
+    log.info("solicitacao.excluida", solicitacao_id=solicitacao_id)
+    return True
+
+
+async def reprocessar_solicitacao(
+    db: AsyncSession,
+    *,
+    solicitacao_id: int,
+    admin: Usuario | None = None,
+) -> dict:
+    """Volta a solicitação pra `pendente` (limpando processado_em,
+    concluido_em, mensagem_erro, tarefa_id, produtos_criados) e dispara
+    `processar_solicitacao` na sequência. Útil pra retentar após:
+    - FALHOU (agente offline na vez anterior, captcha, etc)
+    - PROCESSANDO travado (tarefa órfã / agente desconectou no meio)
+    - REJEITADA por engano
+
+    Não reprocessa CONCLUIDA — geralmente já tem produtos no catálogo;
+    se quiser repetir, exclua e re-solicite.
+    """
+    s = await db.get(SolicitacaoPersonalizada, solicitacao_id)
+    if s is None:
+        return {"ok": False, "erro": "Solicitação não encontrada"}
+    if s.status == StatusSolicitacao.CONCLUIDA.value:
+        return {
+            "ok": False,
+            "erro": "Já concluída — exclua e re-solicite se quiser repetir",
+        }
+
+    # Reseta estado pro processar_solicitacao() aceitar (ele exige pendente)
+    s.status = StatusSolicitacao.PENDENTE.value
+    s.processado_em = None
+    s.concluido_em = None
+    s.mensagem_erro = None
+    s.tarefa_id = None
+    s.produtos_criados = 0
+    await db.commit()
+    log.info("solicitacao.reprocessar_iniciado", solicitacao_id=solicitacao_id)
+
+    # Dispara processamento normal
+    return await processar_solicitacao(
+        db, solicitacao_id=solicitacao_id, admin=admin,
+    )
+
+
+async def limpar_por_status(
+    db: AsyncSession, *, statuses: list[str],
+) -> int:
+    """Apaga todas as solicitações cujo status está em `statuses`.
+    Retorna quantas linhas foram apagadas. NÃO toca em tarefas vinculadas
+    (essas ficam no histórico de `tarefas`).
+    """
+    from sqlalchemy import delete
+
+    if not statuses:
+        return 0
+    result = await db.execute(
+        delete(SolicitacaoPersonalizada).where(
+            SolicitacaoPersonalizada.status.in_(statuses)
+        )
+    )
+    await db.commit()
+    total = result.rowcount or 0
+    log.info("solicitacao.limpeza_em_massa",
+             statuses=statuses, removidas=total)
+    return total
+
+
+async def limpar_todas(db: AsyncSession) -> int:
+    """Apaga TODAS as solicitações (qualquer status). Destrutivo —
+    UI exige confirmação tripla. Retorna nº de linhas apagadas."""
+    from sqlalchemy import delete
+
+    result = await db.execute(delete(SolicitacaoPersonalizada))
+    await db.commit()
+    total = result.rowcount or 0
+    log.warning("solicitacao.limpou_todas", removidas=total)
+    return total

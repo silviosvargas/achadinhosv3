@@ -3691,3 +3691,101 @@ async def fila_processar_tudo(
         url=f"/admin/fila-personalizados?mensagem={quote_plus(msg)}",
         status_code=302,
     )
+
+
+@router.post("/admin/fila-personalizados/{solicitacao_id}/excluir",
+             response_class=HTMLResponse)
+async def fila_excluir(
+    solicitacao_id: int,
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Apaga a solicitação. NÃO toca na tarefa vinculada (se houver) —
+    ela continua no histórico. Idempotente."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    ok = await solicitacao_service.excluir_solicitacao(
+        db, solicitacao_id=solicitacao_id,
+    )
+    msg = (
+        f"mensagem={quote_plus(f'Solicitação #{solicitacao_id} excluída')}"
+        if ok else
+        f"erro={quote_plus('Solicitação não encontrada')}"
+    )
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?{msg}", status_code=302,
+    )
+
+
+@router.post("/admin/fila-personalizados/{solicitacao_id}/reprocessar",
+             response_class=HTMLResponse)
+async def fila_reprocessar(
+    solicitacao_id: int,
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Volta a solicitação pra PENDENTE e dispara processamento. Útil
+    pra falhou/processando travado/rejeitada por engano."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    resultado = await solicitacao_service.reprocessar_solicitacao(
+        db, solicitacao_id=solicitacao_id, admin=admin,
+    )
+    if resultado["ok"]:
+        msg = f"mensagem={quote_plus('Reprocessando: ' + resultado['mensagem'])}"
+    else:
+        msg = f"erro={quote_plus(resultado.get('erro', 'erro_desconhecido'))}"
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?{msg}", status_code=302,
+    )
+
+
+@router.post("/admin/fila-personalizados/limpar-falhas",
+             response_class=HTMLResponse)
+async def fila_limpar_falhas(
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Apaga TODAS solicitações com status falhou OU rejeitada — limpeza
+    em massa pra desafogar a tabela após série de erros."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    total = await solicitacao_service.limpar_por_status(
+        db, statuses=["falhou", "rejeitada"],
+    )
+    msg = f"mensagem={quote_plus(f'{total} solicitações falhas/rejeitadas apagadas')}"
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?{msg}", status_code=302,
+    )
+
+
+@router.post("/admin/fila-personalizados/limpar-todas",
+             response_class=HTMLResponse)
+async def fila_limpar_todas(
+    confirmacao: str = Form(""),
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Apaga TODAS solicitações (qualquer status, inclusive concluídas).
+    Defesa em profundidade: além do JS de confirm tripla, exige token
+    literal `APAGAR TUDO` no body (igual padrão de produtos/excluir-todos)."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    if confirmacao.strip() != "APAGAR TUDO":
+        return RedirectResponse(
+            url=(
+                "/admin/fila-personalizados?erro="
+                + quote_plus("Token de confirmação incorreto (esperado 'APAGAR TUDO')")
+            ),
+            status_code=302,
+        )
+
+    total = await solicitacao_service.limpar_todas(db)
+    msg = f"mensagem={quote_plus(f'{total} solicitações apagadas (TUDO)')}"
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?{msg}", status_code=302,
+    )
