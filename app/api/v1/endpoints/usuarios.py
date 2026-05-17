@@ -183,15 +183,18 @@ def _autorizar_mexer_em(target: Usuario, user: Usuario) -> None:
 
 
 def _gate_plano_cadastrar(user: Usuario) -> None:
-    """Regra arquitetural (17/05/2026): só admin central cadastra
-    afiliado próprio. Cliente comum sempre usa afiliado do admin —
-    postagens saem com link do admin central.
+    """Regra refinada (17/05/2026 noite — Fase D):
+    Admin central + Afiliado podem cadastrar tags próprias. Usuário comum
+    NÃO — postagens dele usam o afiliado do admin.
+
+    Permite o cenário "afiliado tem agente próprio com Selenium ML/Shopee
+    pra fazer comissão na conta DELE".
     """
-    if not user.eh_admin_central:
+    if not (user.eh_admin_central or user.eh_afiliado):
         raise HTTPException(
             status_code=403,
-            detail="Apenas o admin central cadastra afiliados. Suas "
-                   "postagens usam automaticamente o afiliado do admin.",
+            detail="Apenas admin central ou afiliados cadastram tags. "
+                   "Como usuário comum, suas postagens usam o afiliado do admin.",
         )
 
 

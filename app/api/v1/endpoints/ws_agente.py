@@ -99,6 +99,24 @@ async def ws_agente(
     async with sessao_async() as db:
         await agente_service.marcar_online(db, agente_id=agente_id, ip=client_ip)
 
+    # ── 3.1. Fase D (17/05/2026): envia capabilities pro agente ──
+    # Agente armazena pra decidir quais módulos carregar (WhatsApp sempre;
+    # marketplaces conforme tipo do user — admin/afiliado/usuário).
+    from app.services import capabilities_service
+    async with sessao_async() as db:
+        caps = await capabilities_service.capabilities_do_agente(
+            db, agente_id=agente_id,
+        )
+    try:
+        await websocket.send_json({
+            "tipo":         "capabilities",
+            "capabilities": caps,
+        })
+        log.info("ws.agente_capabilities", agente_id=agente_id, caps=caps)
+    except Exception as e:
+        log.warning("ws.capabilities_envio_falhou",
+                    agente_id=agente_id, erro=str(e)[:120])
+
     # ── 4. Reentrega pendentes ─────────────────────
     async with sessao_async() as db:
         await dispatcher.reentregar_pendentes(db, agente_id=agente_id)

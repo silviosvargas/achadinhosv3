@@ -60,10 +60,9 @@ python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localh
     <tr>
       <th>Nome</th>
       <th>Status</th>
+      <th>Capabilities</th>
       <th>Versão</th>
-      <th>SO</th>
       <th>Último ping</th>
-      <th>IP</th>
     </tr>
   </thead>
   <tbody>
@@ -71,7 +70,7 @@ python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localh
     <tr>
       <td>
         <strong>{{ a.nome }}</strong>
-        <div class="muted small">id: {{ a.id }}</div>
+        <div class="muted small">id: {{ a.id }} · {{ a.sistema_op or '—' }} · {{ a.ultimo_ip or '—' }}</div>
       </td>
       <td>
         {% if not a.ativo %}
@@ -82,10 +81,27 @@ python -m agent.main --token "{{ token_recem[:30] }}..." --servidor "ws://localh
           <span class="badge badge-cinza">○ offline</span>
         {% endif %}
       </td>
+      <td>
+        {# Fase D (17/05/2026): badges de capabilities por agente #}
+        {% set _caps = capabilities_por_agente.get(a.id) or [] %}
+        {% set _todas = ['whatsapp', 'ml', 'shopee', 'amazon'] %}
+        {% set _icones = {'whatsapp': '💬', 'ml': '🛒', 'shopee': '🛍️', 'amazon': '📦'} %}
+        <div style="display:flex; gap:4px; flex-wrap:wrap;">
+          {% for c in _todas %}
+            {% if c in _caps %}
+              <span class="badge badge-verde" title="Capability ativa">
+                {{ _icones[c] }} {{ c }}
+              </span>
+            {% else %}
+              <span class="badge badge-cinza" title="Sem capability">
+                🔒 {{ c }}
+              </span>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </td>
       <td>{{ a.versao_app or '—' }}</td>
-      <td>{{ a.sistema_op or '—' }}</td>
       <td>{{ a.ultimo_ping.strftime('%d/%m %H:%M') if a.ultimo_ping else 'nunca' }}</td>
-      <td>{{ a.ultimo_ip or '—' }}</td>
     </tr>
     {% endfor %}
   </tbody>

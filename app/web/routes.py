@@ -488,9 +488,9 @@ async def pagina_onboarding(
         )
     ) or 0
 
-    # Regra arquitetural (17/05/2026): só admin central cadastra afiliado.
-    # Cliente comum não vê esse passo — postagens usam afiliado do admin.
-    pode_credenciais = user.eh_admin_central
+    # Regra refinada Fase D: admin central + afiliado têm passo "afiliados".
+    # Usuário comum não vê — postagens usam afiliado do admin.
+    pode_credenciais = user.eh_admin_central or user.eh_afiliado
 
     passos: dict[str, dict] = {
         "agente":      {"ok": total_agentes > 0, "total": total_agentes},
@@ -638,6 +638,8 @@ async def lista_agentes(
     token_recem: str | None = None,
 ):
     """Lista agentes. Se vier ?token_recem=..., exibe banner com o token criado."""
+    from app.services import capabilities_service
+
     result = await db.execute(
         select(Agente).where(Agente.org_id == user.org_id).order_by(Agente.criado_em.desc())
     )
@@ -649,6 +651,14 @@ async def lista_agentes(
         .order_by(Usuario.login)
     )).scalars().all())
 
+    # Fase D (17/05/2026): capabilities por agente — UI mostra badges
+    # ("🟢 WhatsApp", "🟢 ML", "🔒 Shopee" etc) baseado no tipo do user dono.
+    capabilities_por_agente: dict[int, list[str]] = {}
+    for a in agentes:
+        capabilities_por_agente[a.id] = await capabilities_service.capabilities_do_agente(
+            db, agente_id=a.id,
+        )
+
     return templates.TemplateResponse(
         request, "agentes.html",
         {
@@ -657,6 +667,7 @@ async def lista_agentes(
             "usuarios": usuarios,
             "token_recem": token_recem,
             "pode_criar": user.eh_admin,
+            "capabilities_por_agente": capabilities_por_agente,
         },
     )
 
@@ -1005,8 +1016,9 @@ async def form_afiliados(
             detail="Só admin ou o próprio dono pode editar estes afiliados",
         )
 
-    # Regra arquitetural (17/05/2026): só admin central cadastra afiliado.
-    pode_cadastrar = user.eh_admin_central
+    # Regra refinada Fase D: admin central + afiliado podem cadastrar tag
+    # própria. Usuário comum não.
+    pode_cadastrar = user.eh_admin_central or user.eh_afiliado
 
     cadastrados = await afiliado_service.listar_por_usuario(db, usuario_id=target.id)
     slugs_ja_usados = {c.plataforma for c in cadastrados}
@@ -1057,10 +1069,10 @@ async def adicionar_afiliado_form(
     if not user.eh_admin and target.id != user.id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    # Regra arquitetural (17/05/2026): só admin central cadastra afiliado.
-    if not user.eh_admin_central:
+    # Regra refinada Fase D: admin central + afiliado podem cadastrar.
+    if not (user.eh_admin_central or user.eh_afiliado):
         return RedirectResponse(
-            url=f"/usuarios/{usuario_id}/afiliados?erro=Apenas+admin+central+cadastra+afiliado",
+            url=f"/usuarios/{usuario_id}/afiliados?erro=Apenas+admin+ou+afiliado+cadastra+tag",
             status_code=302,
         )
 
