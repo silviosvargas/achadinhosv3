@@ -46,20 +46,25 @@
   <li class="onboarding-passo {% if passos.agente.ok %}ok{% endif %}">
     <div class="passo-icone">{% if passos.agente.ok %}✅{% else %}2️⃣{% endif %}</div>
     <div class="passo-conteudo">
-      <h3>Instale o agente no seu PC</h3>
+      <h3>Conecte seu agente</h3>
       <p class="muted">
-        O agente roda em background no seu computador. Ele faz as buscas no ML
-        (com Selenium) e posta no WhatsApp Web. Telegram não precisa dele.
+        O agente roda em background no seu PC — faz as buscas no Mercado Livre
+        (com Selenium) e posta no WhatsApp Web. São <strong>2 ações</strong>:
       </p>
+      <ol class="muted small" style="margin: 0 0 10px 18px; padding: 0;">
+        <li>📥 Baixar e instalar o <code>.exe</code></li>
+        <li>🔗 Clicar em <strong>"Conectar meu agente"</strong> na página de download
+            (parea o agente com sua conta)</li>
+      </ol>
       {% if passos.agente.ok %}
         <span class="muted small">
-          {{ passos.agente.total }} agente(s) cadastrado(s).
+          {{ passos.agente.total }} agente(s) conectado(s).
           <a href="/agentes">Ver agentes</a>
         </span>
       {% else %}
-        <a href="/agentes/baixar" class="btn btn-primario">Baixar e instalar agente</a>
+        <a href="/agentes/baixar" class="btn btn-primario">Baixar e conectar agente</a>
         <span class="muted small">
-          O setup faz login com sua conta e cria o agente automaticamente.
+          A página detecta automaticamente quando você instalar.
         </span>
       {% endif %}
     </div>
@@ -79,12 +84,19 @@
         </span>
       {% else %}
         <a href="/canais" class="btn btn-primario">Cadastrar canal</a>
+        {% if not passos.agente.ok %}
+        <span class="muted small" style="color: #b45309;">
+          ⚠ Pra canal <strong>WhatsApp</strong> você precisa conectar o agente
+          (passo 2 acima). <strong>Telegram</strong> roda na nuvem, não exige
+          agente — pode cadastrar normalmente.
+        </span>
+        {% endif %}
       {% endif %}
     </div>
   </li>
 
-  <li class="onboarding-passo {% if passos.grupo.ok %}ok{% endif %}">
-    <div class="passo-icone">{% if passos.grupo.ok %}✅{% else %}4️⃣{% endif %}</div>
+  <li class="onboarding-passo {% if passos.grupo.ok %}ok{% elif not passos.canal.ok %}bloqueado{% endif %}">
+    <div class="passo-icone">{% if passos.grupo.ok %}✅{% elif not passos.canal.ok %}🔒{% else %}4️⃣{% endif %}</div>
     <div class="passo-conteudo">
       <h3>Crie seu primeiro grupo</h3>
       <p class="muted">
@@ -95,6 +107,14 @@
         <span class="muted small">
           {{ passos.grupo.total }} grupo(s) cadastrado(s).
           <a href="/grupos">Ver grupos</a>
+        </span>
+      {% elif not passos.canal.ok %}
+        <button type="button" class="btn btn-primario" disabled
+                title="Cadastre um canal primeiro — grupo sem canal não posta">
+          Criar grupo
+        </button>
+        <span class="muted small" style="color: #b45309;">
+          ⚠ Cadastre um canal antes (passo acima).
         </span>
       {% else %}
         <a href="/grupos" class="btn btn-primario">Criar grupo</a>
@@ -133,6 +153,14 @@
   .onboarding-passo.ok {
     background: #f0fdf4;
     border-color: #86efac;
+  }
+  .onboarding-passo.bloqueado {
+    opacity: 0.6;
+    background: #fafafa;
+  }
+  .onboarding-passo.bloqueado button[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
   .passo-icone {
     font-size: 32px;

@@ -9,14 +9,35 @@
 </header>
 
 {% if pode_criar %}
-<details class="card-form">
+{% set tem_agente = agentes|length > 0 %}
+
+{# Warning amarelo quando não há agente pareado — esse é o caso típico
+   de quem chegou aqui sem completar o passo 2 do onboarding. #}
+{% if not tem_agente %}
+<div class="alerta alerta-aviso" style="margin-bottom:16px; background:#fef3c7; border:1px solid #f59e0b; color:#78350f; padding:14px 16px; border-radius:8px;">
+  <strong>⚠ Nenhum agente conectado.</strong>
+  <p style="margin:6px 0 0;">
+    Pra criar um canal <strong>WhatsApp</strong> você precisa primeiro conectar um agente
+    no seu PC. <a href="/agentes/baixar" style="color:#92400e; font-weight:600;">→ Conectar agente</a>
+    <br>
+    <small>Se for usar só <strong>Telegram</strong>, pode prosseguir normalmente —
+    Telegram roda na nuvem com bot do BotFather, sem agente.</small>
+  </p>
+</div>
+{% endif %}
+
+<details class="card-form" {% if not tem_agente %}{% else %}open{% endif %}>
   <summary class="card-form-summary">+ Criar novo canal</summary>
   <form method="post" action="/canais/novo" class="form-inline" id="form-canal">
     <label>
       Tipo
-      <select name="tipo" required onchange="trocarTipo(this.value)">
-        <option value="whatsapp_agente">WhatsApp (via agente local)</option>
-        <option value="telegram_bot">Telegram (via bot)</option>
+      <select name="tipo" id="select-tipo" required onchange="trocarTipo(this.value)">
+        <option value="whatsapp_agente" {% if not tem_agente %}disabled{% endif %}>
+          WhatsApp (via agente local){% if not tem_agente %} — exige agente conectado{% endif %}
+        </option>
+        <option value="telegram_bot" {% if not tem_agente %}selected{% endif %}>
+          Telegram (via bot)
+        </option>
       </select>
     </label>
     <label>
@@ -24,19 +45,23 @@
       <input type="text" name="nome" required placeholder="Ex: WhatsApp principal" maxlength="100">
     </label>
 
-    <div id="campo-agente">
+    <div id="campo-agente" {% if not tem_agente %}style="display:none"{% endif %}>
       <label>
         Agente que vai operar este canal
-        <select name="agente_id">
+        <select name="agente_id" {% if not tem_agente %}disabled{% endif %}>
+          {% if tem_agente %}
           <option value="">— selecione —</option>
           {% for a in agentes %}
             <option value="{{ a.id }}">{{ a.nome }} {% if a.online %}🟢{% endif %}</option>
           {% endfor %}
+          {% else %}
+          <option value="">Nenhum agente pareado — pareie um primeiro</option>
+          {% endif %}
         </select>
       </label>
     </div>
 
-    <div id="campo-bot" style="display:none">
+    <div id="campo-bot" {% if tem_agente %}style="display:none"{% endif %}>
       <label>
         Bot Token
         <input type="text" name="bot_token" placeholder="123456789:ABCdef-ghIJKlmnoPQRStuvWXyz" maxlength="200">
