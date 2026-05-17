@@ -101,6 +101,13 @@ class Usuario(Base, TimestampMixin):
         return self.papel in ("admin", "super")
 
     @property
+    def eh_super(self) -> bool:
+        """Super admin estrela — pode promover/rebaixar outros admins/super.
+        Cadeia restrita: só outro super faz alguém virar super. Migration
+        0019 promove o admin mais antigo da org central pra abrir a cadeia."""
+        return self.papel == "super"
+
+    @property
     def eh_afiliado(self) -> bool:
         return self.papel == "afiliado"
 

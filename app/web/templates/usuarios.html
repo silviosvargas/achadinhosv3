@@ -86,6 +86,10 @@
         <option value="usuario">Usuário (só visualiza)</option>
         <option value="admin">Admin (gerencia tudo da org)</option>
       </select>
+      <span class="muted small">
+        Pra promover a <strong>⭐ super admin</strong>, crie como admin e
+        use o botão ⭐ na lista (só outro super faz isso).
+      </span>
     </label>
     <label>
       Nome de exibição (opcional)
@@ -100,9 +104,16 @@
 </details>
 {% endif %}
 
-{% if usuarios %}
+{% if request.query_params.get('mensagem') %}
+  <div class="alerta alerta-sucesso" style="padding:10px; margin-bottom:12px;">{{ request.query_params.get('mensagem') }}</div>
+{% endif %}
+{% if request.query_params.get('erro') %}
+  <div class="alerta alerta-erro" style="padding:10px; margin-bottom:12px;">{{ request.query_params.get('erro') }}</div>
+{% endif %}
+
+{% if usuarios_view %}
 <div class="muted small" style="margin-bottom:10px;">
-  Mostrando <strong>{{ usuarios|length }}</strong> de
+  Mostrando <strong>{{ usuarios_view|length }}</strong> de
   <strong>{{ total_count }}</strong> usuário{{ 's' if total_count != 1 else '' }}
   {% if total_paginas > 1 %}
     · página <strong>{{ page_atual }}</strong> de <strong>{{ total_paginas }}</strong>
@@ -119,17 +130,20 @@
       <th>Cadastro</th>
       <th>Último login</th>
       <th>Status</th>
-      <th></th>
+      <th>Ações</th>
     </tr>
   </thead>
   <tbody>
-    {% for u in usuarios %}
-    <tr>
+    {% for v in usuarios_view %}
+    {% set u = v.u %}
+    <tr {% if not u.ativo %}style="opacity:0.55;"{% endif %}>
       <td><strong>{{ u.login }}</strong></td>
       <td>{{ u.nome_exibicao or '—' }}</td>
       <td>
-        {% if u.papel in ('admin', 'super') %}
-          <span class="badge badge-azul" title="{{ u.papel }}">👑 admin</span>
+        {% if u.papel == 'super' %}
+          <span class="badge" title="super admin estrela" style="background:#fbbf24; color:#78350f;">⭐ super</span>
+        {% elif u.papel == 'admin' %}
+          <span class="badge badge-azul">👑 admin</span>
         {% elif u.papel == 'afiliado' %}
           <span class="badge badge-verde">🤝 afiliado</span>
         {% else %}
@@ -162,15 +176,89 @@
           <span class="badge badge-cinza">desativado</span>
         {% endif %}
       </td>
-      <td>
-        {% if user.eh_admin or user.id == u.id %}
-        <a href="/usuarios/{{ u.id }}/afiliados" class="btn-link">afiliados</a>
+      <td style="white-space:nowrap;">
+        {% if v.pode_editar %}
+          <a href="/usuarios/{{ u.id }}/editar" class="btn-link" title="Editar dados">✏️</a>
         {% endif %}
+
+        {% if v.pode_promover %}
+          <form method="post" action="/usuarios/{{ u.id }}/promover" style="display:inline;"
+                data-confirm="Promover {{ u.login|e }} para {{ v.promover_pra }}?"
+                data-confirm-titulo="Promover usuário?"
+                data-confirm-ok="Sim, promover">
+            <button type="submit" class="btn-link" title="Promover para {{ v.promover_pra }}"
+                    style="color:#ca8a04;">⭐</button>
+          </form>
+        {% endif %}
+
+        {% if v.pode_rebaixar %}
+          <form method="post" action="/usuarios/{{ u.id }}/rebaixar" style="display:inline;"
+                data-confirm="Rebaixar {{ u.login|e }} para {{ v.rebaixar_pra }}?"
+                data-confirm-titulo="Rebaixar usuário?"
+                data-confirm-ok="Sim, rebaixar"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" title="Rebaixar para {{ v.rebaixar_pra }}"
+                    style="color:#6b7280;">👇</button>
+          </form>
+        {% endif %}
+
+        {% if v.pode_desativar %}
+          <form method="post" action="/usuarios/{{ u.id }}/desativar" style="display:inline;"
+                data-confirm="Desativar {{ u.login|e }}? Ele perde acesso mas dá pra reativar depois."
+                data-confirm-titulo="Desativar usuário?"
+                data-confirm-ok="Sim, desativar"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" title="Desativar"
+                    style="color:#dc2626;">🚫</button>
+          </form>
+        {% endif %}
+
+        {% if v.pode_reativar %}
+          <form method="post" action="/usuarios/{{ u.id }}/reativar" style="display:inline;">
+            <button type="submit" class="btn-link" title="Reativar"
+                    style="color:#16a34a;">✓</button>
+          </form>
+        {% endif %}
+
+        {% if v.pode_excluir %}
+          <button type="button" class="btn-link" title="Apagar permanentemente"
+                  style="color:#dc2626;"
+                  onclick="confirmarExcluirUsuarioListagem(this)"
+                  data-login="{{ u.login }}"
+                  data-id="{{ u.id }}">🗑</button>
+        {% endif %}
+
+        <a href="/usuarios/{{ u.id }}/afiliados" class="btn-link"
+           style="margin-left:6px;" title="Tags de afiliado">🔗</a>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+
+{# Form invisível usado pelo JS de exclusão tripla-confirmada #}
+<form method="post" id="form-excluir-listagem" style="display:none;">
+  <input type="hidden" name="confirmacao_login" id="confirmacao_login_listagem" value="">
+</form>
+
+<script>
+function confirmarExcluirUsuarioListagem(btn) {
+  var login = btn.dataset.login;
+  var id    = btn.dataset.id;
+  if (!confirm("⚠ APAGAR permanentemente o usuário '" + login + "'?\n\nIsso remove ele do banco. Sem volta.")) return;
+  if (!confirm("Tem certeza ABSOLUTA? Isso também apaga:\n- produtos privados dele\n- agentes\n- favoritos\n- tags de afiliado\n\nProdutos públicos, templates, grupos: ficam, mas zera o dono.\n\nClique OK pra continuar.")) return;
+  var token = prompt("Pra confirmar, digite o login EXATO do usuário:\n\n" + login);
+  if (token === null) return;
+  if (token.trim() !== login) {
+    alert("Login não confere. Cancelado.");
+    return;
+  }
+  var form = document.getElementById("form-excluir-listagem");
+  form.action = "/usuarios/" + id + "/excluir";
+  document.getElementById("confirmacao_login_listagem").value = token.trim();
+  form.submit();
+}
+</script>
 
 {{ paginacao(page_atual, total_paginas, '/usuarios', request) }}
 

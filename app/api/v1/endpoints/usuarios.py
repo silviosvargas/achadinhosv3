@@ -32,7 +32,7 @@ from app.schemas.usuario import (
     TrocarSenhaRequest,
     UsuarioPublico,
 )
-from app.services import afiliado_service, limites
+from app.services import afiliado_service, limites, papel_service
 
 
 class AfiliadoUpsertRequest(BaseModel):
@@ -114,15 +114,41 @@ async def atualizar(
     admin: Usuario = Depends(usuario_admin),
     db: AsyncSession = Depends(get_db_async),
 ) -> UsuarioPublico:
-    target = await _get_da_org(db, org_id=admin.org_id, usuario_id=usuario_id)
+    target = await _get_target_visivel(db, actor=admin, usuario_id=usuario_id)
+
+    # Mudança de papel passa por gate dedicado (só super promove super, etc).
+    if body.papel is not None and body.papel != target.papel:
+        ok, motivo = papel_service.pode_mudar_papel(admin, target, body.papel)
+        if not ok:
+            raise HTTPException(status_code=403, detail=motivo)
+        if papel_service.proximo_papel_acima(target.papel) != body.papel:
+            # Rebaixamento (não promove 1 degrau pra cima): verifica salvaguarda
+            ok_s, motivo_s = await papel_service.checar_salvaguardas_rebaixamento(
+                db, target, body.papel,
+            )
+            if not ok_s:
+                raise HTTPException(status_code=409, detail=motivo_s)
+        target.papel = body.papel
+
+    # Demais campos: requer permissão de editar dados (admite self-edit).
+    if (body.nome_exibicao is not None or body.email is not None
+            or body.ativo is not None):
+        ok, motivo = papel_service.pode_editar_dados(admin, target)
+        if not ok:
+            raise HTTPException(status_code=403, detail=motivo)
 
     if body.nome_exibicao is not None:
         target.nome_exibicao = body.nome_exibicao
     if body.email is not None:
         target.email = body.email
-    if body.papel is not None:
-        target.papel = body.papel
     if body.ativo is not None:
+        # Desativar = perde acesso. Aplica salvaguardas (último admin/super).
+        if body.ativo is False and target.ativo:
+            ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(
+                db, target,
+            )
+            if not ok_s:
+                raise HTTPException(status_code=409, detail=motivo_s)
         target.ativo = body.ativo
 
     await db.commit()
@@ -157,16 +183,75 @@ async def desativar(
     admin: Usuario = Depends(usuario_admin),
     db: AsyncSession = Depends(get_db_async),
 ) -> Mensagem:
-    """Desativa usuário (soft delete). Não pode desativar a si mesmo."""
-    if usuario_id == admin.id:
-        raise HTTPException(
-            status_code=400,
-            detail="Você não pode desativar a si mesmo",
-        )
-    target = await _get_da_org(db, org_id=admin.org_id, usuario_id=usuario_id)
+    """Desativa usuário (soft delete). Respeita matriz de permissões
+    do `papel_service` + salvaguardas (último admin/super)."""
+    target = await _get_target_visivel(db, actor=admin, usuario_id=usuario_id)
+
+    ok, motivo = papel_service.pode_desativar(admin, target)
+    if not ok:
+        raise HTTPException(status_code=403, detail=motivo)
+
+    if not target.ativo:
+        return Mensagem(mensagem="Usuário já estava desativado")
+
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(db, target)
+    if not ok_s:
+        raise HTTPException(status_code=409, detail=motivo_s)
+
     target.ativo = False
     await db.commit()
     return Mensagem(mensagem="Usuário desativado")
+
+
+@router.post("/{usuario_id}/reativar", response_model=Mensagem)
+async def reativar(
+    usuario_id: int,
+    admin: Usuario = Depends(usuario_admin),
+    db: AsyncSession = Depends(get_db_async),
+) -> Mensagem:
+    """Volta `ativo=True` em usuário previamente desativado."""
+    target = await _get_target_visivel(db, actor=admin, usuario_id=usuario_id)
+
+    ok, motivo = papel_service.pode_editar_dados(admin, target)
+    if not ok:
+        raise HTTPException(status_code=403, detail=motivo)
+
+    if target.ativo:
+        return Mensagem(mensagem="Usuário já estava ativo")
+    target.ativo = True
+    await db.commit()
+    return Mensagem(mensagem="Usuário reativado")
+
+
+@router.delete("/{usuario_id}/permanente", response_model=Mensagem)
+async def excluir_permanente(
+    usuario_id: int,
+    admin: Usuario = Depends(usuario_admin),
+    db: AsyncSession = Depends(get_db_async),
+) -> Mensagem:
+    """Hard delete — APAGA permanentemente o usuário do banco.
+
+    CASCADE em DB cuida de: usuarios_afiliados, solicitacoes,
+    produtos privados (usuario_dono_id), favoritos, agentes.
+    SET NULL em: produtos.criado_por, templates, tarefas, grupos,
+    canais, busca_ml.criado_por (registros preservados, dono zera).
+
+    Use desativar (soft) na UI por default. Hard é pra limpeza
+    consciente — `confirm()` tripla no JS protege contra clique acidental.
+    """
+    target = await _get_target_visivel(db, actor=admin, usuario_id=usuario_id)
+
+    ok, motivo = papel_service.pode_excluir(admin, target)
+    if not ok:
+        raise HTTPException(status_code=403, detail=motivo)
+
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_exclusao(db, target)
+    if not ok_s:
+        raise HTTPException(status_code=409, detail=motivo_s)
+
+    await db.delete(target)
+    await db.commit()
+    return Mensagem(mensagem=f"Usuário {target.login!r} apagado permanentemente")
 
 
 # ─────────────────────────────────────────────────────
@@ -274,12 +359,31 @@ async def remover_afiliado(
     return Mensagem(mensagem="Afiliado removido")
 
 
-# ── helper ───────────────────────────────────────────
+# ── helpers ──────────────────────────────────────────
 
 async def _get_da_org(
     db: AsyncSession, *, org_id: int, usuario_id: int,
 ) -> Usuario:
+    """404 se não existir OU se for de outra org. Usado em endpoints
+    estritamente escopados por org (afiliados, detalhe, etc)."""
     target = await db.get(Usuario, usuario_id)
     if target is None or target.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return target
+
+
+async def _get_target_visivel(
+    db: AsyncSession, *, actor: Usuario, usuario_id: int,
+) -> Usuario:
+    """Carrega target respeitando a visibilidade do actor:
+    - Admin central → enxerga qualquer org (404 só se não existir)
+    - Demais → só a própria org
+
+    Usado em endpoints que admitem cross-org pra admin central
+    (editar/desativar/excluir users de qualquer cliente)."""
+    target = await db.get(Usuario, usuario_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if not actor.eh_admin_central and target.org_id != actor.org_id:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return target

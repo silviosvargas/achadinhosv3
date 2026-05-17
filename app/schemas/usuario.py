@@ -12,7 +12,9 @@ class CriarUsuarioRequest(BaseModel):
     """Admin cria um afiliado/usuário na sua org."""
     login:         str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
     senha:         str = Field(min_length=6, max_length=255)
-    papel:         str = Field(default="afiliado", pattern=r"^(afiliado|usuario|admin)$")
+    # 'super' aceito no schema; autorização de quem pode atribuí-lo
+    # vive em `app.services.papel_service.pode_mudar_papel` (só super promove a super).
+    papel:         str = Field(default="afiliado", pattern=r"^(afiliado|usuario|admin|super)$")
     nome_exibicao: str | None = Field(default=None, max_length=150)
     email:         str | None = Field(default=None, max_length=200, pattern=EMAIL_REGEX)
 
@@ -20,7 +22,7 @@ class CriarUsuarioRequest(BaseModel):
 class AtualizarUsuarioRequest(BaseModel):
     nome_exibicao: str | None = Field(default=None, max_length=150)
     email:         str | None = Field(default=None, max_length=200, pattern=EMAIL_REGEX)
-    papel:         str | None = Field(default=None, pattern=r"^(afiliado|usuario|admin)$")
+    papel:         str | None = Field(default=None, pattern=r"^(afiliado|usuario|admin|super)$")
     ativo:         bool | None = None
 
 

@@ -61,6 +61,7 @@ from app.services import (
     dispatcher,
     limites,
     lote_service,
+    papel_service,
     signup_service,
     templates_service,
 )
@@ -222,6 +223,19 @@ async def exigir_admin_central(
         raise HTTPException(
             status_code=403,
             detail="Apenas o admin central pode acessar esta página.",
+        )
+    return user
+
+
+async def exigir_super(
+    user: Usuario = Depends(exigir_login),
+) -> Usuario:
+    """Só super admin estrela. Reservado pra ações sensíveis tipo
+    promover outro admin a super."""
+    if not user.eh_super:
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas um super admin pode executar essa ação.",
         )
     return user
 
@@ -1352,11 +1366,42 @@ async def lista_usuarios(
         )).scalars().all()
         orgs_map = {o.id: o for o in rows}
 
+    # Enriquece cada user com flags de ações permitidas pelo actor logado.
+    # Calcular aqui (server-side, pura) evita chamadas Python no Jinja.
+    usuarios_view = []
+    for u in usuarios:
+        promover_pra = papel_service.proximo_papel_acima(u.papel)
+        rebaixar_pra = papel_service.proximo_papel_abaixo(u.papel)
+        pode_promover = (
+            promover_pra is not None
+            and papel_service.pode_mudar_papel(user, u, promover_pra)[0]
+        )
+        pode_rebaixar = (
+            rebaixar_pra is not None
+            and papel_service.pode_mudar_papel(user, u, rebaixar_pra)[0]
+        )
+        usuarios_view.append({
+            "u": u,
+            "pode_editar":    papel_service.pode_editar_dados(user, u)[0],
+            "pode_promover":  pode_promover,
+            "promover_pra":   promover_pra if pode_promover else None,
+            "pode_rebaixar":  pode_rebaixar,
+            "rebaixar_pra":   rebaixar_pra if pode_rebaixar else None,
+            "pode_desativar": (
+                u.ativo and papel_service.pode_desativar(user, u)[0]
+            ),
+            "pode_reativar": (
+                (not u.ativo) and papel_service.pode_editar_dados(user, u)[0]
+            ),
+            "pode_excluir":   papel_service.pode_excluir(user, u)[0],
+        })
+
     return templates.TemplateResponse(
         request, "usuarios.html",
         {
             "user": user,
-            "usuarios": usuarios,
+            "usuarios": usuarios,           # mantém pra compat / itens simples
+            "usuarios_view": usuarios_view, # enriquecido com flags de ações
             "pode_criar": user.eh_admin,
             "eh_admin_central": user.eh_admin_central,
             "orgs_map": orgs_map,
@@ -1530,10 +1575,18 @@ async def criar_usuario_form(
     admin: Usuario = Depends(exigir_admin),
     db: AsyncSession = Depends(get_db_async),
 ):
+    from urllib.parse import quote
+
+    # Não permite criar 'super' aqui — super só via promoção.
+    if papel not in ("usuario", "afiliado", "admin"):
+        return RedirectResponse(
+            url=f"/usuarios?erro={quote('Papel inválido')}",
+            status_code=302,
+        )
+
     # Verifica limite do plano
     pode, msg = await limites.pode_criar_usuario(db, org_id=admin.org_id)
     if not pode:
-        from urllib.parse import quote
         return RedirectResponse(
             url=f"/usuarios?erro={quote(msg)}",
             status_code=302,
@@ -1559,6 +1612,243 @@ async def criar_usuario_form(
             status_code=302,
         )
     return RedirectResponse(url="/usuarios", status_code=302)
+
+
+# ── Edição, promoção, exclusão ──────────────────────────────
+
+async def _carregar_target(
+    db: AsyncSession, actor: Usuario, usuario_id: int,
+) -> Usuario:
+    """Carrega target respeitando visibilidade (admin central vê tudo)."""
+    target = await db.get(Usuario, usuario_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if not actor.eh_admin_central and target.org_id != actor.org_id:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return target
+
+
+def _redirect_usuarios(mensagem: str | None = None, erro: str | None = None):
+    from urllib.parse import quote
+    qs = []
+    if mensagem:
+        qs.append(f"mensagem={quote(mensagem)}")
+    if erro:
+        qs.append(f"erro={quote(erro)}")
+    url = "/usuarios"
+    if qs:
+        url += "?" + "&".join(qs)
+    return RedirectResponse(url=url, status_code=302)
+
+
+@router.get("/usuarios/{usuario_id}/editar", response_class=HTMLResponse)
+async def editar_usuario_form(
+    usuario_id: int,
+    request: Request,
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+    mensagem: str | None = None,
+    erro: str | None = None,
+):
+    target = await _carregar_target(db, user, usuario_id)
+
+    # Quais papéis o `user` pode atribuir ao `target`? Pré-calcula no servidor
+    # pra UI mostrar só as opções válidas.
+    papeis_disponiveis = [
+        p for p in papel_service.HIERARQUIA_PAPEIS
+        if p == target.papel  # mantém papel atual (no-op)
+        or papel_service.pode_mudar_papel(user, target, p)[0]
+    ]
+
+    org = await db.get(Organizacao, target.org_id)
+
+    return templates.TemplateResponse(
+        request, "usuario_form_editar.html",
+        {
+            "user": user,
+            "target": target,
+            "org": org,
+            "papeis_disponiveis": papeis_disponiveis,
+            "pode_editar_dados": papel_service.pode_editar_dados(user, target)[0],
+            "pode_excluir": papel_service.pode_excluir(user, target)[0],
+            "mensagem": mensagem,
+            "erro": erro,
+        },
+    )
+
+
+@router.post("/usuarios/{usuario_id}/editar", response_class=HTMLResponse)
+async def editar_usuario_submit(
+    usuario_id: int,
+    nome_exibicao: str = Form(""),
+    email:         str = Form(""),
+    papel:         str = Form(...),
+    ativo:         str = Form(""),   # "on" ou "" (checkbox)
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    target = await _carregar_target(db, user, usuario_id)
+
+    # Edição de dados (nome/email/ativo)
+    pode_dados, motivo_dados = papel_service.pode_editar_dados(user, target)
+    if not pode_dados:
+        return _redirect_usuarios(erro=motivo_dados)
+
+    target.nome_exibicao = (nome_exibicao.strip() or target.login)
+    target.email = email.strip() or None
+
+    novo_ativo = (ativo == "on")
+    if novo_ativo is False and target.ativo:
+        ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(
+            db, target,
+        )
+        if not ok_s:
+            return _redirect_usuarios(erro=motivo_s)
+    target.ativo = novo_ativo
+
+    # Mudança de papel (só se mudou)
+    if papel and papel != target.papel:
+        ok, motivo = papel_service.pode_mudar_papel(user, target, papel)
+        if not ok:
+            return _redirect_usuarios(erro=motivo)
+        # Se for rebaixamento de admin/super, valida salvaguarda
+        if papel_service.proximo_papel_acima(target.papel) != papel:
+            ok_s, motivo_s = await papel_service.checar_salvaguardas_rebaixamento(
+                db, target, papel,
+            )
+            if not ok_s:
+                return _redirect_usuarios(erro=motivo_s)
+        target.papel = papel
+
+    await db.commit()
+    return _redirect_usuarios(mensagem=f"Usuário {target.login} atualizado")
+
+
+@router.post("/usuarios/{usuario_id}/promover")
+async def promover_usuario(
+    usuario_id: int,
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Sobe 1 degrau na hierarquia (usuario→afiliado→admin→super)."""
+    target = await _carregar_target(db, user, usuario_id)
+
+    novo = papel_service.proximo_papel_acima(target.papel)
+    if novo is None:
+        return _redirect_usuarios(erro="Usuário já está no topo da hierarquia")
+
+    ok, motivo = papel_service.pode_mudar_papel(user, target, novo)
+    if not ok:
+        return _redirect_usuarios(erro=motivo)
+
+    target.papel = novo
+    await db.commit()
+    return _redirect_usuarios(mensagem=f"{target.login} promovido pra {novo}")
+
+
+@router.post("/usuarios/{usuario_id}/rebaixar")
+async def rebaixar_usuario(
+    usuario_id: int,
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Desce 1 degrau na hierarquia."""
+    target = await _carregar_target(db, user, usuario_id)
+
+    novo = papel_service.proximo_papel_abaixo(target.papel)
+    if novo is None:
+        return _redirect_usuarios(erro="Usuário já está na base da hierarquia")
+
+    ok, motivo = papel_service.pode_mudar_papel(user, target, novo)
+    if not ok:
+        return _redirect_usuarios(erro=motivo)
+
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_rebaixamento(
+        db, target, novo,
+    )
+    if not ok_s:
+        return _redirect_usuarios(erro=motivo_s)
+
+    target.papel = novo
+    await db.commit()
+    return _redirect_usuarios(mensagem=f"{target.login} rebaixado pra {novo}")
+
+
+@router.post("/usuarios/{usuario_id}/desativar")
+async def desativar_usuario(
+    usuario_id: int,
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Soft delete — `ativo=False`. Reversível via /reativar."""
+    target = await _carregar_target(db, user, usuario_id)
+
+    ok, motivo = papel_service.pode_desativar(user, target)
+    if not ok:
+        return _redirect_usuarios(erro=motivo)
+
+    if not target.ativo:
+        return _redirect_usuarios(mensagem=f"{target.login} já estava desativado")
+
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_desativacao(db, target)
+    if not ok_s:
+        return _redirect_usuarios(erro=motivo_s)
+
+    target.ativo = False
+    await db.commit()
+    return _redirect_usuarios(mensagem=f"{target.login} desativado")
+
+
+@router.post("/usuarios/{usuario_id}/reativar")
+async def reativar_usuario(
+    usuario_id: int,
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    target = await _carregar_target(db, user, usuario_id)
+
+    ok, motivo = papel_service.pode_editar_dados(user, target)
+    if not ok:
+        return _redirect_usuarios(erro=motivo)
+
+    if target.ativo:
+        return _redirect_usuarios(mensagem=f"{target.login} já estava ativo")
+
+    target.ativo = True
+    await db.commit()
+    return _redirect_usuarios(mensagem=f"{target.login} reativado")
+
+
+@router.post("/usuarios/{usuario_id}/excluir")
+async def excluir_usuario(
+    usuario_id: int,
+    confirmacao_login: str = Form(...),
+    user: Usuario = Depends(exigir_admin),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Hard delete — APAGA permanentemente. Confirm tripla no JS + token
+    de defesa em profundidade aqui: requer o login literal do target."""
+    target = await _carregar_target(db, user, usuario_id)
+
+    if confirmacao_login.strip() != target.login:
+        return _redirect_usuarios(
+            erro=f"Token de confirmação incorreto (esperado: {target.login!r})",
+        )
+
+    ok, motivo = papel_service.pode_excluir(user, target)
+    if not ok:
+        return _redirect_usuarios(erro=motivo)
+
+    ok_s, motivo_s = await papel_service.checar_salvaguardas_exclusao(db, target)
+    if not ok_s:
+        return _redirect_usuarios(erro=motivo_s)
+
+    login_apagado = target.login
+    await db.delete(target)
+    await db.commit()
+    return _redirect_usuarios(
+        mensagem=f"Usuário {login_apagado!r} apagado permanentemente",
+    )
 
 
 # ============================================================

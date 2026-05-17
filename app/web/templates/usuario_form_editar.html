@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block titulo %}Editar usuário{% endblock %}
+{% block titulo_topbar %}Editar usuário{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>✏️ Editar usuário</h1>
+  <p>
+    <strong>{{ target.nome_exibicao or target.login }}</strong>
+    (<code>{{ target.login }}</code>)
+    {% if org %}
+      · Org <strong>{{ org.nome }}</strong>
+    {% endif %}
+    · <a href="/usuarios" class="btn-link">← voltar</a>
+  </p>
+</header>
+
+{% if mensagem %}
+  <div class="alerta alerta-sucesso" style="padding:10px; margin-bottom:12px;">{{ mensagem }}</div>
+{% endif %}
+{% if erro %}
+  <div class="alerta alerta-erro" style="padding:10px; margin-bottom:12px;">{{ erro }}</div>
+{% endif %}
+
+{# ── Form principal ──────────────────────────────────────────── #}
+<section class="card" style="padding:20px; max-width:640px;">
+  <form method="post" action="/usuarios/{{ target.id }}/editar"
+        style="display:flex; flex-direction:column; gap:14px;">
+
+    <label>
+      Login
+      <input type="text" value="{{ target.login }}" readonly disabled
+             style="width:100%; background:#f3f4f6; cursor:not-allowed;">
+      <span class="muted small">
+        Login não pode ser alterado (quebraria a unicidade dentro da org).
+      </span>
+    </label>
+
+    <label>
+      Nome de exibição
+      <input type="text" name="nome_exibicao" maxlength="150"
+             value="{{ target.nome_exibicao or '' }}"
+             placeholder="ex: João Silva" style="width:100%;">
+    </label>
+
+    <label>
+      Email
+      <input type="email" name="email" maxlength="200"
+             value="{{ target.email or '' }}"
+             placeholder="ex: joao@exemplo.com" style="width:100%;">
+    </label>
+
+    <label>
+      Papel
+      <select name="papel" required style="width:100%;">
+        {% for p in papeis_disponiveis %}
+        <option value="{{ p }}" {% if p == target.papel %}selected{% endif %}>
+          {% if p == 'super' %}⭐ Super (master do sistema)
+          {% elif p == 'admin' %}👑 Admin (gerencia tudo da org)
+          {% elif p == 'afiliado' %}🤝 Afiliado (posta com agente próprio)
+          {% else %}👤 Usuário (só visualiza){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      {% if papeis_disponiveis|length <= 1 %}
+      <span class="muted small">
+        Você não tem permissão pra mudar o papel deste usuário.
+      </span>
+      {% endif %}
+    </label>
+
+    <label class="ck">
+      <input type="checkbox" name="ativo" {% if target.ativo %}checked{% endif %}>
+      Ativo (desmarcar = desativar usuário; ele perde acesso)
+    </label>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:6px;">
+      <a href="/usuarios" class="btn"
+         style="background:transparent; border:1px solid var(--border); color:var(--muted);">
+        Cancelar
+      </a>
+      <button type="submit" class="btn btn-primario">💾 Salvar mudanças</button>
+    </div>
+  </form>
+</section>
+
+{# ── Zona de perigo: hard delete ─────────────────────────────── #}
+{% if pode_excluir %}
+<section class="card" style="padding:20px; max-width:640px; margin-top:24px; border:1px solid var(--vermelho, #dc2626);">
+  <h2 style="margin-top:0; font-size:16px; color:var(--vermelho, #dc2626);">
+    🗑 Zona de perigo
+  </h2>
+  <p class="muted small" style="margin-bottom:12px;">
+    Apagar permanentemente <strong>remove o usuário do banco</strong>
+    e cascateia para os produtos privados, agentes, favoritos, afiliados
+    cadastrados. Histórico de tarefas/produtos públicos é preservado
+    (dono passa a NULL). <strong>Sem volta.</strong>
+  </p>
+  <form method="post" action="/usuarios/{{ target.id }}/excluir"
+        id="form-excluir-permanente" style="display:flex; gap:10px;">
+    <input type="hidden" name="confirmacao_login" id="confirmacao_login_input" value="">
+    <button type="button" class="btn"
+            style="background:var(--vermelho,#dc2626); color:white; border:none;"
+            onclick="confirmarExcluirUsuario(this)"
+            data-login="{{ target.login }}">
+      🗑 Apagar permanentemente
+    </button>
+  </form>
+</section>
+
+<script>
+function confirmarExcluirUsuario(btn) {
+  var login = btn.dataset.login;
+  if (!confirm("⚠ APAGAR permanentemente o usuário '" + login + "'?\n\nIsso remove ele do banco. Sem volta.")) return;
+  if (!confirm("Tem certeza ABSOLUTA? Isso também apaga:\n- produtos privados dele\n- agentes\n- favoritos\n- tags de afiliado\n\nProdutos públicos, templates, grupos: ficam, mas zera o dono.\n\nClique OK pra continuar.")) return;
+  var token = prompt("Pra confirmar, digite o login EXATO do usuário:\n\n" + login);
+  if (token === null) return;
+  if (token.trim() !== login) {
+    alert("Login não confere. Cancelado.");
+    return;
+  }
+  document.getElementById("confirmacao_login_input").value = token.trim();
+  document.getElementById("form-excluir-permanente").submit();
+}
+</script>
+{% endif %}
+
+{% endblock %}
