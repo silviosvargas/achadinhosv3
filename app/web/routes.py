@@ -25,7 +25,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -2540,6 +2540,31 @@ async def buscar_rapida_iniciar(
     espera. URL → 1 produto, modo direto. Termo → 10 produtos, modo
     preview (mostra checkboxes pra usuário escolher)."""
     from urllib.parse import quote_plus
+
+    # Try/except GLOBAL — qualquer erro vira mensagem visível em
+    # /produtos?erro=... em vez de 500 puro. Stacktrace vai pro
+    # /admin/logs via log.exception.
+    try:
+        return await _buscar_rapida_iniciar_impl(entrada, admin, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("buscar_rapida.iniciar_falhou_global",
+                      erro=str(e), entrada=(entrada or "")[:80])
+        return RedirectResponse(
+            url="/produtos?erro=" + quote_plus(
+                f"Erro {type(e).__name__}: {str(e)[:200]}"
+            ),
+            status_code=302,
+        )
+
+
+async def _buscar_rapida_iniciar_impl(
+    entrada: str, admin: Usuario, db: AsyncSession,
+) -> RedirectResponse:
+    """Implementação real — envolvida por try/except global em
+    `buscar_rapida_iniciar` pra nunca dar 500 puro."""
+    from urllib.parse import quote_plus
     from app.services.agente_registry import registry
 
     entrada = (entrada or "").strip()
@@ -3911,6 +3936,56 @@ async def admin_logs(
         {"user": admin},
     )
 
+
+@router.get("/admin/diag-busca-erros", response_class=PlainTextResponse)
+async def admin_diag_busca_erros(
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Endpoint emergencial — retorna últimos 20 logs ERROR/WARNING em
+    TEXTO PURO. Sem template, sem JS, sem dependência. Pra diagnosticar
+    bugs quando a página principal de logs também explode."""
+    from app.models import LogEntry
+
+    rows = list((await db.execute(
+        select(LogEntry)
+        .where(LogEntry.nivel.in_(["ERROR", "WARNING", "CRITICAL"]))
+        .order_by(LogEntry.ts.desc())
+        .limit(20)
+    )).scalars().all())
+
+    if not rows:
+        return PlainTextResponse(
+            "Nenhum erro/warning recente no log_entries.\n"
+            "Se a página falhou agora, espera 5s pro batch worker "
+            "flushar e recarrega esta URL."
+        )
+
+    blocos = []
+    for r in rows:
+        try:
+            ts_local = (
+                r.ts.astimezone(_TZ_DISPLAY).strftime("%d/%m %H:%M:%S")
+                if r.ts else "?"
+            )
+        except Exception:
+            ts_local = str(r.ts)
+        ctx_str = ""
+        if r.contexto:
+            try:
+                import json as _json
+                ctx_str = "\n  contexto: " + _json.dumps(
+                    r.contexto, ensure_ascii=False, default=str,
+                )
+            except Exception:
+                ctx_str = "\n  contexto: " + str(r.contexto)
+        blocos.append(
+            f"[{ts_local}] {r.nivel} {r.evento or '(sem evento)'}\n"
+            f"  mensagem: {r.mensagem or ''}"
+            f"{ctx_str}"
+        )
+
+    return PlainTextResponse("\n\n----\n\n".join(blocos))
 
 
 @router.post("/admin/fila-personalizados/{solicitacao_id}/processar",
