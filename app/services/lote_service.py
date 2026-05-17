@@ -217,6 +217,10 @@ async def postar_produto_imediato(
 
     Usado pelo botão ⚡ Postar de `/produtos/personalizados/{id}/postar`.
 
+    `org_id` = org cujos GRUPOS vão receber a postagem (do user logado).
+    O produto pode estar em outra org (ex: catálogo central admin) —
+    cliente pode postar produtos do admin (Regras 1 e B — 17/05/2026).
+
     Critério de escolha do grupo:
     1. Grupo da org cujos nichos batem com algum nicho do produto
        (grupo sem nichos = curinga, aceita qualquer)
@@ -227,11 +231,17 @@ async def postar_produto_imediato(
         {"ok": True, "tarefa_id": N, "grupo_nome": "..."}
         ou {"ok": False, "erro": "motivo"}
     """
+    from app.core.config import settings as _settings
     from app.models import Produto, ProdutoNicho
 
     produto = await db.get(Produto, produto_id)
-    if produto is None or produto.org_id != org_id:
-        return {"ok": False, "erro": "Produto não encontrado nesta organização"}
+    if produto is None:
+        return {"ok": False, "erro": "Produto não encontrado"}
+
+    # Regra arquitetural (17/05/2026): produto deve estar na própria org
+    # do user OU na org admin central (catálogo compartilhado).
+    if produto.org_id != org_id and produto.org_id != _settings.admin_org_id:
+        return {"ok": False, "erro": "Produto fora do seu catálogo"}
     if produto.bloqueado:
         return {"ok": False, "erro": "Produto está bloqueado"}
     if not produto.preco or produto.preco <= 0:

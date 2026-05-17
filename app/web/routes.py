@@ -1869,13 +1869,40 @@ async def personalizado_excluir(
     user: Usuario = Depends(exigir_login),
     db:   AsyncSession = Depends(get_db_async),
 ):
-    """Apaga 1 produto personalizado. Dono ou admin pode."""
+    """Remove produto da minha seleção.
+
+    v17/05/2026 (Fase B): cliente NÃO apaga produto do catálogo central
+    (que pertence ao admin). Em vez disso, REMOVE a marcação UPP
+    (despersonaliza). Se for produto que o próprio user criou, apaga
+    de verdade.
+    """
+    from app.core.config import settings as _settings
+    from app.models import UsuarioProdutoPersonalizado as UPP
+    from sqlalchemy import delete as sa_delete
+
     p = await db.get(Produto, produto_id)
-    if p is None or p.org_id != user.org_id:
+    if p is None:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
-    if not user.eh_admin and p.criado_por_usuario_id != user.id:
-        raise HTTPException(status_code=403, detail="Sem permissão")
-    await db.delete(p)
+
+    # Admin central: deleta o produto direto
+    if user.eh_admin_central:
+        await db.delete(p)
+        await db.commit()
+        return RedirectResponse(url="/produtos/personalizados", status_code=302)
+
+    # Eu CRIEI o produto → posso deletar (apaga do catálogo)
+    if p.criado_por_usuario_id == user.id and p.org_id == user.org_id:
+        await db.delete(p)
+        await db.commit()
+        return RedirectResponse(url="/produtos/personalizados", status_code=302)
+
+    # Caso padrão: produto do catálogo central que eu favoritei →
+    # remove só da minha seleção (UPP), produto permanece no catálogo
+    await db.execute(
+        sa_delete(UPP).where(
+            UPP.usuario_id == user.id, UPP.produto_id == produto_id,
+        )
+    )
     await db.commit()
     return RedirectResponse(url="/produtos/personalizados", status_code=302)
 
@@ -1910,21 +1937,53 @@ async def personalizado_postar(
     """
     Posta 1 produto personalizado imediatamente (função dedicada — não
     passa pelo lote_service.rodar_lote que filtra entre todos os elegíveis).
+
+    v17/05/2026 (Fase B): aceita postar qualquer produto que o user vê
+    em /produtos/personalizados — favoritado OU criado por ele OU criado
+    via solicitação que admin processou. Permissão é "está na minha
+    seleção", não "eu criei".
     """
     from urllib.parse import quote_plus
+    from app.core.config import settings as _settings
+    from app.models import UsuarioProdutoPersonalizado as UPP
     from app.services import lote_service
+    from sqlalchemy import select as sa_select
 
     p = await db.get(Produto, produto_id)
-    if p is None or p.org_id != user.org_id:
+    if p is None:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
-    if not user.eh_admin and p.criado_por_usuario_id != user.id:
-        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    # Produto deve estar na minha org OU na org admin central (catálogo)
+    if p.org_id != user.org_id and p.org_id != _settings.admin_org_id:
+        raise HTTPException(status_code=404, detail="Produto fora do seu catálogo")
+
+    # Permissão de postar: 4 caminhos
+    #  a) admin_central                                  → tudo
+    #  b) eu criei                                       → meu produto
+    #  c) eu favoritei (UPP)                             → minha seleção
+    #  d) é produto público da minha própria org         → tudo do meu catálogo
+    pode_postar = (
+        user.eh_admin_central
+        or p.criado_por_usuario_id == user.id
+        or p.org_id == user.org_id
+    )
+    if not pode_postar:
+        # Última chance: ele favoritou via UPP
+        favoritado = await db.scalar(
+            sa_select(UPP.id).where(
+                UPP.usuario_id == user.id, UPP.produto_id == produto_id,
+            )
+        )
+        pode_postar = favoritado is not None
+
+    if not pode_postar:
+        raise HTTPException(status_code=403, detail="Sem permissão pra postar este produto")
 
     try:
         resultado = await lote_service.postar_produto_imediato(
             db,
             produto_id=produto_id,
-            org_id=user.org_id,
+            org_id=user.org_id,    # grupos vão ser da MINHA org
             criado_por_usuario_id=user.id,
         )
     except Exception as e:
