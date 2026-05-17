@@ -2608,46 +2608,68 @@ async def buscar_rapida_status(
     - modo `imediato` (URL): mostra produto + auto-redirect /produtos em 3s
     - modo `preview` (termo): mostra grid com checkboxes
     """
-    t = await db.get(Tarefa, tarefa_id)
-    if t is None or t.org_id != admin.org_id:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    from urllib.parse import quote_plus
 
-    payload = t.payload or {}
-    modo = payload.get("_busca_rapida_modo", "preview")
-    entrada = payload.get("entrada") or ""
-    status_str = t.status.value if hasattr(t.status, "value") else str(t.status)
+    try:
+        t = await db.get(Tarefa, tarefa_id)
+        if t is None or t.org_id != admin.org_id:
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
-    # Se ainda rodando: só mostra status, o JS faz auto-refresh
-    produtos_view = []
-    if status_str == "concluida":
-        # Pega produtos criados na janela da tarefa (margem de 2min após
-        # conclusão pra cobrir delay de commit/timezone). Inclui ATUALIZADOS
-        # também (mesmo se o produto já existia, ele "veio dessa busca").
-        from datetime import timedelta
-        ini = t.iniciado_em or t.criado_em
-        fim = (t.concluido_em or t.atualizado_em or t.criado_em) + timedelta(minutes=2)
-        produtos_rows = list((await db.execute(
-            select(Produto)
-            .where(
-                Produto.org_id == admin.org_id,
-                Produto.descoberto_em >= ini,
-                Produto.descoberto_em <= fim,
-            )
-            .order_by(Produto.descoberto_em.desc())
-        )).scalars().all())
-        produtos_view = produtos_rows
+        payload = t.payload or {}
+        modo = payload.get("_busca_rapida_modo", "preview")
+        entrada = payload.get("entrada") or ""
+        # status no model é Mapped[str] — vem como string direto
+        status_str = str(t.status) if t.status else "pendente"
 
-    return templates.TemplateResponse(
-        request, "produtos_buscar_rapida.html",
-        {
-            "user":          admin,
-            "tarefa":        t,
-            "status":        status_str,
-            "modo":          modo,
-            "entrada":       entrada,
-            "produtos":      produtos_view,
-        },
-    )
+        # Se ainda rodando: só mostra status, o JS faz auto-refresh
+        produtos_view = []
+        if status_str == "concluida":
+            # Janela de tempo da tarefa pra pegar produtos vinculados.
+            # Usa `atualizado_em` (TimestampMixin, SEMPRE preenchido) em vez
+            # de `descoberto_em` (nullable, pode ter produtos antigos sem
+            # esse campo — causava query estranha).
+            from datetime import timedelta
+            ini = t.iniciado_em or t.criado_em
+            fim_base = t.concluido_em or t.criado_em
+            fim = fim_base + timedelta(minutes=2)
+            produtos_rows = list((await db.execute(
+                select(Produto)
+                .where(
+                    Produto.org_id == admin.org_id,
+                    Produto.atualizado_em >= ini,
+                    Produto.atualizado_em <= fim,
+                )
+                .order_by(Produto.atualizado_em.desc())
+            )).scalars().all())
+            produtos_view = produtos_rows
+
+        return templates.TemplateResponse(
+            request, "produtos_buscar_rapida.html",
+            {
+                "user":          admin,
+                "tarefa":        t,
+                "status":        status_str,
+                "modo":          modo,
+                "entrada":       entrada,
+                "produtos":      produtos_view,
+            },
+        )
+    except HTTPException:
+        raise  # Reraisa 404 etc
+    except Exception as e:
+        # Captura QUALQUER erro de query/template e mostra erro amigável
+        # em vez de "Internal Server Error" puro. Loga stacktrace pro
+        # /admin/logs identificar a causa.
+        log.exception("buscar_rapida.status_falhou",
+                      tarefa_id=tarefa_id, erro=str(e))
+        return RedirectResponse(
+            url="/produtos?erro=" + quote_plus(
+                f"Erro ao mostrar resultado da busca #{tarefa_id}: "
+                f"{type(e).__name__}: {str(e)[:120]}. "
+                "A busca em si pode ter funcionado — confere em /produtos."
+            ),
+            status_code=302,
+        )
 
 
 @router.post("/produtos/buscar-rapida/{tarefa_id}/confirmar",
@@ -2676,14 +2698,17 @@ async def buscar_rapida_confirmar(
         except (ValueError, TypeError):
             continue
 
-    # Carrega todos os produtos da janela dessa tarefa
+    # Carrega todos os produtos da janela dessa tarefa.
+    # Usa `atualizado_em` (TimestampMixin, SEMPRE preenchido) em vez de
+    # `descoberto_em` (nullable, podia causar query inconsistente).
     ini = t.iniciado_em or t.criado_em
-    fim = (t.concluido_em or t.atualizado_em or t.criado_em) + timedelta(minutes=2)
+    fim_base = t.concluido_em or t.criado_em
+    fim = fim_base + timedelta(minutes=2)
     candidatos = list((await db.execute(
         select(Produto).where(
             Produto.org_id == admin.org_id,
-            Produto.descoberto_em >= ini,
-            Produto.descoberto_em <= fim,
+            Produto.atualizado_em >= ini,
+            Produto.atualizado_em <= fim,
         )
     )).scalars().all())
 
