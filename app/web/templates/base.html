@@ -123,6 +123,12 @@
           <span class="sidebar-item-icone">👤</span>
           <span>Equipe</span>
         </a>
+        {% if _admin_central %}
+        <a href="/admin/fila-personalizados" class="sidebar-item {% if _path.startswith('/admin/fila') %}ativo{% endif %}">
+          <span class="sidebar-item-icone">📋</span>
+          <span>Fila Pers.</span>
+        </a>
+        {% endif %}
         <a href="/planos" class="sidebar-item {% if _path.startswith('/planos') %}ativo{% endif %}">
           <span class="sidebar-item-icone">{% if _eh_free %}⭐{% else %}◇{% endif %}</span>
           <span>{% if _eh_free %}Upgrade{% else %}Planos{% endif %}</span>

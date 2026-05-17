@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block titulo %}Fila de Personalizados{% endblock %}
+{% block titulo_topbar %}Fila de Personalizados{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>📋 Fila de Personalizados</h1>
+  <p>
+    Solicitações de produtos cadastrados por clientes em
+    <code>/produtos/personalizados/novo</code>. Processar dispara busca no
+    Mercado Livre via SEU agente; os produtos resultantes entram no catálogo
+    central com <code>criado_por_usuario_id = solicitante</code>, aparecendo
+    em <code>/produtos/personalizados</code> dele.
+  </p>
+</header>
+
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
+{# ── PENDENTES ────────────────────────────────────────────────── #}
+<section style="margin-bottom: 32px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:12px; flex-wrap:wrap;">
+    <h2 style="margin:0; font-size:18px;">
+      ⏳ Pendentes
+      {% if pendentes %}
+        <span class="badge badge-amarelo">{{ pendentes|length }}</span>
+      {% endif %}
+    </h2>
+    {% if pendentes %}
+    <form method="post" action="/admin/fila-personalizados/processar-tudo"
+          style="display:inline"
+          data-confirm="Processar TODAS as {{ pendentes|length }} solicitações pendentes? Vai criar uma tarefa pra cada — agente leva ~30s/solicitação."
+          data-confirm-titulo="Processar tudo?"
+          data-confirm-ok="🚀 Sim, processar todas">
+      <button type="submit" class="btn btn-primario">⚡ Processar todas</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if pendentes %}
+  <table class="tabela">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Solicitante</th>
+        <th>Tipo</th>
+        <th>Entrada</th>
+        <th>Criado em</th>
+        <th>Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in pendentes %}
+      {% set u = usuarios.get(s.usuario_id) %}
+      <tr>
+        <td><code>#{{ s.id }}</code></td>
+        <td>
+          {% if u %}
+            <strong>{{ u.nome_exibicao or u.login }}</strong>
+            <div class="muted small">org {{ u.org_id }}</div>
+          {% else %}
+            user #{{ s.usuario_id }}
+          {% endif %}
+        </td>
+        <td>
+          {% if s.tipo == 'palavra_chave' %}
+            <span class="badge badge-azul">📝 termo</span>
+          {% elif s.tipo == 'url' %}
+            <span class="badge badge-verde">🔗 URL</span>
+          {% elif s.tipo == 'social' %}
+            <span class="badge badge-amarelo">🤖 social/IA</span>
+          {% else %}
+            <code>{{ s.tipo }}</code>
+          {% endif %}
+        </td>
+        <td>
+          <code style="font-size:11px; word-break:break-all;">{{ s.entrada[:120] }}{% if s.entrada|length > 120 %}…{% endif %}</code>
+        </td>
+        <td class="muted small">{{ s.criado_em.strftime('%d/%m %H:%M') if s.criado_em else '—' }}</td>
+        <td>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <form method="post" action="/admin/fila-personalizados/{{ s.id }}/processar"
+                  style="display:inline">
+              <button type="submit" class="btn-link" title="Dispara busca pro seu agente">
+                ▶ Processar
+              </button>
+            </form>
+            <form method="post" action="/admin/fila-personalizados/{{ s.id }}/rejeitar"
+                  style="display:inline"
+                  data-confirm="Rejeitar esta solicitação? O cliente vê ❌ na lista dele."
+                  data-confirm-titulo="Rejeitar?"
+                  data-confirm-ok="✗ Sim, rejeitar">
+              <button type="submit" class="btn-link" style="color:var(--vermelho);">
+                ✗ Rejeitar
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="vazio" style="padding:32px 16px; text-align:center; border:1px dashed #e5e7eb; border-radius:10px;">
+    <div style="font-size:32px;">📭</div>
+    <p class="muted">Nenhuma solicitação pendente no momento.</p>
+  </div>
+  {% endif %}
+</section>
+
+{# ── RECENTES (histórico) ────────────────────────────────────────── #}
+{% if recentes %}
+<section>
+  <h2 style="margin:0 0 14px; font-size:16px;">📜 Recentes (últimas 50)</h2>
+  <table class="tabela">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Solicitante</th>
+        <th>Tipo</th>
+        <th>Entrada</th>
+        <th>Status</th>
+        <th>Resultado</th>
+        <th>Tempo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in recentes %}
+      {% set u = usuarios.get(s.usuario_id) %}
+      <tr>
+        <td><code>#{{ s.id }}</code></td>
+        <td>
+          {% if u %}
+            {{ u.nome_exibicao or u.login }}
+            <div class="muted small">org {{ u.org_id }}</div>
+          {% else %}
+            #{{ s.usuario_id }}
+          {% endif %}
+        </td>
+        <td>
+          {% if s.tipo == 'palavra_chave' %}<span class="badge badge-azul">termo</span>
+          {% elif s.tipo == 'url' %}<span class="badge badge-verde">URL</span>
+          {% elif s.tipo == 'social' %}<span class="badge badge-amarelo">social</span>
+          {% endif %}
+        </td>
+        <td>
+          <code style="font-size:11px;">{{ s.entrada[:80] }}{% if s.entrada|length > 80 %}…{% endif %}</code>
+        </td>
+        <td>
+          {% if s.status == 'processando' %}
+            <span class="badge badge-azul">⏳ processando</span>
+          {% elif s.status == 'concluida' %}
+            <span class="badge badge-verde">✓ concluída</span>
+          {% elif s.status == 'falhou' %}
+            <span class="badge badge-vermelho" title="{{ s.mensagem_erro or '' }}">✗ falhou</span>
+          {% elif s.status == 'rejeitada' %}
+            <span class="badge badge-cinza" title="{{ s.mensagem_erro or '' }}">⊘ rejeitada</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s.status == 'concluida' %}
+            <strong>{{ s.produtos_criados }}</strong> produto(s)
+          {% elif s.status in ('falhou', 'rejeitada') and s.mensagem_erro %}
+            <span class="muted small" title="{{ s.mensagem_erro }}">
+              {{ s.mensagem_erro[:60] }}{% if s.mensagem_erro|length > 60 %}…{% endif %}
+            </span>
+          {% endif %}
+        </td>
+        <td class="muted small">
+          {% if s.concluido_em %}
+            {{ s.concluido_em.strftime('%d/%m %H:%M') }}
+          {% elif s.processado_em %}
+            <span class="muted small">desde {{ s.processado_em.strftime('%d/%m %H:%M') }}</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<aside class="alerta alerta-info" style="margin-top:24px;">
+  <strong>💡 Rotina automática</strong>: o Celery beat processa solicitações
+  pendentes a cada hora. Se quiser processar antes, use os botões acima.
+</aside>
+
+{% endblock %}

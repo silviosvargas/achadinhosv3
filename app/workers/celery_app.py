@@ -34,6 +34,12 @@ celery_app.conf.update(
             "task":     "agendar_buscas_devidas",
             "schedule": crontab(minute="*"),  # todo minuto
         },
+        # Fase C (17/05/2026): processa fila de solicitações
+        # personalizadas dos clientes — toda hora cheia.
+        "processar-solicitacoes-personalizadas-hourly": {
+            "task":     "processar_solicitacoes_pendentes",
+            "schedule": crontab(minute=0),  # minuto 0 de cada hora
+        },
     },
 )
 
@@ -47,4 +53,4 @@ def ping() -> str:
 # ── Importa tasks pra que sejam registradas no celery_app ─────────
 # Tem que vir DEPOIS da criação do celery_app pra evitar ciclo
 # (telegram_tasks importa celery_app deste módulo).
-from app.workers import scheduler_tasks, telegram_tasks  # noqa: E402, F401
+from app.workers import scheduler_tasks, solicitacoes_tasks, telegram_tasks  # noqa: E402, F401

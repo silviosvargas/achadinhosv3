@@ -4,11 +4,14 @@
 {% block conteudo %}
 
 <header class="page-header">
-  <h1>Produtos Personalizados 🛍️</h1>
+  <h1>Minha Seleção 🛍️</h1>
   <p>
-    Cadastre produtos manualmente por palavra-chave ou link.
-    {% if user.eh_admin %}
-      Como admin, você vê os personalizados de todos da org.
+    Sua coleção pessoal de produtos pra postar rápido. Você pode:
+    <strong>⭐ Personalizar</strong> produtos do
+    <a href="/produtos">catálogo central</a> ou <strong>solicitar</strong>
+    produtos novos abaixo.
+    {% if user.eh_admin_central %}
+      Como admin central, você vê os personalizados de toda a base.
     {% endif %}
   </p>
 </header>
@@ -16,17 +19,22 @@
 {% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
 {% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
 
-{# ── FORM DE BUSCA / CADASTRO ─────────────────────── #}
+{# ── FORM DE SOLICITAÇÃO ─────────────────────── #}
 <section class="card card-destaque" style="padding:20px; margin-bottom:24px;">
+  <h3 style="margin:0 0 8px; font-size:15px;">📨 Solicitar produto novo</h3>
+  <p class="muted small" style="margin:0 0 12px;">
+    Não encontrou no catálogo? Solicite aqui — o admin processa em até 2h
+    e o produto aparece nesta lista automaticamente.
+  </p>
   <form method="post" action="/produtos/personalizados/buscar"
         style="display:flex; flex-direction:column; gap:12px;">
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
       <input type="text" name="entrada" required
-             placeholder="🔎 Digite uma palavra-chave OU cole um link de produto"
+             placeholder="🔎 Palavra-chave ou link do produto"
              style="flex:1; min-width:280px; height:42px; font-size:15px;
                     padding:0 14px;">
       <button type="submit" class="btn btn-primario" style="height:42px; padding:0 22px;">
-        <span>＋</span><span>Adicionar</span>
+        <span>📨</span><span>Solicitar</span>
       </button>
     </div>
     {% if ia_disponivel %}
@@ -38,6 +46,67 @@
     {% endif %}
   </form>
 </section>
+
+{# ── SOLICITAÇÕES EM PROCESSAMENTO (Fase C) ──────────────── #}
+{% set _solic_ativas = solicitacoes | selectattr("status", "in", ["pendente", "processando"]) | list %}
+{% set _solic_recentes = solicitacoes | selectattr("status", "in", ["concluida", "falhou", "rejeitada"]) | list %}
+{% if _solic_ativas %}
+<section style="margin-bottom: 24px;">
+  <h2 style="margin:0 0 10px; font-size:16px;">⏳ Minhas solicitações em andamento</h2>
+  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
+    {% for s in _solic_ativas %}
+    <div class="card" style="padding:12px 14px; border-left:4px solid #f59e0b;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <strong style="font-size:13px;">
+          {% if s.status == 'pendente' %}⏳ Aguardando admin
+          {% elif s.status == 'processando' %}🔄 Processando
+          {% endif %}
+        </strong>
+        <span class="muted small">#{{ s.id }}</span>
+      </div>
+      <div class="muted small" style="margin-top:4px; word-break:break-all;">
+        {% if s.tipo == 'palavra_chave' %}📝
+        {% elif s.tipo == 'url' %}🔗
+        {% elif s.tipo == 'social' %}🤖
+        {% endif %}
+        <code style="font-size:11px;">{{ s.entrada[:100] }}{% if s.entrada|length > 100 %}…{% endif %}</code>
+      </div>
+      <div class="muted small" style="margin-top:6px;">
+        Disponível em até 2h — produto aparece nesta lista quando pronto.
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if _solic_recentes %}
+<details style="margin-bottom: 24px;">
+  <summary class="muted" style="cursor:pointer; font-size:13px;">
+    📜 Solicitações recentes ({{ _solic_recentes|length }})
+  </summary>
+  <div style="margin-top:10px; display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
+    {% for s in _solic_recentes[:10] %}
+    <div class="card" style="padding:10px 12px; opacity:0.85;">
+      <strong style="font-size:12px;">
+        {% if s.status == 'concluida' %}<span style="color:#16a34a;">✓ Concluída</span> — {{ s.produtos_criados }} produto(s)
+        {% elif s.status == 'falhou' %}<span style="color:#dc2626;">✗ Falhou</span>
+        {% elif s.status == 'rejeitada' %}<span style="color:#6b7280;">⊘ Rejeitada</span>
+        {% endif %}
+      </strong>
+      <div class="muted small" style="margin-top:4px;">
+        <code style="font-size:11px;">{{ s.entrada[:80] }}{% if s.entrada|length > 80 %}…{% endif %}</code>
+      </div>
+      {% if s.mensagem_erro %}
+      <div class="muted small" style="color:#dc2626; margin-top:4px;">
+        {{ s.mensagem_erro[:80] }}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
 
 {# ── HEADER DA LISTA + AÇÕES EM MASSA ─────────────── #}
 {% if produtos %}
@@ -87,7 +156,7 @@
         {% else %}
           <span class="badge badge-amarelo">○ fallback</span>
         {% endif %}
-        {% if user.eh_admin and p.criado_por_usuario_id and criadores_map.get(p.criado_por_usuario_id) %}
+        {% if user.eh_admin_central and p.criado_por_usuario_id and criadores_map.get(p.criado_por_usuario_id) %}
           {% set _criador = criadores_map.get(p.criado_por_usuario_id) %}
           <span class="badge badge-azul" title="Cadastrado por {{ _criador.nome_exibicao or _criador.login }}">
             por {{ _criador.login }}

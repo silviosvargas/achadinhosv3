@@ -213,6 +213,19 @@ async def exigir_admin(
     return user
 
 
+async def exigir_admin_central(
+    user: Usuario = Depends(exigir_login),
+) -> Usuario:
+    """Só admin da org central (settings.admin_org_id) — regras
+    arquiteturais (17/05/2026): só ele gerencia catálogo + fila."""
+    if not user.eh_admin_central:
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas o admin central pode acessar esta página.",
+        )
+    return user
+
+
 # ============================================================
 # Login / Logout
 # ============================================================
@@ -1762,15 +1775,22 @@ async def lista_personalizados(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
-    """Lista personalizados visíveis pro user + form pra adicionar."""
+    """Lista personalizados visíveis pro user + solicitações pendentes
+    + form pra solicitar novo (vai pra fila admin — Fase C)."""
     from app.core.config import settings
-    from app.services import personalizado_service
+    from app.services import personalizado_service, solicitacao_service
 
     produtos = await personalizado_service.listar_personalizados_visiveis(db, user=user)
 
-    # Carrega criadores pra mostrar "criado por X" pro admin
+    # Solicitações do user (qualquer status) — pra mostrar "em processamento"
+    # acima dos produtos já resolvidos.
+    solicitacoes = await solicitacao_service.listar_do_usuario(
+        db, usuario_id=user.id, limite=20,
+    )
+
+    # Carrega criadores pra mostrar "criado por X" pro admin central
     criadores_map: dict[int, Usuario] = {}
-    if user.eh_admin and produtos:
+    if user.eh_admin_central and produtos:
         ids_criadores = {p.criado_por_usuario_id for p in produtos if p.criado_por_usuario_id}
         if ids_criadores:
             rows = (await db.execute(
@@ -1783,6 +1803,7 @@ async def lista_personalizados(
         {
             "user":          user,
             "produtos":      produtos,
+            "solicitacoes":  solicitacoes,
             "criadores_map": criadores_map,
             "ia_disponivel": bool(settings.anthropic_api_key),
             "mensagem":      request.query_params.get("mensagem"),
@@ -1794,111 +1815,38 @@ async def lista_personalizados(
 @router.post("/produtos/personalizados/buscar", response_class=HTMLResponse)
 async def personalizado_buscar(
     entrada:  str = Form(...),
-    usar_ia:  str | None = Form(default=None),
+    usar_ia:  str | None = Form(default=None),  # mantido pra compat — agora ignorado aqui
     user:     Usuario = Depends(exigir_login),
     db:       AsyncSession = Depends(get_db_async),
 ):
     """
-    Dispara busca pra cadastrar produto(s) personalizado(s).
+    Fase C (17/05/2026): cadastra solicitação na FILA admin (não dispara
+    busca direto). Cliente vê: "✅ Solicitado — disponível em até 2h".
+    Admin processa em `/admin/fila-personalizados` ou Celery beat hourly.
 
-    Lógica:
-    - Entrada é URL de marketplace conhecido (mercadolivre/shopee/amazon)
-      → busca por_url no marketplace correto.
-    - Entrada é URL de social (TikTok/Insta/YT) e `usar_ia` marcado
-      → chama Claude pra extrair palavra-chave, depois busca termo_livre ML.
-    - Entrada é palavra-chave → busca termo_livre ML, limit 10 produtos.
-
-    A busca é enfileirada via Tarefa(BUSCAR_MERCADO_LIVRE) com marcadores
-    no payload — quando o agente ingerir, os produtos serão gravados com
-    `fonte=personalizado` + dono/criador apropriados.
+    Mudança vs Fase 17: agente do cliente NÃO é mais chamado pra Selenium
+    ML — só admin central tem agente pra isso (Regra 2 do user).
     """
-    from app.core.config import settings
-    from app.models import Agente, StatusTarefa, Tarefa, TipoTarefa
-    from app.services import dispatcher, personalizado_service
+    from urllib.parse import quote_plus
 
-    entrada = (entrada or "").strip()
-    if not entrada:
+    from app.services import solicitacao_service
+
+    try:
+        s = await solicitacao_service.criar_solicitacao(
+            db, usuario=user, entrada=entrada,
+        )
+    except solicitacao_service.SolicitacaoError as e:
         return RedirectResponse(
-            url="/produtos/personalizados?erro=Digite+uma+palavra-chave+ou+URL",
+            url=f"/produtos/personalizados?erro={quote_plus(str(e))}",
             status_code=302,
         )
 
-    eh_url = entrada.lower().startswith(("http://", "https://"))
-    eh_url_marketplace = eh_url and any(
-        d in entrada.lower() for d in (
-            "mercadolivre.com.br", "mercadolivre.com",
-            "shopee.com.br", "amazon.com.br",
-        )
+    msg = (
+        f"✅ Solicitação #{s.id} criada! Seu produto fica disponível em "
+        "até 2h — você é notificado quando aparecer no catálogo."
     )
-
-    # Se for URL de social com IA → extrai palavra-chave primeiro
-    if eh_url and not eh_url_marketplace and usar_ia and settings.anthropic_api_key:
-        palavra = await personalizado_service.extrair_palavra_chave_de_link_social(
-            entrada, anthropic_api_key=settings.anthropic_api_key,
-        )
-        if not palavra:
-            return RedirectResponse(
-                url="/produtos/personalizados?erro=N%C3%A3o+identifiquei+o+produto+no+link.+Tente+outro+ou+cole+o+nome.",
-                status_code=302,
-            )
-        entrada = palavra
-        eh_url = False
-        eh_url_marketplace = False
-
-    # Define payload da tarefa
-    if eh_url_marketplace:
-        tipo_busca   = "por_url"
-        tipo_entrada = "url"
-        max_produtos = 1
-    else:
-        tipo_busca   = "termo_livre"
-        tipo_entrada = "termo"
-        max_produtos = 10
-
-    # Pega 1º agente online da org
-    agentes_org = list((await db.execute(
-        select(Agente).where(
-            Agente.org_id == user.org_id, Agente.ativo.is_(True),
-        )
-    )).scalars().all())
-    from app.services.agente_registry import registry
-    agente = next((a for a in agentes_org if registry.esta_online(a.id)), None)
-    if agente is None:
-        return RedirectResponse(
-            url="/produtos/personalizados?erro=Nenhum+agente+online.+Abra+o+AchadinhosAgent+no+seu+PC.",
-            status_code=302,
-        )
-
-    # Cria tarefa com marcadores de "personalizado"
-    tarefa = Tarefa(
-        org_id=user.org_id,
-        tipo=TipoTarefa.BUSCAR_MERCADO_LIVRE,
-        status=StatusTarefa.PENDENTE,
-        agente_id=agente.id,
-        payload={
-            "tipo_entrada":  tipo_entrada,
-            "entrada":       entrada,
-            "max_paginas":   1,
-            "max_produtos":  max_produtos,
-            "disparado_por": user.id,
-            "tipo_busca":    tipo_busca,
-            "marketplaces":  ["ml"],
-            # Marcadores pra ingest gravar como personalizado:
-            "_personalizado_criador_id": user.id,
-        },
-        criado_por_usuario_id=user.id,
-    )
-    db.add(tarefa)
-    await db.commit()
-    await db.refresh(tarefa)
-    # Entrega imediata via WS
-    await dispatcher._tentar_entrega(db, tarefa)
     return RedirectResponse(
-        url=(
-            f"/produtos/personalizados?mensagem="
-            f"Busca+enfileirada+pra+%22{entrada[:60]}%22+%28tarefa+%23{tarefa.id}%29"
-            f"+%E2%80%94+atualiza+em+~30s"
-        ),
+        url=f"/produtos/personalizados?mensagem={quote_plus(msg)}",
         status_code=302,
     )
 
@@ -2697,3 +2645,133 @@ async def excluir_mapping_form(
         await db.delete(m)
         await db.commit()
     return RedirectResponse(url="/mappings-nichos?mensagem=Mapping+removido", status_code=302)
+
+
+# ============================================================
+# Fase C (17/05/2026): Fila de solicitações personalizadas — admin central
+# ============================================================
+
+@router.get("/admin/fila-personalizados", response_class=HTMLResponse)
+async def fila_personalizados(
+    request: Request,
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Admin vê fila de solicitações personalizadas dos clientes.
+
+    Lista pendentes + recentes (últimas 50 em qualquer status). Admin
+    pode processar (cria Tarefa pro próprio agente) ou rejeitar.
+    """
+    from app.models import SolicitacaoPersonalizada
+    from sqlalchemy import select as sa_select
+
+    # Pendentes primeiro, depois recentes
+    pendentes = list((await db.execute(
+        sa_select(SolicitacaoPersonalizada)
+        .where(SolicitacaoPersonalizada.status == "pendente")
+        .order_by(SolicitacaoPersonalizada.criado_em.asc())
+    )).scalars().all())
+
+    recentes = list((await db.execute(
+        sa_select(SolicitacaoPersonalizada)
+        .where(SolicitacaoPersonalizada.status != "pendente")
+        .order_by(SolicitacaoPersonalizada.criado_em.desc())
+        .limit(50)
+    )).scalars().all())
+
+    # Carrega usuários referenciados
+    user_ids = {s.usuario_id for s in pendentes + recentes}
+    usuarios_map: dict[int, Usuario] = {}
+    if user_ids:
+        rows = (await db.execute(
+            sa_select(Usuario).where(Usuario.id.in_(user_ids))
+        )).scalars().all()
+        usuarios_map = {u.id: u for u in rows}
+
+    return templates.TemplateResponse(
+        request, "admin_fila_personalizados.html",
+        {
+            "user":      admin,
+            "pendentes": pendentes,
+            "recentes":  recentes,
+            "usuarios":  usuarios_map,
+            "mensagem":  request.query_params.get("mensagem"),
+            "erro":      request.query_params.get("erro"),
+        },
+    )
+
+
+@router.post("/admin/fila-personalizados/{solicitacao_id}/processar",
+             response_class=HTMLResponse)
+async def fila_processar(
+    solicitacao_id: int,
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Admin processa solicitação — cria Tarefa pro próprio agente."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    resultado = await solicitacao_service.processar_solicitacao(
+        db, solicitacao_id=solicitacao_id, admin=admin,
+    )
+    if resultado["ok"]:
+        msg = f"mensagem={quote_plus(resultado['mensagem'])}"
+    else:
+        msg = f"erro={quote_plus(resultado.get('erro', 'erro_desconhecido'))}"
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?{msg}", status_code=302,
+    )
+
+
+@router.post("/admin/fila-personalizados/{solicitacao_id}/rejeitar",
+             response_class=HTMLResponse)
+async def fila_rejeitar(
+    solicitacao_id: int,
+    motivo: str = Form(default="Rejeitada pelo admin"),
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Admin rejeita manualmente — não envia pra agente."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    ok = await solicitacao_service.rejeitar_solicitacao(
+        db, solicitacao_id=solicitacao_id, motivo=motivo,
+    )
+    msg = (
+        f"mensagem={quote_plus('Rejeitada')}"
+        if ok else f"erro={quote_plus('Solicitação não está pendente')}"
+    )
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?{msg}", status_code=302,
+    )
+
+
+@router.post("/admin/fila-personalizados/processar-tudo",
+             response_class=HTMLResponse)
+async def fila_processar_tudo(
+    admin: Usuario = Depends(exigir_admin_central),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Admin processa TODAS pendentes em sequência."""
+    from urllib.parse import quote_plus
+    from app.services import solicitacao_service
+
+    pendentes = await solicitacao_service.listar_pendentes(db, limite=50)
+    enfileiradas = 0
+    falhas = 0
+    for s in pendentes:
+        r = await solicitacao_service.processar_solicitacao(
+            db, solicitacao_id=s.id, admin=admin,
+        )
+        if r["ok"]:
+            enfileiradas += 1
+        else:
+            falhas += 1
+
+    msg = f"Processadas: {enfileiradas} enfileiradas, {falhas} falhas"
+    return RedirectResponse(
+        url=f"/admin/fila-personalizados?mensagem={quote_plus(msg)}",
+        status_code=302,
+    )

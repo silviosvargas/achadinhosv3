@@ -284,6 +284,20 @@ async def marcar_concluida(
                 db, org_id=tarefa.org_id, mapping_por_id=mapping_por_id,
             )
 
+    # Fase C (17/05/2026): solicitações personalizadas — marca status
+    # da fila quando a tarefa termina. Agente do admin processou pedido
+    # do cliente; agora atualiza a SolicitacaoPersonalizada correspondente.
+    solicitacao_id = (tarefa.payload or {}).get("solicitacao_id")
+    if solicitacao_id:
+        from app.services import solicitacao_service
+        criados = int((resultado or {}).get("criados") or 0)
+        await solicitacao_service.marcar_concluida_via_hook(
+            db,
+            solicitacao_id=int(solicitacao_id),
+            produtos_criados=criados,
+            ok=True,
+        )
+
 
 async def cancelar(
     db: AsyncSession, *, tarefa_id: int,
@@ -364,5 +378,17 @@ async def marcar_falhou(
         tarefa.concluido_em = datetime.now(tz=timezone.utc)
         tarefa.duracao_seg = _calcular_duracao_seg(tarefa)   # Fase 20.2
         log.warning("tarefa.falhou_definitivo", tarefa_id=tarefa_id, erro=erro)
+
+        # Fase C: marca solicitação como falhou (se for tarefa de solicitação)
+        solicitacao_id = (tarefa.payload or {}).get("solicitacao_id")
+        if solicitacao_id:
+            from app.services import solicitacao_service
+            await solicitacao_service.marcar_concluida_via_hook(
+                db,
+                solicitacao_id=int(solicitacao_id),
+                produtos_criados=0,
+                ok=False,
+                mensagem_erro=erro,
+            )
 
     await db.commit()

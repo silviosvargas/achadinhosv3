@@ -18,6 +18,11 @@ from app.models.produto import (
     UsuarioProdutoPersonalizado,
 )
 from app.models.redirect import Redirect
+from app.models.solicitacao import (
+    SolicitacaoPersonalizada,
+    StatusSolicitacao,
+    TipoSolicitacao,
+)
 from app.models.tarefa import StatusTarefa, Tarefa, TipoTarefa
 from app.models.usuario import Usuario, UsuarioAfiliado
 
@@ -51,4 +56,8 @@ __all__ = [
     "Tarefa",
     "StatusTarefa",
     "TipoTarefa",
+    # Solicitações personalizadas (Fase C)
+    "SolicitacaoPersonalizada",
+    "StatusSolicitacao",
+    "TipoSolicitacao",
 ]
