@@ -323,6 +323,11 @@ async def ingerir_produtos(
                 "atualizados": stats["atualizados"],
                 "ignorados":   stats["ignorados"],
                 "com_nicho":   stats["com_nicho"],
+                # Detalhes dos ignorados (motivo + item_id) — sem isso a UI
+                # mostra só "CONCLUIDA com N ignorados" e o user não tem
+                # como diagnosticar o bug. Truncado em 50 entries pra não
+                # estourar a coluna JSON do Postgres em buscas gigantes.
+                "detalhes": stats["detalhes"][:50],
             }
             await db.commit()
 

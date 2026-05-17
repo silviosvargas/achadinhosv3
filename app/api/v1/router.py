@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     buscas,
     canais,
     curadoria,
+    diagnostico,
     grupos,
     health,
     lote,
@@ -65,3 +66,6 @@ router.include_router(tarefas.router)
 
 # /api/v1/ws/agente (WebSocket)
 router.include_router(ws_agente.router)
+
+# /api/v1/_diag/busca — diagnóstico admin pra investigar bugs de pipeline
+router.include_router(diagnostico.router)
