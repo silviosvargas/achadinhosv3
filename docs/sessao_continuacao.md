@@ -8,9 +8,9 @@
 > (≥3 commits OU mudança que afete fluxo), atualize ESTE arquivo +
 > CLAUDE.md. Lição em `memory/feedback_documentar_sempre.md`.
 
-**Última atualização:** 2026-05-17 noite — sessão MUITO grande (refundação arquitetural per-user + paginação + visão sistêmica admin)
-**Versão do agente publicada:** `3.9.0`
-**Migration head:** `0018_tpl_cpu`
+**Última atualização:** 2026-05-17 madrugada — sessão de gestão de usuários (super admin estrela + CRUD completo)
+**Versão do agente publicada:** `3.9.1`
+**Migration head:** `0019_super`
 
 ---
 
@@ -19,15 +19,69 @@
 | Componente | Status | Detalhes |
 |---|---|---|
 | API + dashboard | ● Online | https://achadinhos.maisseguidores.ia.br |
-| Postgres | ● Online (banco LIMPO em 17/05) | só 6 admins + 5 orgs + seeds |
+| Postgres | ● Online (banco LIMPO em 17/05) | só 6 admins + 5 orgs + seeds + 1 super (após 0019) |
 | Redis | ● Online | Railway add-on |
 | Worker (Celery + beat) | ● Online | beat hourly processa fila personalizados |
-| Migrations | `0018_tpl_cpu` (head) | aplicadas via preDeploy Railway |
-| Agente desktop | v3.9.0 published | [release](https://github.com/silviosvargas/achadinhosv3/releases/tag/agente-v3.9.0) |
+| Migrations | `0019_super` (head) | aplicadas via preDeploy Railway |
+| Agente desktop | v3.9.1 published | [release](https://github.com/silviosvargas/achadinhosv3/releases/tag/agente-v3.9.1) |
 
 ---
 
-## 📜 Fases entregues nesta sessão (17/05/2026 inteiro)
+## 📜 Fases entregues nesta sessão
+
+### 🌙 Sessão de 18/05 madrugada — Gestão de usuários completa (commit `c90fab4`)
+
+**Pedidos pendentes do user atendidos:**
+1. ✅ `/usuarios` ganhou opções de editar/excluir/trocar papel de qualquer user
+2. ✅ Conceito de **"super admin estrela"** formalizado com botão de promoção
+
+**Mudanças (servidor-only, sem release de agente):**
+
+- **Property `Usuario.eh_super`** (`papel == "super"`) — substitui o tácito anterior
+- **Migration 0019** (`0019_super`): promove o admin mais antigo da org central pra `papel='super'` automaticamente. Idempotente — se já tem super, no-op.
+- **Service novo `app/services/papel_service.py`** — funções puras testáveis:
+  - `pode_mudar_papel(actor, target, novo) -> (ok, motivo)` — matriz central de permissões
+  - `pode_editar_dados`, `pode_excluir`, `pode_desativar`
+  - `proximo_papel_acima` / `proximo_papel_abaixo` (hierarquia: usuario→afiliado→admin→super)
+  - `checar_salvaguardas_*` async — bloqueia rebaixar/excluir o último super do sistema OU o último admin de uma org
+- **Helper `exigir_super`** em `app/web/routes.py`
+- **6 rotas web novas:**
+  - GET/POST `/usuarios/{id}/editar` — form completo (nome, email, papel select, ativo)
+  - POST `/usuarios/{id}/promover` — sobe 1 degrau
+  - POST `/usuarios/{id}/rebaixar` — desce 1 degrau
+  - POST `/usuarios/{id}/desativar` — soft (`ativo=False`)
+  - POST `/usuarios/{id}/reativar` — volta `ativo=True`
+  - POST `/usuarios/{id}/excluir` — hard delete (CASCADE no DB), confirm tripla + token
+- **API REST atualizada (`app/api/v1/endpoints/usuarios.py`):**
+  - PATCH `/usuarios/{id}` agora passa por gates do `papel_service` (mudança de papel separada de edição de dados, com salvaguardas)
+  - DELETE `/usuarios/{id}` mesma matriz + salvaguardas
+  - POST `/usuarios/{id}/reativar` novo
+  - DELETE `/usuarios/{id}/permanente` — hard delete via API
+  - Helper `_get_target_visivel` permite admin central enxergar cross-org
+- **UI** (`templates/usuarios.html` reformulado + novo `usuario_form_editar.html`):
+  - Badge **⭐ super** dourado ao lado de 👑 admin / 🤝 afiliado / 👤 usuário
+  - Coluna "Ações" com botões condicionais: ✏️ ⭐ 👇 🚫 ✓ 🗑 🔗
+  - Linha desativada faded (`opacity:0.55`)
+  - JS de exclusão tripla: 2× `confirm()` + 1× `prompt()` exigindo login literal do user
+  - "Zona de perigo" no `usuario_form_editar.html` com mesma proteção
+- **Schema** `CriarUsuarioRequest.papel` aceita "super" mas POST de criação direta continua bloqueando — super só via promoção
+- **Pré-gate Jinja**: lista enriquece cada user com flags (`pode_editar`, `pode_promover`, etc) calculadas server-side via `papel_service`. Botões só aparecem quando aplicáveis.
+
+**Matriz de permissão:**
+
+| Actor | Target | Permitido |
+|---|---|---|
+| `super` | qualquer ≠ self | tudo (inc. promover a super) |
+| `admin_central` (não-super) | usuario/afiliado/admin de qualquer org | até `admin`, exclui |
+| `admin_central` (não-super) | super OU peer admin promovido | **não** (só super faz isso) |
+| `admin` não-central | usuario/afiliado/admin da própria org | até `admin`, exclui |
+| Outros | — | — |
+
+Self-modify sempre proibido. Excluir/rebaixar o último super OU último admin da org bloqueado por salvaguarda async.
+
+---
+
+### 🌃 Sessão de 17/05 (anterior, mantida pra referência)
 
 ### 🏗️ Refundação arquitetural (Fases A→D)
 
@@ -130,12 +184,16 @@ Capabilities calculadas a cada handshake WS — sempre consistentes com user atu
 
 ## 🎯 Próximos passos sugeridos
 
-### Pedidos do user no fim da sessão (NÃO IMPLEMENTADOS — atacar primeiro)
-- **Admin central: editar/excluir/trocar papel** de qualquer user direto na lista `/usuarios`
-- **Conceito de "super admin estrela"** — quem cria outros admins, com botão de promoção ao lado do excluir
+### Validação pendente da última sessão
+- **Validar gestão de usuários em prod** (após Railway aplicar 0019):
+  - Migration promoveu seu user a `super` (badge ⭐ dourado em `/usuarios`)?
+  - ✏️ Editar / ⭐ Promover / 👇 Rebaixar / 🚫 Desativar / 🗑 Excluir funcionam?
+  - Tente apagar a si mesmo (deve bloquear)
+  - Tente promover outro admin a super sendo super (deve permitir)
+  - Tente promover sendo só admin central não-super (deve bloquear se houver)
 
 ### Próximas fases prioritárias
-1. **Validar agente v3.9.0 end-to-end** — admin central baixa exe, capabilities chegam, ML/Shopee/Amazon rodam. User comum tenta busca → recusa graciosa.
+1. **Validar agente v3.9.1 end-to-end** — admin central baixa exe, capabilities chegam, ML/Shopee/Amazon rodam. User comum tenta busca → recusa graciosa. (Fix v3.9.1 = re-pareamento em runtime troca token sem restart.)
 2. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples.
 3. **Servidor-side: evitar tarefas duplicadas** de busca padrão — user clicou 4× e enfileirou 4 buscas. Usar UNIQUE em (status, tipo, payload->slug_padrao).
 4. **Magalu** (4º marketplace seguindo `docs/contrato_busca_marketplace.md`)

@@ -215,6 +215,15 @@ python -m agent.main --sem-tray   # roda
   - **Paginação 50/página** em 7 páginas (commits `6459b43` + `c02eca6`): macro reutilizável `templates/_macros/paginacao.html`. Aplicada em `/usuarios`, `/canais`, `/grupos`, `/tarefas`, `/produtos`, `/curadoria/top`, `/templates`. Renderiza `« 1 2 ... N »` com truncamento elegante. Preserva querystring de filtros via `request.query_params`.
   - **Script `scripts/limpar_banco.py`** (commit `e27f1e9`): destrutivo com confirmação `--confirmar APAGAR`. Mantém só admins/super + orgs deles + seeds (planos/nichos/categorias). **Executado em prod (17/05/2026 12:30)** — apagados 105 tarefas, 87 produtos, 5 solicitações, 3 tags afiliado, 2 grupos/canais/agentes/templates, 1 user não-admin, 2 favoritos UPP. Permaneceram 6 admins + 5 orgs.
 
+- **3.32.0** — **Gestão completa de usuários + super admin estrela** (18/05/2026 madrugada, commit `c90fab4`, servidor-only). Atende os 2 pedidos pendentes do user em `/usuarios`.
+  - **Property `Usuario.eh_super`** (`papel == "super"`) formaliza o tácito anterior.
+  - **Migration 0019** (`0019_super`): promove o admin mais antigo da org central (`org_id=1`) pra `super` automaticamente no preDeploy. Idempotente.
+  - **Service novo `app/services/papel_service.py`**: funções puras (`pode_mudar_papel`, `pode_editar_dados`, `pode_excluir`, `pode_desativar`) + hierarquia (`proximo_papel_acima/abaixo`: usuario→afiliado→admin→super) + 3 salvaguardas async no DB (bloqueia excluir/rebaixar último super do sistema OU último admin da org).
+  - **6 rotas web novas**: GET/POST `/usuarios/{id}/editar`, POST `/promover`, `/rebaixar`, `/desativar`, `/reativar`, `/excluir` (hard delete com confirm tripla + token de login literal).
+  - **API REST atualizada**: PATCH/DELETE `/usuarios/{id}` passam por `papel_service`; novos `POST /reativar` e `DELETE /permanente`. Helper `_get_target_visivel` permite admin central enxergar cross-org.
+  - **UI**: badge **⭐ super** dourado novo; coluna ações com ✏️ ⭐ 👇 🚫 ✓ 🗑 🔗 pré-gateados server-side; linhas desativadas faded; JS de exclusão tripla (2× confirm + prompt). Template novo `usuario_form_editar.html` com "zona de perigo".
+  - **Matriz**: super faz tudo (≠ self); admin central comum mexe em qualquer org até `admin` (não toca em admin/super, só super faz); admin não-central só na própria org; auto-modify sempre bloqueado.
+
 ---
 
 ## Decisões arquiteturais (ADRs em `docs/decisoes.md`)
@@ -269,6 +278,7 @@ Migrations atuais:
 - 0016 usuario_produto_personalizado (Fase B — favoritar M:N)
 - 0017 solicitacoes_personalizadas (Fase C — fila admin)
 - 0018 templates_mensagem.criado_por_usuario_id (Fase 3.30 — ownership)
+- 0019 seed super admin estrela (promove admin mais antigo da org central) (Fase 3.32)
 
 Criar nova: `docker compose exec api alembic revision --autogenerate -m "msg"`
 
@@ -646,9 +656,10 @@ fixos × 3 tentativas pra captcha e login. Implementação detalhada em
 
 **Leia `docs/sessao_continuacao.md` PRIMEIRO — tem tudo consolidado.**
 
-Estado atual: **agente v3.9.0 publicado**. Migration head `0018_tpl_cpu`.
-- Banco **limpo em 17/05/2026** (script `scripts/limpar_banco.py`): só 6 admins + 5 orgs + seeds
+Estado atual: **agente v3.9.1 publicado**. Migration head `0019_super`.
+- Banco **limpo em 17/05/2026** (script `scripts/limpar_banco.py`): só 6 admins + 5 orgs + seeds + 1 super (após 0019)
 - Arquitetura nova com **3 regras** do user (Fases A→D) — Usuario.eh_admin_central, capabilities por agente, fila admin de personalizados
+- **Gestão completa de usuários** (Fase 3.32) — ⭐ super admin estrela + editar/promover/rebaixar/desativar/excluir em `/usuarios`
 - **Privacidade per-user** ativa em grupos/canais/templates: listagens filtradas, postagem gateada
 - **Paginação 50/página** em 7 rotas principais
 - **/usuarios** pra admin central mostra TODOS do sistema com filtros (papel/busca/datas)
@@ -656,16 +667,13 @@ Estado atual: **agente v3.9.0 publicado**. Migration head `0018_tpl_cpu`.
 - Shopee captcha `time.sleep(30)` puro (modelo V2)
 
 **Próximas fases na ordem:**
-1. **Validar agente v3.9.0** com user comum (admin central baixa exe + acha que tudo continua, user comum tenta ML → recusa graciosa)
-2. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples
-3. **Servidor-side: evitar tarefas duplicadas** de busca padrão (user clica 4× rodar → 4 tarefas em fila — usar UNIQUE em (status, tipo, payload->slug))
-4. **Magalu** (4º marketplace — segue `docs/contrato_busca_marketplace.md`)
-5. **AliExpress + TikTok** (após Magalu)
-6. **Configurar `ANTHROPIC_API_KEY`** no Railway pra ativar IA dos Personalizados (Claude Haiku 4.5 extrai palavra-chave de link social)
-
-Pedidos do user no fim da sessão (não implementados ainda — anotar):
-- Admin central: opções pra editar/excluir/trocar papel de qualquer usuário direto na lista `/usuarios`
-- Conceito de "super admin estrela" — quem cria outros admins e tem botão de promoção
+1. **Validar Fase 3.32 em prod** — após Railway aplicar 0019: confirmar badge ⭐ super no seu user; testar ✏️ ⭐ 👇 🚫 ✓ 🗑 e salvaguardas (não excluir a si mesmo, não rebaixar último super)
+2. **Validar agente v3.9.1** com user comum (admin central baixa exe + tudo continua, user comum tenta ML → recusa graciosa)
+3. **Página `/relatorios`** — histórico de tarefas concluídas com `duracao_seg`, média por tipo, gráfico simples
+4. **Servidor-side: evitar tarefas duplicadas** de busca padrão (user clica 4× rodar → 4 tarefas em fila — usar UNIQUE em (status, tipo, payload->slug))
+5. **Magalu** (4º marketplace — segue `docs/contrato_busca_marketplace.md`)
+6. **AliExpress + TikTok** (após Magalu)
+7. **Configurar `ANTHROPIC_API_KEY`** no Railway pra ativar IA dos Personalizados (Claude Haiku 4.5 extrai palavra-chave de link social)
 
 Bugs anotados (não bloqueiam, vale fixar quando tiver tempo):
 - `REDIS_URL_OVERRIDE` vs `REDIS_URL` em `app/core/config.py` (api funciona por sorte)
