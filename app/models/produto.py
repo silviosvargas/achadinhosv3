@@ -284,6 +284,13 @@ class TemplateMensagem(Base, TimestampMixin):
     ordem:    Mapped[int]  = mapped_column(Integer, default=0,
                                             comment="Pra exibição ordenada na UI")
 
+    # Fase 17/05/2026: qualquer user logado cria templates próprios.
+    # NULL = legado (templates antigos sem dono — admin central pode editar).
+    criado_por_usuario_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("usuarios.id", ondelete="SET NULL"),
+        default=None, index=True,
+    )
+
     # Diagnóstico
     vezes_usado:   Mapped[int] = mapped_column(Integer, default=0)
     ultimo_uso_em: Mapped[datetime | None] = mapped_column(

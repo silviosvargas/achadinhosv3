@@ -1,17 +1,18 @@
 {% extends "base.html" %}
-{% block titulo %}Templates{% endblock %}
-{% block titulo_topbar %}Templates{% endblock %}
+{% block titulo %}Templates personalizadas{% endblock %}
+{% block titulo_topbar %}Templates personalizadas{% endblock %}
 {% block conteudo %}
 
 <header class="page-header" style="display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap;">
   <div>
-    <h1>Templates de mensagem ✦</h1>
-    <p>Como o sistema escreve cada postagem. Use placeholders como <code>{nome}</code> e <code>{bloco_preco}</code>.</p>
+    <h1>Templates personalizadas ✦</h1>
+    <p>Como o sistema escreve cada postagem. Use placeholders como <code>{nome}</code> e <code>{bloco_preco}</code>. Você gerencia as suas; cada user da org tem as próprias.</p>
   </div>
-  {% if pode_criar %}
   <a href="/templates/novo" class="btn btn-primario"><span>＋</span><span>Criar template</span></a>
-  {% endif %}
 </header>
+
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
 
 {% if templates_lista %}
 <table class="tabela">
@@ -20,13 +21,16 @@
       <th>Nome</th>
       <th>Nicho</th>
       <th>Texto</th>
+      <th>Dono</th>
       <th>Status</th>
       <th>Usos</th>
-      {% if pode_criar %}<th></th>{% endif %}
+      <th>Ações</th>
     </tr>
   </thead>
   <tbody>
     {% for t in templates_lista %}
+    {% set _meu = t.criado_por_usuario_id == user_id %}
+    {% set _pode_mexer = _meu or eh_admin_central %}
     <tr>
       <td><strong>{{ t.nome }}</strong></td>
       <td>
@@ -42,6 +46,16 @@
         <pre class="texto-template-preview">{{ t.texto[:300] }}{% if t.texto|length > 300 %}…{% endif %}</pre>
       </td>
       <td>
+        {% if _meu %}
+          <span class="badge badge-verde">você</span>
+        {% elif t.criado_por_usuario_id and criadores_map.get(t.criado_por_usuario_id) %}
+          {% set _c = criadores_map.get(t.criado_por_usuario_id) %}
+          <span class="muted small">{{ _c.nome_exibicao or _c.login }}</span>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
+      <td>
         {% if t.ativo %}
           <span class="badge badge-verde">ativo</span>
         {% else %}
@@ -49,17 +63,26 @@
         {% endif %}
       </td>
       <td>{{ t.vezes_usado }}</td>
-      {% if pode_criar %}
       <td>
-        <form method="post" action="/templates/{{ t.id }}/excluir" style="display:inline"
-              data-confirm="Excluir template &quot;{{ t.nome|e }}&quot;?"
-              data-confirm-titulo="Excluir template?"
-              data-confirm-ok="🗑 Sim, excluir"
-              data-confirm-perigo="1">
-          <button type="submit" class="btn-link" style="color:var(--vermelho);">excluir</button>
-        </form>
+        {% if _pode_mexer %}
+        <div style="display:flex; gap:6px;">
+          <a href="/templates/{{ t.id }}/editar" class="btn-link" title="Editar template">
+            ✏️ editar
+          </a>
+          <form method="post" action="/templates/{{ t.id }}/excluir" style="display:inline"
+                data-confirm="Excluir template &quot;{{ t.nome|e }}&quot;? Postagens já enviadas não são afetadas."
+                data-confirm-titulo="Excluir template?"
+                data-confirm-ok="🗑 Sim, excluir"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" style="color:var(--vermelho);">
+              🗑️ excluir
+            </button>
+          </form>
+        </div>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
       </td>
-      {% endif %}
     </tr>
     {% endfor %}
   </tbody>

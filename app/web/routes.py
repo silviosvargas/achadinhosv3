@@ -2349,6 +2349,8 @@ async def lista_templates(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Lista templates personalizadas da org. Qualquer user vê;
+    cada um edita só os seus (admin central edita todos)."""
     tpls = list((await db.execute(
         select(TemplateMensagem)
         .where(TemplateMensagem.org_id == user.org_id)
@@ -2360,6 +2362,15 @@ async def lista_templates(
     )).scalars().all())
     nichos_map = {n.id: n for n in nichos}
 
+    # Mapa de criadores pra mostrar "criado por X" nos alheios
+    criadores_map: dict[int, Usuario] = {}
+    cids = {t.criado_por_usuario_id for t in tpls if t.criado_por_usuario_id}
+    if cids:
+        rows = (await db.execute(
+            select(Usuario).where(Usuario.id.in_(cids))
+        )).scalars().all()
+        criadores_map = {u.id: u for u in rows}
+
     return templates.TemplateResponse(
         request, "templates.html",
         {
@@ -2367,15 +2378,26 @@ async def lista_templates(
             "templates_lista": tpls,
             "nichos": nichos,
             "nichos_map": nichos_map,
-            "pode_criar": user.eh_admin,
+            "criadores_map": criadores_map,
+            "user_id": user.id,
+            "eh_admin_central": user.eh_admin_central,
+            # 17/05/2026: qualquer user logado cria/edita/exclui suas próprias
+            "pode_criar": True,
+            "mensagem": request.query_params.get("mensagem"),
+            "erro":     request.query_params.get("erro"),
         },
     )
+
+
+def _pode_editar_template(user: Usuario, tpl: TemplateMensagem) -> bool:
+    """Permissão pra editar/excluir template: dono OU admin central."""
+    return user.eh_admin_central or tpl.criado_por_usuario_id == user.id
 
 
 @router.get("/templates/novo", response_class=HTMLResponse)
 async def novo_template_form(
     request: Request,
-    admin: Usuario = Depends(exigir_admin),
+    user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
     nicho_id: int | None = None,
 ):
@@ -2384,7 +2406,7 @@ async def novo_template_form(
     )).scalars().all())
     return templates.TemplateResponse(
         request, "template_form.html",
-        {"user": admin, "nichos": nichos, "template": None,
+        {"user": user, "nichos": nichos, "template": None,
          "nicho_id_pre": nicho_id, "erro": None},
     )
 
@@ -2396,9 +2418,10 @@ async def criar_template_form(
     texto:    str = Form(...),
     nicho_id: str = Form(""),    # vazio = template padrão
     ordem:    int = Form(0),
-    admin: Usuario = Depends(exigir_admin),
+    user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Qualquer user logado cria template. `criado_por_usuario_id` = dono."""
     nicho_int: int | None = None
     if nicho_id.strip():
         try:
@@ -2407,29 +2430,100 @@ async def criar_template_form(
             nicho_int = None
 
     novo = TemplateMensagem(
-        org_id=admin.org_id,
+        org_id=user.org_id,
         nicho_id=nicho_int,
         nome=nome.strip(),
         texto=texto,
         ativo=True,
         ordem=ordem,
+        criado_por_usuario_id=user.id,
     )
     db.add(novo)
     await db.commit()
-    return RedirectResponse(url="/templates", status_code=302)
+    return RedirectResponse(
+        url="/templates?mensagem=Template+criada", status_code=302,
+    )
+
+
+@router.get("/templates/{template_id}/editar", response_class=HTMLResponse)
+async def editar_template_form_get(
+    request: Request,
+    template_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Form de edição. Dono ou admin central."""
+    t = await db.get(TemplateMensagem, template_id)
+    if t is None or t.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Template não encontrada")
+    if not _pode_editar_template(user, t):
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas o dono da template pode editar.",
+        )
+    nichos = list((await db.execute(
+        select(Nicho).where(Nicho.ativo.is_(True)).order_by(Nicho.ordem, Nicho.label)
+    )).scalars().all())
+    return templates.TemplateResponse(
+        request, "template_form.html",
+        {"user": user, "nichos": nichos, "template": t,
+         "nicho_id_pre": None, "erro": None},
+    )
+
+
+@router.post("/templates/{template_id}/editar", response_class=HTMLResponse)
+async def editar_template_form_post(
+    template_id: int,
+    nome:     str = Form(...),
+    texto:    str = Form(...),
+    nicho_id: str = Form(""),
+    ordem:    int = Form(0),
+    ativo:    str | None = Form(default=None),
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Salva edição da template. Dono ou admin central."""
+    t = await db.get(TemplateMensagem, template_id)
+    if t is None or t.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Template não encontrada")
+    if not _pode_editar_template(user, t):
+        raise HTTPException(status_code=403, detail="Apenas o dono edita")
+
+    nicho_int: int | None = None
+    if nicho_id.strip():
+        try:
+            nicho_int = int(nicho_id)
+        except ValueError:
+            nicho_int = None
+
+    t.nome     = nome.strip()
+    t.texto    = texto
+    t.nicho_id = nicho_int
+    t.ordem    = ordem
+    t.ativo    = (ativo == "1")
+    await db.commit()
+    return RedirectResponse(
+        url="/templates?mensagem=Template+atualizada", status_code=302,
+    )
 
 
 @router.post("/templates/{template_id}/excluir", response_class=HTMLResponse)
 async def excluir_template_form(
     template_id: int,
-    admin: Usuario = Depends(exigir_admin),
+    user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Exclui template. Dono ou admin central."""
     t = await db.get(TemplateMensagem, template_id)
-    if t and t.org_id == admin.org_id:
-        await db.delete(t)
-        await db.commit()
-    return RedirectResponse(url="/templates", status_code=302)
+    if t is None or t.org_id != user.org_id:
+        return RedirectResponse(url="/templates", status_code=302)
+    if not _pode_editar_template(user, t):
+        raise HTTPException(status_code=403, detail="Apenas o dono exclui")
+    await db.delete(t)
+    await db.commit()
+    return RedirectResponse(
+        url="/templates?mensagem=Template+exclu%C3%ADda", status_code=302,
+    )
 
 
 # ============================================================
