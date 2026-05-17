@@ -147,6 +147,37 @@ _TIPO_TAREFA_PARA_COMANDO_WS = {
 }
 
 
+async def _invalidar_agente_zumbi(agente_id: int, motivo: str) -> None:
+    """Fecha WS + remove do registry quando o registro do agente foi
+    apagado/desativado no DB enquanto a conexão WS continuava aberta.
+
+    Cenário (Fase 3.32+): admin apaga um user via UI, CASCADE remove o
+    agente dele, mas o WS dele continua no registry tentando trabalhar.
+    Tarefas via WS são "aceitas" pelo agente mas POST /ingest depois
+    falha com 401 ("Agente não encontrado ou desativado") porque o
+    REST revalida no DB.
+
+    Esta função limpa o estado zumbi:
+    1. Fecha o WS com código 1008 + reason específico
+    2. Remove do registry pra dispatcher não tentar entregar mais nada
+    3. Agente recebe o close, JS de /agentes/baixar já detecta token órfão
+       (commit 9e7a5f5) e oferece "Conectar meu agente" pra re-parear.
+    """
+    ws = registry.get_ws(agente_id)
+    if ws is None:
+        return
+    log.warning("dispatcher.agente_zumbi_invalidado",
+                agente_id=agente_id, motivo=motivo)
+    try:
+        await ws.close(
+            code=1008,  # WS_1008_POLICY_VIOLATION
+            reason="Agente não encontrado ou desativado",
+        )
+    except Exception as e:
+        log.debug("dispatcher.close_ws_falhou", agente_id=agente_id, erro=str(e))
+    await registry.desconectar(agente_id)
+
+
 async def _tentar_entrega(db: AsyncSession, tarefa: Tarefa) -> None:
     """
     Tenta entregar a tarefa via WebSocket pro agente online.
@@ -157,6 +188,24 @@ async def _tentar_entrega(db: AsyncSession, tarefa: Tarefa) -> None:
     """
     if tarefa.agente_id is None:
         return  # tarefa cloud (Telegram), não vai por WS
+
+    # Revalidação antes de despachar: o registro do agente pode ter sido
+    # apagado/desativado DEPOIS do handshake WS (ex: admin apagou o user
+    # dono do agente via /usuarios → CASCADE em agentes.usuario_id).
+    # Sem este check, o agente recebe a tarefa via WS, executa tudo, mas
+    # o POST /ingest depois levaria 401 → busca completa perdida.
+    agente_db = await db.get(Agente, tarefa.agente_id)
+    if agente_db is None or not agente_db.ativo:
+        motivo = "agente_apagado" if agente_db is None else "agente_desativado"
+        log.warning(
+            "tarefa.agente_invalido_no_despacho",
+            tarefa_id=tarefa.id, agente_id=tarefa.agente_id, motivo=motivo,
+        )
+        await _invalidar_agente_zumbi(tarefa.agente_id, motivo)
+        # Tarefa fica PENDENTE — quando user re-parear, novo agente_id
+        # vai pegar (ou expira no max_tentativas). Não incrementa
+        # tentativas porque a falha não é do agente.
+        return
 
     comando = _TIPO_TAREFA_PARA_COMANDO_WS.get(tarefa.tipo)
     if comando is None:

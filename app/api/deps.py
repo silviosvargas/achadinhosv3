@@ -173,6 +173,17 @@ async def agente_atual(
 
     agente = await db.get(Agente, aid)
     if agente is None or not agente.ativo:
+        # Defesa em camadas: se REST descobriu agente zumbi, fecha o WS
+        # se houver. Sem isso, dispatcher continuava entregando tarefas
+        # via WS pro agente que aceitava mas falhava no POST /ingest
+        # (mesmo bug, loop infinito). Best-effort — não bloqueia 401.
+        try:
+            from app.services.dispatcher import _invalidar_agente_zumbi
+            await _invalidar_agente_zumbi(
+                aid, "agente_atual_rest_401",
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Agente não encontrado ou desativado",
