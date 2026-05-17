@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block titulo %}Editar grupo{% endblock %}
+{% block titulo_topbar %}Editar grupo{% endblock %}
+{% block conteudo %}
+
+<header class="page-header">
+  <h1>Editar grupo 👥</h1>
+  <p>Ajuste nome, identificador, canal vinculado ou status do grupo.</p>
+</header>
+
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
+<form method="post" action="/grupos/{{ grupo.id }}/editar" class="form-inline card-form"
+      style="padding:20px; max-width:600px;">
+  <label>
+    Canal
+    <select name="canal_id" required>
+      {% for c in canais %}
+        <option value="{{ c.id }}" {% if c.id == grupo.canal_id %}selected{% endif %}>
+          {{ c.nome }} ({{ c.tipo }})
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>
+    Nome amigável
+    <input type="text" name="nome" required maxlength="200"
+           value="{{ grupo.nome }}"
+           placeholder="Ex: Achadinhos - Ofertas 01">
+  </label>
+
+  <label>
+    Identificador
+    <input type="text" name="identificador" required maxlength="200"
+           value="{{ grupo.identificador }}"
+           placeholder="WhatsApp: nome EXATO. Telegram: chat_id (ex: -1001234)">
+    <span class="muted small">
+      WhatsApp: nome do grupo no app (case-sensitive). Telegram: chat_id via @get_id_bot.
+    </span>
+  </label>
+
+  <label class="check-inline" style="display:flex; align-items:center; gap:8px;">
+    <input type="checkbox" name="ativo" value="1" {% if grupo.ativo %}checked{% endif %}>
+    <span>Ativo (recebe postagens)</span>
+  </label>
+
+  <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;
+              padding-top:8px; border-top:1px solid var(--border, #e5e7eb);
+              margin-top:8px;">
+    <a href="/grupos" class="btn"
+       style="background:transparent; border:1px solid var(--border); color:var(--muted);">
+      Cancelar
+    </a>
+    <button type="submit" class="btn btn-primario">Salvar alterações</button>
+  </div>
+</form>
+
+{% endblock %}

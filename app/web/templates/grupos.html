@@ -44,6 +44,9 @@
 </details>
 {% endif %}
 
+{% if mensagem %}<div class="alerta alerta-ok">{{ mensagem }}</div>{% endif %}
+{% if erro %}<div class="alerta alerta-erro">{{ erro }}</div>{% endif %}
+
 {% if grupos %}
 <table class="tabela">
   <thead>
@@ -51,11 +54,16 @@
       <th>Nome</th>
       <th>Identificador</th>
       <th>Canal</th>
+      <th>Dono</th>
       <th>Status</th>
+      <th>Ações</th>
     </tr>
   </thead>
   <tbody>
     {% for g in grupos %}
+    {# Permissão: dono OU admin central #}
+    {% set _meu = g.proprietario_id == user_id %}
+    {% set _pode_mexer = _meu or eh_admin_central %}
     <tr>
       <td>
         <strong>{{ g.nome }}</strong>
@@ -71,6 +79,16 @@
         {% endif %}
       </td>
       <td>
+        {% if _meu %}
+          <span class="badge badge-verde">você</span>
+        {% elif g.proprietario_id and proprietarios_map.get(g.proprietario_id) %}
+          {% set _p = proprietarios_map.get(g.proprietario_id) %}
+          <span class="muted small">{{ _p.nome_exibicao or _p.login }}</span>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
+      <td>
         {% if g.ativo %}
           <span class="badge badge-verde">ativo</span>
         {% else %}
@@ -78,6 +96,26 @@
         {% endif %}
         {% if g.precisa_atencao_admin %}
           <span class="badge badge-amarelo">⚠ atenção</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if _pode_mexer %}
+        <div style="display:flex; gap:6px;">
+          <a href="/grupos/{{ g.id }}/editar" class="btn-link" title="Editar grupo">
+            ✏️ editar
+          </a>
+          <form method="post" action="/grupos/{{ g.id }}/excluir" style="display:inline"
+                data-confirm="Excluir grupo {{ g.nome|e }}?&#10;&#10;Postagens já enviadas pra ele ficam no histórico, mas o grupo some das opções de novos lotes."
+                data-confirm-titulo="Excluir grupo?"
+                data-confirm-ok="🗑️ Sim, excluir"
+                data-confirm-perigo="1">
+            <button type="submit" class="btn-link" style="color:var(--vermelho);">
+              🗑️ excluir
+            </button>
+          </form>
+        </div>
+        {% else %}
+          <span class="muted small">—</span>
         {% endif %}
       </td>
     </tr>

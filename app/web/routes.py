@@ -798,6 +798,8 @@ async def lista_grupos(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Lista grupos da org. Cada user vê todos mas só edita os seus
+    (ou tudo, se for admin central)."""
     result = await db.execute(
         select(Grupo).where(Grupo.org_id == user.org_id).order_by(Grupo.criado_em.desc())
     )
@@ -811,6 +813,15 @@ async def lista_grupos(
     # Mapa canal_id → canal pra mostrar nome do canal nas linhas
     canais_map = {c.id: c for c in canais}
 
+    # Mapa de proprietários (pra mostrar "criado por X" nos grupos alheios)
+    proprietarios_map: dict[int, Usuario] = {}
+    pids = {g.proprietario_id for g in grupos if g.proprietario_id}
+    if pids:
+        rows = (await db.execute(
+            select(Usuario).where(Usuario.id.in_(pids))
+        )).scalars().all()
+        proprietarios_map = {u.id: u for u in rows}
+
     return templates.TemplateResponse(
         request, "grupos.html",
         {
@@ -818,9 +829,21 @@ async def lista_grupos(
             "grupos": grupos,
             "canais": canais,
             "canais_map": canais_map,
-            "pode_criar": user.eh_admin,
+            "proprietarios_map": proprietarios_map,
+            # 17/05/2026: qualquer user logado pode criar/editar/excluir
+            # seus próprios grupos. Admin central pode mexer em todos.
+            "pode_criar": True,
+            "user_id":    user.id,
+            "eh_admin_central": user.eh_admin_central,
+            "mensagem":   request.query_params.get("mensagem"),
+            "erro":       request.query_params.get("erro"),
         },
     )
+
+
+def _pode_editar_grupo(user: Usuario, grupo: Grupo) -> bool:
+    """Permissão pra editar/excluir grupo: dono OU admin central."""
+    return user.eh_admin_central or grupo.proprietario_id == user.id
 
 
 @router.post("/grupos/novo", response_class=HTMLResponse)
@@ -829,24 +852,27 @@ async def criar_grupo_form(
     canal_id:      int = Form(...),
     nome:          str = Form(...),
     identificador: str = Form(...),
-    admin: Usuario = Depends(exigir_admin),
+    user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
 ):
+    """Qualquer user logado cria grupo. `proprietario_id` registra o dono."""
+    from urllib.parse import quote
+
     # Verifica limite do plano
-    pode, msg = await limites.pode_criar_grupo(db, org_id=admin.org_id)
+    pode, msg = await limites.pode_criar_grupo(db, org_id=user.org_id)
     if not pode:
-        from urllib.parse import quote
         return RedirectResponse(url=f"/grupos?erro={quote(msg)}", status_code=302)
 
     canal = await db.get(Canal, canal_id)
-    if canal is None or canal.org_id != admin.org_id:
+    if canal is None or canal.org_id != user.org_id:
         raise HTTPException(status_code=400, detail="Canal inválido")
 
     grupo = Grupo(
-        org_id=admin.org_id,
+        org_id=user.org_id,
         canal_id=canal_id,
         nome=nome,
         identificador=identificador,
+        proprietario_id=user.id,
         ativo=True,
     )
     db.add(grupo)
@@ -854,11 +880,101 @@ async def criar_grupo_form(
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        return RedirectResponse(
+            url=f"/grupos?erro={quote('Já existe grupo com esse identificador neste canal')}",
+            status_code=302,
+        )
+    return RedirectResponse(url="/grupos?mensagem=Grupo+criado", status_code=302)
+
+
+@router.get("/grupos/{grupo_id}/editar", response_class=HTMLResponse)
+async def editar_grupo_form_get(
+    request: Request,
+    grupo_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Form de edição. Dono ou admin central."""
+    grupo = await db.get(Grupo, grupo_id)
+    if grupo is None or grupo.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Grupo não encontrado")
+    if not _pode_editar_grupo(user, grupo):
         raise HTTPException(
-            status_code=409,
-            detail="Já existe grupo com esse identificador neste canal",
-        ) from None
-    return RedirectResponse(url="/grupos", status_code=302)
+            status_code=403,
+            detail="Apenas o dono do grupo pode editar.",
+        )
+
+    canais = list((await db.execute(
+        select(Canal).where(Canal.org_id == user.org_id, Canal.ativo.is_(True))
+    )).scalars().all())
+
+    return templates.TemplateResponse(
+        request, "grupo_form.html",
+        {"user": user, "grupo": grupo, "canais": canais, "erro": None},
+    )
+
+
+@router.post("/grupos/{grupo_id}/editar", response_class=HTMLResponse)
+async def editar_grupo_form_post(
+    grupo_id: int,
+    canal_id:      int = Form(...),
+    nome:          str = Form(...),
+    identificador: str = Form(...),
+    ativo:         str | None = Form(default=None),
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Salva edição. Dono ou admin central."""
+    from urllib.parse import quote
+
+    grupo = await db.get(Grupo, grupo_id)
+    if grupo is None or grupo.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Grupo não encontrado")
+    if not _pode_editar_grupo(user, grupo):
+        raise HTTPException(status_code=403, detail="Apenas o dono do grupo edita")
+
+    canal = await db.get(Canal, canal_id)
+    if canal is None or canal.org_id != user.org_id:
+        raise HTTPException(status_code=400, detail="Canal inválido")
+
+    grupo.canal_id      = canal_id
+    grupo.nome          = nome.strip()
+    grupo.identificador = identificador.strip()
+    grupo.ativo         = (ativo == "1")
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return RedirectResponse(
+            url=f"/grupos?erro={quote('Já existe grupo com esse identificador neste canal')}",
+            status_code=302,
+        )
+    return RedirectResponse(url="/grupos?mensagem=Grupo+atualizado", status_code=302)
+
+
+@router.post("/grupos/{grupo_id}/excluir", response_class=HTMLResponse)
+async def excluir_grupo_form(
+    grupo_id: int,
+    user: Usuario = Depends(exigir_login),
+    db: AsyncSession = Depends(get_db_async),
+):
+    """Exclui grupo. Dono ou admin central. CASCADE limpa GrupoNicho e
+    referências em Postagem (que tem ondelete=SET NULL ou CASCADE conforme schema)."""
+    from urllib.parse import quote
+
+    grupo = await db.get(Grupo, grupo_id)
+    if grupo is None or grupo.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Grupo não encontrado")
+    if not _pode_editar_grupo(user, grupo):
+        raise HTTPException(status_code=403, detail="Apenas o dono do grupo exclui")
+
+    nome_curto = (grupo.nome or "")[:40]
+    await db.delete(grupo)
+    await db.commit()
+    return RedirectResponse(
+        url=f"/grupos?mensagem={quote('Grupo excluído: ' + nome_curto)}",
+        status_code=302,
+    )
 
 
 # ============================================================
