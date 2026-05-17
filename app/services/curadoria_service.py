@@ -38,34 +38,14 @@ NOTA_MINIMA_DEFAULT = 30.0
 # Leitura — usada por endpoints API/web
 # --------------------------------------------------------------------
 
-async def listar_top(
-    db: AsyncSession,
+def _base_query_top(
     *,
     org_id: int,
-    limite: int = 50,
-    nota_minima: float = NOTA_MINIMA_DEFAULT,
-    janela_dedup_dias: int = JANELA_DEDUP_DIAS,
-    incluir_postados_recentemente: bool = False,
-) -> list[Produto]:
-    """
-    Retorna produtos ordenados por nota DESC.
-
-    Filtros:
-    - org_id (catálogo da org)
-    - público (usuario_dono_id IS NULL) — privados de afiliado ficam fora
-    - não bloqueado, preco > 0, foto_url NOT NULL
-    - tem pelo menos 1 nicho associado (precisa pra postagem)
-    - nota >= nota_minima
-    - NÃO postado nos últimos N dias (default 7) — opcional
-
-    Args:
-        org_id: org do user
-        limite: máx produtos (default 50)
-        nota_minima: mínimo de nota (default 30 — descarta produtos sem comissão
-            real + sem desconto + sem sinal de venda)
-        janela_dedup_dias: ignora produtos postados nessa janela
-        incluir_postados_recentemente: se True, ignora dedup (admin manual)
-    """
+    nota_minima: float,
+    janela_dedup_dias: int,
+    incluir_postados_recentemente: bool,
+):
+    """Constrói query base do TOP (sem limit/offset/order)."""
     desde_dedup = datetime.now(tz=timezone.utc) - timedelta(days=janela_dedup_dias)
 
     ja_postado = exists().where(and_(
@@ -75,26 +55,63 @@ async def listar_top(
     ))
     tem_nicho = exists().where(ProdutoNicho.produto_id == Produto.id)
 
-    base = (
-        select(Produto)
-        .where(
-            Produto.org_id == org_id,
-            Produto.usuario_dono_id.is_(None),
-            Produto.bloqueado.is_(False),
-            Produto.preco > 0,
-            Produto.foto_url.is_not(None),
-            Produto.foto_url != "",
-            Produto.nota >= nota_minima,
-            tem_nicho,
-        )
-        .order_by(Produto.nota.desc(), Produto.atualizado_em.desc())
-        .limit(limite)
+    q = select(Produto).where(
+        Produto.org_id == org_id,
+        Produto.usuario_dono_id.is_(None),
+        Produto.bloqueado.is_(False),
+        Produto.preco > 0,
+        Produto.foto_url.is_not(None),
+        Produto.foto_url != "",
+        Produto.nota >= nota_minima,
+        tem_nicho,
     )
     if not incluir_postados_recentemente:
-        base = base.where(~ja_postado)
+        q = q.where(~ja_postado)
+    return q
 
-    rows = (await db.execute(base)).scalars().all()
+
+async def listar_top(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    limite: int = 50,
+    offset: int = 0,
+    nota_minima: float = NOTA_MINIMA_DEFAULT,
+    janela_dedup_dias: int = JANELA_DEDUP_DIAS,
+    incluir_postados_recentemente: bool = False,
+) -> list[Produto]:
+    """Retorna produtos ordenados por nota DESC. Suporta paginação via
+    `limite` (tamanho da página) e `offset`."""
+    q = _base_query_top(
+        org_id=org_id, nota_minima=nota_minima,
+        janela_dedup_dias=janela_dedup_dias,
+        incluir_postados_recentemente=incluir_postados_recentemente,
+    )
+    q = q.order_by(
+        Produto.nota.desc(), Produto.atualizado_em.desc(),
+    ).limit(limite).offset(offset)
+    rows = (await db.execute(q)).scalars().all()
     return list(rows)
+
+
+async def contar_top(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    nota_minima: float = NOTA_MINIMA_DEFAULT,
+    janela_dedup_dias: int = JANELA_DEDUP_DIAS,
+    incluir_postados_recentemente: bool = False,
+) -> int:
+    """Conta total de produtos elegíveis (sem limit/offset) pra paginação."""
+    from sqlalchemy import func as _f
+    q = _base_query_top(
+        org_id=org_id, nota_minima=nota_minima,
+        janela_dedup_dias=janela_dedup_dias,
+        incluir_postados_recentemente=incluir_postados_recentemente,
+    )
+    return await db.scalar(
+        select(_f.count()).select_from(q.subquery())
+    ) or 0
 
 
 async def listar_top_com_fallback(
@@ -102,28 +119,35 @@ async def listar_top_com_fallback(
     *,
     org_id: int,
     limite: int = 50,
+    offset: int = 0,
     nota_minima: float = NOTA_MINIMA_DEFAULT,
-) -> tuple[list[Produto], str]:
+) -> tuple[list[Produto], str, int]:
     """
-    Mesma `listar_top`, mas com cascata de fallback Fase 11.
+    Mesma `listar_top`, mas com cascata de fallback Fase 11 + total.
 
-    Retorna `(produtos, fonte)` onde fonte ∈ {"propria", "admin_org"}.
+    Retorna `(produtos, fonte, total)` onde fonte ∈ {"propria", "admin_org", "vazio"}.
+    `total` é a contagem da fonte usada (pra calcular paginação).
     """
-    produtos = await listar_top(
-        db, org_id=org_id, limite=limite, nota_minima=nota_minima,
-    )
-    if produtos:
-        return produtos, "propria"
+    total = await contar_top(db, org_id=org_id, nota_minima=nota_minima)
+    if total > 0:
+        produtos = await listar_top(
+            db, org_id=org_id, limite=limite, offset=offset,
+            nota_minima=nota_minima,
+        )
+        return produtos, "propria", total
 
     if org_id != settings.admin_org_id:
-        produtos = await listar_top(
-            db, org_id=settings.admin_org_id,
-            limite=limite, nota_minima=nota_minima,
+        total = await contar_top(
+            db, org_id=settings.admin_org_id, nota_minima=nota_minima,
         )
-        if produtos:
-            return produtos, "admin_org"
+        if total > 0:
+            produtos = await listar_top(
+                db, org_id=settings.admin_org_id,
+                limite=limite, offset=offset, nota_minima=nota_minima,
+            )
+            return produtos, "admin_org", total
 
-    return [], "vazio"
+    return [], "vazio", 0
 
 
 # --------------------------------------------------------------------

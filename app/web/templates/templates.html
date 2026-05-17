@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros/paginacao.html" import paginacao %}
 {% block titulo %}Templates personalizadas{% endblock %}
 {% block titulo_topbar %}Templates personalizadas{% endblock %}
 {% block conteudo %}
@@ -87,6 +88,9 @@
     {% endfor %}
   </tbody>
 </table>
+
+{{ paginacao(page_atual, total_paginas, '/templates', request) }}
+
 {% else %}
 <div class="vazio">
   <p>Você ainda não tem templates.</p>

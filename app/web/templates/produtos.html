@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros/paginacao.html" import paginacao %}
 {% block titulo %}Produtos{% endblock %}
 {% block titulo_topbar %}Produtos{% endblock %}
 {% block conteudo %}
@@ -320,11 +321,14 @@
   </tbody>
 </table>
 <p class="muted small" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
-  Mostrando <strong>{{ mostrados }}</strong> de <strong>{{ total_count }}</strong> produto{{ 's' if total_count != 1 else '' }}.
-  {% if total_count > mostrados %}
-    <span>Aumente o <em>limite</em> nos filtros ou refine a busca pra ver mais.</span>
-  {% endif %}
+  Mostrando <strong>{{ mostrados }}</strong> de <strong>{{ total_count }}</strong> produto{{ 's' if total_count != 1 else '' }}
+  {% if total_paginas and total_paginas > 1 %}
+    · página <strong>{{ page_atual }}</strong> de <strong>{{ total_paginas }}</strong>
+  {% endif %}.
 </p>
+
+{{ paginacao(page_atual, total_paginas, '/produtos', request) }}
+
 {% else %}
 <div class="vazio" style="text-align:center; padding:32px 16px; border:1px dashed #e5e7eb; border-radius:10px;">
   {% if filtros_ativos %}

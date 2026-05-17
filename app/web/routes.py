@@ -711,13 +711,25 @@ async def lista_canais(
     request: Request,
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
+    page: int = 1,
 ):
     """Lista canais. User comum vê SÓ os próprios (Fase 17/05/2026 noite —
-    privacidade entre users da mesma org). Admin central vê tudo."""
+    privacidade entre users da mesma org). Admin central vê tudo.
+    Paginação 50/página."""
+    PER_PAGE = 50
+
     base = select(Canal).where(Canal.org_id == user.org_id)
     if not user.eh_admin_central:
         base = base.where(Canal.usuario_id == user.id)
-    result = await db.execute(base.order_by(Canal.criado_em.desc()))
+
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    total_paginas = max(1, -(-total // PER_PAGE))
+    page = max(1, min(page, total_paginas))
+
+    result = await db.execute(
+        base.order_by(Canal.criado_em.desc())
+        .limit(PER_PAGE).offset((page - 1) * PER_PAGE)
+    )
     canais = list(result.scalars().all())
 
     # Pra dropdown do form: agentes e usuários
@@ -743,10 +755,12 @@ async def lista_canais(
             "donos_map": donos_map,
             "user_id": user.id,
             "eh_admin_central": user.eh_admin_central,
-            # 17/05/2026: qualquer user logado pode criar canal próprio
             "pode_criar": True,
             "mensagem": request.query_params.get("mensagem"),
             "erro":     request.query_params.get("erro"),
+            "page_atual": page,
+            "total_paginas": total_paginas,
+            "total_count":   total,
         },
     )
 
@@ -951,13 +965,25 @@ async def lista_grupos(
     request: Request,
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
+    page: int = 1,
 ):
     """Lista grupos. User comum vê SÓ os próprios (Fase 17/05/2026 noite
-    — privacidade entre users da mesma org). Admin central vê tudo."""
+    — privacidade entre users da mesma org). Admin central vê tudo.
+    Paginação 50/página."""
+    PER_PAGE = 50
+
     base = select(Grupo).where(Grupo.org_id == user.org_id)
     if not user.eh_admin_central:
         base = base.where(Grupo.proprietario_id == user.id)
-    result = await db.execute(base.order_by(Grupo.criado_em.desc()))
+
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    total_paginas = max(1, -(-total // PER_PAGE))
+    page = max(1, min(page, total_paginas))
+
+    result = await db.execute(
+        base.order_by(Grupo.criado_em.desc())
+        .limit(PER_PAGE).offset((page - 1) * PER_PAGE)
+    )
     grupos = list(result.scalars().all())
 
     # Canais pra dropdown
@@ -985,13 +1011,14 @@ async def lista_grupos(
             "canais": canais,
             "canais_map": canais_map,
             "proprietarios_map": proprietarios_map,
-            # 17/05/2026: qualquer user logado pode criar/editar/excluir
-            # seus próprios grupos. Admin central pode mexer em todos.
             "pode_criar": True,
             "user_id":    user.id,
             "eh_admin_central": user.eh_admin_central,
             "mensagem":   request.query_params.get("mensagem"),
             "erro":       request.query_params.get("erro"),
+            "page_atual":    page,
+            "total_paginas": total_paginas,
+            "total_count":   total,
         },
     )
 
@@ -1142,12 +1169,22 @@ async def lista_tarefas(
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
     status_filtro: str | None = None,
+    page: int = 1,
 ):
+    PER_PAGE = 50
+
     base = select(Tarefa).where(Tarefa.org_id == user.org_id)
     if status_filtro:
         base = base.where(Tarefa.status == status_filtro)
 
-    result = await db.execute(base.order_by(Tarefa.criado_em.desc()).limit(100))
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    total_paginas = max(1, -(-total // PER_PAGE))
+    page = max(1, min(page, total_paginas))
+
+    result = await db.execute(
+        base.order_by(Tarefa.criado_em.desc())
+        .limit(PER_PAGE).offset((page - 1) * PER_PAGE)
+    )
     tarefas = list(result.scalars().all())
 
     # Pra form de postagem manual
@@ -1163,6 +1200,9 @@ async def lista_tarefas(
             "tarefas": tarefas,
             "grupos": grupos,
             "status_filtro": status_filtro,
+            "page_atual":    page,
+            "total_paginas": total_paginas,
+            "total_count":   total,
         },
     )
 
@@ -1559,10 +1599,12 @@ async def lista_produtos(
     preco_min:    str | None = None,    # R$, ex: "50"
     preco_max:    str | None = None,
     extras:       str | None = None,    # "1" → só com comissao_extra; "" / None → todos
+    page: int = 1,
 ):
     nicho_id_int = _query_int(nicho_id)
     bloqueado_int = _query_int(bloqueado)
-    limite_int = max(10, min(500, _query_int(limite) or 100))
+    # `limite` = tamanho da página. Default 50, max 500.
+    limite_int = max(10, min(500, _query_int(limite) or 50))
 
     def _query_float(v: str | None) -> float | None:
         """Parse float aceitando vírgula brasileira; vazio → None."""
@@ -1621,14 +1663,17 @@ async def lista_produtos(
             Produto.comissao_extra.is_not(None), Produto.comissao_extra > 0,
         )
 
-    # Contagem total (sem limit) pra UI mostrar "X de N"
+    # Contagem total (sem limit) pra UI mostrar "X de N" + paginação
     from sqlalchemy import func as sa_func, select as sa_select
     total_count = (await db.execute(
         sa_select(sa_func.count()).select_from(base.subquery())
     )).scalar_one()
+    total_paginas = max(1, -(-total_count // limite_int))
+    page = max(1, min(page, total_paginas))
 
     produtos = list((await db.execute(
-        base.order_by(Produto.atualizado_em.desc()).limit(limite_int)
+        base.order_by(Produto.atualizado_em.desc())
+        .limit(limite_int).offset((page - 1) * limite_int)
     )).scalars().all())
 
     # Nichos pra filtros do form
@@ -1695,6 +1740,9 @@ async def lista_produtos(
             "filtros_ativos": filtros_ativos,
             "total_count": int(total_count or 0),
             "mostrados": len(produtos),
+            "page_atual":    page,
+            "total_paginas": total_paginas,
+            "per_page":      limite_int,
             # Só admin central edita/exclui/bloqueia produtos no catálogo.
             "pode_criar": user.eh_admin_central,
             # Fase B: todos podem personalizar (favoritar).
@@ -2399,7 +2447,8 @@ async def personalizado_postar_todos(
 async def pagina_curadoria_top(
     request: Request,
     nota_min: float = 30.0,
-    limite:   int   = 30,
+    limite:   int   = 50,
+    page:     int   = 1,
     user: Usuario = Depends(exigir_login),
     db:   AsyncSession = Depends(get_db_async),
 ):
@@ -2407,16 +2456,29 @@ async def pagina_curadoria_top(
 
     Lê `produtos.nota` direto — sem snapshot, sem beat task. Always live.
     A query já filtra produtos postados nos últimos 7 dias
-    (`JANELA_DEDUP_DIAS`), então recarregar a página = atualizar com produtos
-    "frescos" automaticamente.
+    (`JANELA_DEDUP_DIAS`). Paginação 50/página (`limite` = tamanho).
     """
     from app.services import curadoria_service
 
-    # Clamp do limite pra evitar abuso
+    # Clamp do limite (10–100)
     limite = max(10, min(100, limite))
 
-    produtos, fonte = await curadoria_service.listar_top_com_fallback(
-        db, org_id=user.org_id, limite=limite, nota_minima=nota_min,
+    # Total primeiro pra clamp do page
+    total = await curadoria_service.contar_top(
+        db, org_id=user.org_id, nota_minima=nota_min,
+    )
+    # Fallback admin se própria org tá vazia
+    if total == 0 and user.org_id != settings.admin_org_id:
+        total = await curadoria_service.contar_top(
+            db, org_id=settings.admin_org_id, nota_minima=nota_min,
+        )
+
+    total_paginas = max(1, -(-total // limite)) if total > 0 else 1
+    page = max(1, min(page, total_paginas))
+    offset = (page - 1) * limite
+
+    produtos, fonte, _ = await curadoria_service.listar_top_com_fallback(
+        db, org_id=user.org_id, limite=limite, offset=offset, nota_minima=nota_min,
     )
 
     return templates.TemplateResponse(
@@ -2429,6 +2491,9 @@ async def pagina_curadoria_top(
             "limite":   limite,
             "mensagem": request.query_params.get("mensagem"),
             "erro":     request.query_params.get("erro"),
+            "page_atual":    page,
+            "total_paginas": total_paginas,
+            "total_count":   total,
         },
     )
 
@@ -2591,15 +2656,24 @@ async def lista_templates(
     request: Request,
     user: Usuario = Depends(exigir_login),
     db: AsyncSession = Depends(get_db_async),
+    page: int = 1,
 ):
     """Lista templates personalizadas. Mostra TODAS da org — user pode
     USAR (postar com) qualquer template, inclusive as do admin. Só EDITA
-    e EXCLUI as próprias (gate em `_pode_editar_template`)."""
+    e EXCLUI as próprias (gate em `_pode_editar_template`).
+    Paginação 50/página."""
+    PER_PAGE = 50
+
+    base = select(TemplateMensagem).where(TemplateMensagem.org_id == user.org_id)
+
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    total_paginas = max(1, -(-total // PER_PAGE))
+    page = max(1, min(page, total_paginas))
+
     tpls = list((await db.execute(
-        select(TemplateMensagem)
-        .where(TemplateMensagem.org_id == user.org_id)
-        .order_by(TemplateMensagem.nicho_id.is_(None),
-                  TemplateMensagem.ordem, TemplateMensagem.id)
+        base.order_by(TemplateMensagem.nicho_id.is_(None),
+                      TemplateMensagem.ordem, TemplateMensagem.id)
+        .limit(PER_PAGE).offset((page - 1) * PER_PAGE)
     )).scalars().all())
 
     nichos = list((await db.execute(
@@ -2626,10 +2700,12 @@ async def lista_templates(
             "criadores_map": criadores_map,
             "user_id": user.id,
             "eh_admin_central": user.eh_admin_central,
-            # 17/05/2026: qualquer user logado cria/edita/exclui suas próprias
             "pode_criar": True,
             "mensagem": request.query_params.get("mensagem"),
             "erro":     request.query_params.get("erro"),
+            "page_atual":    page,
+            "total_paginas": total_paginas,
+            "total_count":   total,
         },
     )
 

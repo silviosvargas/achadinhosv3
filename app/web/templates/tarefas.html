@@ -1,11 +1,18 @@
 {% extends "base.html" %}
+{% from "_macros/paginacao.html" import paginacao %}
 {% block titulo %}Tarefas{% endblock %}
 {% block titulo_topbar %}Tarefas{% endblock %}
 {% block conteudo %}
 
 <header class="page-header">
   <h1>Tarefas ⌛</h1>
-  <p>Histórico de comandos enfileirados — postagens, buscas, geração de links. Últimas 100 entradas.</p>
+  <p>
+    Histórico de comandos enfileirados — postagens, buscas, geração de links.
+    {% if total_paginas and total_paginas > 1 %}
+      Página <strong>{{ page_atual }}</strong> de <strong>{{ total_paginas }}</strong>
+      ({{ total_count }} tarefas no total).
+    {% endif %}
+  </p>
 </header>
 
 <details class="card-form">
@@ -97,6 +104,9 @@
     {% endfor %}
   </tbody>
 </table>
+
+{{ paginacao(page_atual, total_paginas, '/tarefas', request) }}
+
 {% else %}
 <div class="vazio" style="padding:60px 24px;">
   <div style="font-size:48px; margin-bottom:12px;">⌛</div>

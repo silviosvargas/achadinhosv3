@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros/paginacao.html" import paginacao %}
 {% block titulo %}Grupos{% endblock %}
 {% block titulo_topbar %}Grupos{% endblock %}
 {% block conteudo %}
@@ -122,6 +123,9 @@
     {% endfor %}
   </tbody>
 </table>
+
+{{ paginacao(page_atual, total_paginas, '/grupos', request) }}
+
 {% else %}
 <div class="vazio" style="padding:60px 24px;">
   <div style="font-size:48px; margin-bottom:12px;">👥</div>

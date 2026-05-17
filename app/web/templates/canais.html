@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros/paginacao.html" import paginacao %}
 {% block titulo %}Canais{% endblock %}
 {% block titulo_topbar %}Canais{% endblock %}
 {% block conteudo %}
@@ -189,6 +190,9 @@ function trocarTipo(tipo) {
     {% endfor %}
   </tbody>
 </table>
+
+{{ paginacao(page_atual, total_paginas, '/canais', request) }}
+
 {% else %}
 <div class="vazio" style="padding:60px 24px;">
   <div style="font-size:48px; margin-bottom:12px;">📡</div>
