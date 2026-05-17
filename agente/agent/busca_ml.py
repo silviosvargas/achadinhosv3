@@ -439,6 +439,93 @@ def _categoria_de_css(driver) -> str | None:
     return None
 
 
+# Regex pra "2º em Sabão para Roupas" / "1° em Eletrônicos" / "Nº em X"
+# Capturado da badge "MAIS VENDIDO" do ML, que aparece em produtos top-rank
+# e é um sinal forte de categoria (especialmente quando o breadcrumb principal
+# é muito curto, ex: catálogo /p/MLB...).
+_REGEX_RANK = re.compile(
+    r"\b\d{1,3}\s*[º°ª]\s+em\s+(.+?)$",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def _categoria_de_badge_rank(driver) -> str | None:
+    """Extrai categoria do badge 'Nº em [Categoria]' do ML.
+
+    Esse badge aparece em produtos best-sellers ('MAIS VENDIDO') e
+    sempre tem a forma '<rank>º em <categoria_específica>'. Em páginas
+    de catálogo (/p/MLB...) o breadcrumb principal costuma ser raso
+    ('Início > Sabão para Roupas'), enquanto o badge dá a categoria
+    mais útil ('Sabão para Roupas').
+
+    Retorna SÓ o nome da categoria (sem o rank).
+    """
+    seletores_rank = [
+        # Texto direto da badge
+        "[class*='best-seller'], [class*='bestseller'], [class*='best_seller']",
+        "[class*='rank']",
+        # Badge MAIS VENDIDO no PDP
+        ".ui-pdp-promotions-pill-label, .ui-pdp-color--ORANGE",
+        # Fallback: qualquer link/span que comece com "Nº em"
+        "a[href*='/mais-vendidos/']",
+    ]
+    for sel in seletores_rank:
+        try:
+            els = driver.find_elements(By.CSS_SELECTOR, sel)
+        except Exception:
+            continue
+        for el in els:
+            try:
+                txt = (el.text or el.get_attribute("textContent") or "").strip()
+                if not txt:
+                    continue
+                # Procura padrão em qualquer linha
+                for linha in txt.splitlines():
+                    m = _REGEX_RANK.search(linha.strip())
+                    if m:
+                        cat = m.group(1).strip()
+                        # Tira "(ver mais)" ou similar no fim
+                        cat = re.sub(r"\s*[\(\[].*$", "", cat).strip()
+                        if 2 < len(cat) < 100:
+                            return cat
+            except Exception:
+                continue
+    return None
+
+
+def _combinar_categorias(*candidatos: str | None) -> str | None:
+    """Combina múltiplas categorias preferindo a MAIS RICA (mais níveis).
+
+    Se duas categorias são compatíveis (uma é prefixo da outra OU compartilham
+    último nível), usa a hierárquica. Senão concatena a mais rasa primeiro.
+
+    Exemplos:
+        ('Casa > Limpeza', 'Sabão para Roupas')
+          → 'Casa > Limpeza > Sabão para Roupas' (se último nível bate, usa o + hierárquico)
+        ('Início > Sabão para Roupas', 'Sabão para Roupas')
+          → 'Início > Sabão para Roupas'  (a maior cobre a menor)
+        (None, 'Sabão para Roupas')
+          → 'Sabão para Roupas'
+    """
+    validos = [c.strip() for c in candidatos if c and c.strip()]
+    if not validos:
+        return None
+    # Pega o que tem mais ' > ' separadores
+    validos.sort(key=lambda c: c.count(">"), reverse=True)
+    melhor = validos[0]
+    # Se algum candidato adicional tem nível NÃO presente em `melhor`,
+    # tenta acrescentar (idempotente — se já estiver, ignora).
+    melhor_low = melhor.lower()
+    for outro in validos[1:]:
+        outro_low = outro.lower()
+        if outro_low in melhor_low or melhor_low in outro_low:
+            continue
+        # Sem sobreposição clara — acrescenta como nível final
+        if not melhor.lower().endswith(outro.lower()):
+            melhor = melhor + " > " + outro
+    return melhor
+
+
 def _categoria_via_primeiro_produto(
     driver, urls_produtos: list[str], voltar: bool = False,
 ) -> str | None:
@@ -483,14 +570,16 @@ def _extrair_categoria_pagina(driver, urls_produtos: list[str] | None = None) ->
     2. CSS de breadcrumb (múltiplos seletores)
     3. Se vieram urls_produtos: entra no primeiro produto e pega breadcrumb dele
     """
-    cat = _categoria_de_jsonld(driver)
+    # v3.9.3: combina os 3 sinais (JSON-LD + CSS + badge rank) pra
+    # maximizar hierarquia capturada — mesmo em páginas onde um dos
+    # sinais retorna nivel raso.
+    cat_jsonld = _categoria_de_jsonld(driver)
+    cat_css    = _categoria_de_css(driver)
+    cat_badge  = _categoria_de_badge_rank(driver)
+    cat = _combinar_categorias(cat_jsonld, cat_css, cat_badge)
     if cat:
-        log.info("ml.categoria_via_jsonld", cat=cat)
-        return cat
-
-    cat = _categoria_de_css(driver)
-    if cat:
-        log.info("ml.categoria_via_css", cat=cat)
+        log.info("ml.categoria_combinada",
+                 jsonld=cat_jsonld, css=cat_css, badge=cat_badge, final=cat)
         return cat
 
     if urls_produtos:
@@ -1179,8 +1268,18 @@ def _extrair_produto_unico(driver, url: str) -> dict[str, Any] | None:
             except NoSuchElementException:
                 continue
 
-    # Categoria via JSON-LD BreadcrumbList ou breadcrumb CSS — já existe util
-    categoria = _categoria_de_jsonld(driver) or _categoria_de_css(driver)
+    # Categoria — combina 3 sinais (JSON-LD, CSS, badge "Nº em X")
+    # pra maximizar hierarquia capturada. v3.9.3: páginas /p/MLB...
+    # (catálogo) costumam ter breadcrumb muito raso ('Início > Sabão para Roupas')
+    # e o badge "MAIS VENDIDO 2º em Sabão para Roupas" é o sinal mais rico.
+    cat_jsonld = _categoria_de_jsonld(driver)
+    cat_css    = _categoria_de_css(driver)
+    cat_badge  = _categoria_de_badge_rank(driver)
+    categoria  = _combinar_categorias(cat_jsonld, cat_css, cat_badge)
+    log.info("ml.por_url.categoria_extraida",
+             item_id=item_id,
+             jsonld=cat_jsonld, css=cat_css, badge=cat_badge,
+             final=categoria)
 
     if not nome or preco is None or preco <= 0:
         log.warning("ml.por_url.dados_insuficientes",
