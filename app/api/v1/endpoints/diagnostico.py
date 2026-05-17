@@ -97,10 +97,32 @@ async def diagnostico_busca(
     org_alvo = _resolver_org_id(user, org_id)
     agora = datetime.now(tz=timezone.utc)
     desde = agora - timedelta(hours=janela_horas)
+    erros_internos: list[str] = []
+
+    # Helper local: roda await safely. Retorna fallback se quebrar +
+    # registra erro pra incluir na resposta (em vez de 500 silencioso).
+    async def _safe(label, coro, fallback):
+        try:
+            return await coro
+        except Exception as e:
+            # Importa aqui pra evitar circular
+            from app.core.logging import get_logger
+            get_logger(__name__).exception("diag.bloco_falhou", bloco=label, erro=str(e))
+            erros_internos.append(f"{label}: {type(e).__name__}: {str(e)[:200]}")
+            return fallback
+
+    def _safe_sync(label, fn, fallback):
+        try:
+            return fn()
+        except Exception as e:
+            from app.core.logging import get_logger
+            get_logger(__name__).exception("diag.bloco_falhou", bloco=label, erro=str(e))
+            erros_internos.append(f"{label}: {type(e).__name__}: {str(e)[:200]}")
+            return fallback
 
     # Org info
     from app.models import Organizacao
-    org = await db.get(Organizacao, org_alvo)
+    org = await _safe("org", db.get(Organizacao, org_alvo), None)
 
     # Se passou tarefa_id, foca só nessa
     if tarefa_id is not None:
@@ -114,120 +136,135 @@ async def diagnostico_busca(
         }
 
     # Últimas N tarefas (qualquer status)
-    rows = list((await db.execute(
-        select(Tarefa)
-        .where(Tarefa.org_id == org_alvo)
-        .order_by(desc(Tarefa.criado_em))
-        .limit(limite_tarefas)
-    )).scalars().all())
-    tarefas_recentes = [_tarefa_resumo(t) for t in rows]
+    async def _q_tarefas_recentes():
+        rows = list((await db.execute(
+            select(Tarefa)
+            .where(Tarefa.org_id == org_alvo)
+            .order_by(desc(Tarefa.criado_em))
+            .limit(limite_tarefas)
+        )).scalars().all())
+        return [_safe_sync(f"tarefa_resumo[{t.id}]", lambda t=t: _tarefa_resumo(t), {"id": t.id, "erro": "fail"}) for t in rows]
+    tarefas_recentes = await _safe("tarefas_recentes", _q_tarefas_recentes(), [])
 
     # Tarefas que falharam nas últimas 24h (em separado pra destacar)
-    falhou_rows = list((await db.execute(
-        select(Tarefa)
-        .where(
-            Tarefa.org_id == org_alvo,
-            Tarefa.status == StatusTarefa.FALHOU,
-            Tarefa.criado_em >= desde,
-        )
-        .order_by(desc(Tarefa.criado_em))
-        .limit(20)
-    )).scalars().all())
-    tarefas_falhou_recentes = [_tarefa_resumo(t) for t in falhou_rows]
+    async def _q_tarefas_falhou():
+        rows = list((await db.execute(
+            select(Tarefa)
+            .where(
+                Tarefa.org_id == org_alvo,
+                Tarefa.status == StatusTarefa.FALHOU,
+                Tarefa.criado_em >= desde,
+            )
+            .order_by(desc(Tarefa.criado_em))
+            .limit(20)
+        )).scalars().all())
+        return [_safe_sync(f"tarefa_resumo[{t.id}]", lambda t=t: _tarefa_resumo(t), {"id": t.id, "erro": "fail"}) for t in rows]
+    tarefas_falhou_recentes = await _safe("tarefas_falhou", _q_tarefas_falhou(), [])
 
     # Tarefas CONCLUIDA mas com ignorados > 0 (sintoma típico do bug atual!)
-    sem_efeito_rows = list((await db.execute(
-        select(Tarefa)
-        .where(
-            Tarefa.org_id == org_alvo,
-            Tarefa.status == StatusTarefa.CONCLUIDA,
-            Tarefa.criado_em >= desde,
-        )
-        .order_by(desc(Tarefa.criado_em))
-        .limit(30)
-    )).scalars().all())
-    tarefas_concluidas_sem_criar = []
-    for t in sem_efeito_rows:
-        res = t.resultado or {}
-        if res.get("recebidos", 0) > 0 and res.get("criados", 0) == 0:
-            tarefas_concluidas_sem_criar.append(_tarefa_resumo(t))
+    async def _q_tarefas_sem_efeito():
+        sem_efeito_rows = list((await db.execute(
+            select(Tarefa)
+            .where(
+                Tarefa.org_id == org_alvo,
+                Tarefa.status == StatusTarefa.CONCLUIDA,
+                Tarefa.criado_em >= desde,
+            )
+            .order_by(desc(Tarefa.criado_em))
+            .limit(30)
+        )).scalars().all())
+        out = []
+        for t in sem_efeito_rows:
+            res = t.resultado or {}
+            if res.get("recebidos", 0) > 0 and res.get("criados", 0) == 0:
+                out.append(_safe_sync(f"tarefa_resumo[{t.id}]", lambda t=t: _tarefa_resumo(t), {"id": t.id, "erro": "fail"}))
+        return out
+    tarefas_concluidas_sem_criar = await _safe("tarefas_concluidas_sem_criar", _q_tarefas_sem_efeito(), [])
 
     # Count de produtos
-    total_produtos = await db.scalar(
-        select(func.count()).select_from(Produto).where(Produto.org_id == org_alvo)
+    total_produtos = await _safe(
+        "total_produtos",
+        db.scalar(select(func.count()).select_from(Produto).where(Produto.org_id == org_alvo)),
+        0,
     ) or 0
-    total_produtos_recentes = await db.scalar(
-        select(func.count()).select_from(Produto).where(
+    total_produtos_recentes = await _safe(
+        "total_produtos_recentes",
+        db.scalar(select(func.count()).select_from(Produto).where(
             Produto.org_id == org_alvo,
             Produto.descoberto_em >= desde,
-        )
+        )),
+        0,
     ) or 0
 
     # Últimos N produtos criados
-    produtos_rows = list((await db.execute(
-        select(Produto)
-        .where(Produto.org_id == org_alvo)
-        .order_by(desc(Produto.descoberto_em))
-        .limit(limite_produtos)
-    )).scalars().all())
-    produtos_recentes = [
-        {
-            "id":              p.id,
-            "plataforma":      p.plataforma,
-            "item_id":         p.item_id,
-            "nome":            (p.nome or "")[:80],
-            "preco":           p.preco,
-            "comissao":        p.comissao,
-            "comissao_fonte":  p.comissao_fonte,
-            "url_afiliado":    (p.url_afiliado or "")[:100],
-            "usuario_dono_id": p.usuario_dono_id,
-            "criado_por_usuario_id": p.criado_por_usuario_id,
-            "descoberto_em":   p.descoberto_em.isoformat() if p.descoberto_em else None,
-        }
-        for p in produtos_rows
-    ]
+    async def _q_produtos_recentes():
+        rows = list((await db.execute(
+            select(Produto)
+            .where(Produto.org_id == org_alvo)
+            .order_by(desc(Produto.descoberto_em))
+            .limit(limite_produtos)
+        )).scalars().all())
+        return [
+            {
+                "id":              p.id,
+                "plataforma":      p.plataforma,
+                "item_id":         p.item_id,
+                "nome":            (p.nome or "")[:80],
+                "preco":           p.preco,
+                "comissao":        p.comissao,
+                "comissao_fonte":  p.comissao_fonte,
+                "url_afiliado":    (p.url_afiliado or "")[:100],
+                "usuario_dono_id": p.usuario_dono_id,
+                "criado_por_usuario_id": p.criado_por_usuario_id,
+                "descoberto_em":   p.descoberto_em.isoformat() if p.descoberto_em else None,
+            }
+            for p in rows
+        ]
+    produtos_recentes = await _safe("produtos_recentes", _q_produtos_recentes(), [])
 
     # Agentes online da org: pega IDs do registry (memória) e cruza com
     # a tabela `agentes` pra confirmar que pertencem à org alvo.
-    todos_ids_online = set(registry._conexoes.keys())  # noqa: SLF001
-    if todos_ids_online:
-        agentes_org_rows = (await db.execute(
+    async def _q_agentes_online():
+        ids_online = set(registry._conexoes.keys())  # noqa: SLF001
+        if not ids_online:
+            return []
+        rows = (await db.execute(
             select(Agente.id, Agente.nome, Agente.usuario_id).where(
                 Agente.org_id == org_alvo,
-                Agente.id.in_(todos_ids_online),
+                Agente.id.in_(ids_online),
             )
         )).all()
-        agentes_online = [
-            {"id": r.id, "nome": r.nome, "usuario_id": r.usuario_id}
-            for r in agentes_org_rows
-        ]
-    else:
-        agentes_online = []
+        return [{"id": r.id, "nome": r.nome, "usuario_id": r.usuario_id} for r in rows]
+    agentes_online = await _safe("agentes_online", _q_agentes_online(), [])
+    todos_ids_online = set(registry._conexoes.keys())  # noqa: SLF001
 
     # Todos os agentes da org (online ou não) — útil pra ver se o agente
     # registrado existe mas não está conectado.
-    agentes_org_todos = list((await db.execute(
-        select(Agente).where(Agente.org_id == org_alvo)
-    )).scalars().all())
-    agentes_org_view = [
-        {
-            "id":           a.id,
-            "nome":         a.nome,
-            "usuario_id":   a.usuario_id,
-            "ativo":        a.ativo,
-            "online_db":    a.online,
-            "ultimo_ping":  a.ultimo_ping.isoformat() if a.ultimo_ping else None,
-            "versao_app":   a.versao_app,
-            "online_ws":    a.id in todos_ids_online,
-        }
-        for a in agentes_org_todos
-    ]
+    async def _q_agentes_todos():
+        rows = list((await db.execute(
+            select(Agente).where(Agente.org_id == org_alvo)
+        )).scalars().all())
+        return [
+            {
+                "id":           a.id,
+                "nome":         a.nome,
+                "usuario_id":   a.usuario_id,
+                "ativo":        a.ativo,
+                "online_db":    a.online,
+                "ultimo_ping":  a.ultimo_ping.isoformat() if a.ultimo_ping else None,
+                "versao_app":   a.versao_app,
+                "online_ws":    a.id in todos_ids_online,
+            }
+            for a in rows
+        ]
+    agentes_org_view = await _safe("agentes_da_org", _q_agentes_todos(), [])
 
     return {
         "agora":             agora.isoformat(),
         "janela_horas":      janela_horas,
         "org_id":            org_alvo,
         "org_nome":          org.nome if org else None,
+        "erros_internos":    erros_internos,   # vazia se tudo OK
         "me": {
             "id":               user.id,
             "login":            user.login,
